@@ -7,6 +7,15 @@ metadata:
 spec:
   replicas: 3
   selector:
-    matchLabels:
+    matchLabels:     #bu labeldaki isimler senin yöneteceğin podları seçmek için kullanılır. Bu yüzden podlarda da aynı label olmalı.
       app: frontend
   template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
