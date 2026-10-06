@@ -17,11 +17,11 @@ $ cat <<EOF | kubectl apply -f -
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
 metadata:
-  name: ozgurozturk
+  name: ysfk-senior
 spec:
   groups:
   - system:authenticated
-  request: $(cat ozgurozturk.csr | base64 | tr -d "\n")
+  request: $(cat ysfk1.csr | base64 | tr -d "\n")
   signerName: kubernetes.io/kube-apiserver-client
   usages:
   - client auth
@@ -35,7 +35,7 @@ $ kubectl get csr
 
 $ kubectl certificate approve ozgurozturk
 
-$ kubectl get csr ozgurozturk -o jsonpath='{.status.certificate}' | base64 -d >> ozgurozturk.crt 
+$ kubectl get csr ysfk -o jsonpath='{.status.certificate}' | base64 -d >> ysfk.crt 
 ```
 
 **kubectl config ayarları**
