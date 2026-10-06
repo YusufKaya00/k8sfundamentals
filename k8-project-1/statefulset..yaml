@@ -41,9 +41,9 @@ spec:
           imagePullPolicy: Always
           
           args:
-          - "--replSet "
-          - rs0
-          - "--bind_ip_all"
+            - "--replSet"
+            - rs0
+            - "--bind_ip_all"
 
 
           ports:
