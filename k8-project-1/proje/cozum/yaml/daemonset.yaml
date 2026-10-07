@@ -68,6 +68,11 @@ spec:
         - name: varlibdockercontainers
           mountPath: /var/lib/docker/containers
           readOnly: true
+          tolerations:
+          - key: tier 
+            operator: Equal
+            value: production
+            effect: NoSchedule
       terminationGracePeriodSeconds: 30
       volumes:
       - name: varlog
