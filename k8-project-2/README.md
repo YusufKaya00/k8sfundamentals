@@ -1,6 +1,6 @@
 **Proje Talimatları — Modern Kubernetes Platform Laboratuvarı (Minikube)**
 
-> Çözümler için: [cozum/README.md](./cozum/README.md)
+> Çözümler için: [solution/README.md](./solution/README.md)
 
 **1:** 5 node'lu (1 Control-Plane + 4 Worker) bir Minikube cluster'ı kurun ve metric-server ile ingress eklentilerini aktif hale getirin.
 

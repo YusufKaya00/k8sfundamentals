@@ -1,6 +1,6 @@
 **Çözümler — Modern Kubernetes Platform Laboratuvarı (Minikube)**
 
-> Tüm komutlar `proje/` dizini içerisinden çalıştırılır (manifestolar `./yaml/` altındadır).
+> Tüm komutlar `k8-project-2/` dizini içerisinden çalıştırılır (manifestolar `./yaml/` altındadır).
 >
 > Minikube varsayılan profilinde node isimleri: `minikube` (control-plane), `minikube-m02`, `minikube-m03`, `minikube-m04`, `minikube-m05` (worker).
 
