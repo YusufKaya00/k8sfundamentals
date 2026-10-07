@@ -6,7 +6,7 @@ metadata:
     app: k8s
   namespace: production
 spec:
-  replicas: 3
+  replicas: 10
   selector:
     matchLabels:
       app: k8s
@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
       - name: k8s
-        image: ozgurozturknet/k8s:v1
+        image: ozgurozturknet/k8s:v2
         ports:
         - containerPort: 80
         livenessProbe:
