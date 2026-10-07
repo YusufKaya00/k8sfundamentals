@@ -1,0 +1,480 @@
+# =============================================================================
+# PRODUCTION STACK: PostgreSQL 16 (PVC) + Python REST API (Init-Container ile)
+#                   + postgres-exporter (/metrics backend'i)
+# Tum pod'lar "dedicated=production:NoSchedule" taint'ini tolere eder ve
+# nodeAffinity ile sadece "environment=production" etiketli node'lara yerlesir.
+# On kosul: "postgres-creds" Secret'i ve "app-config" ConfigMap'i production
+# namespace'inde olusturulmus olmalidir.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: production
+  labels:
+    app: postgres
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: production
+  labels:
+    app: postgres
+    tier: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: production
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: environment
+                    operator: In
+                    values:
+                      - production
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: postgres-creds
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: production
+  labels:
+    app: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-app-code
+  namespace: production
+  labels:
+    app: web
+data:
+  app.py: |
+    import json
+    import logging
+    import math
+    import os
+    import socket
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    PORT = int(os.getenv("PORT", "8080"))
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "info").upper()
+    CACHE_ENABLED = os.getenv("CACHE_ENABLED", "false").lower() == "true"
+    APP_ENV = os.getenv("APP_ENV", "unknown")
+    DB_HOST = os.getenv("DB_HOST", "postgres")
+    DB_PORT = int(os.getenv("DB_PORT", "5432"))
+    DB_NAME = os.getenv("DB_NAME", "")
+    DB_USER = os.getenv("DB_USER", "")
+    POD_NAME = os.getenv("POD_NAME", socket.gethostname())
+
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s %(levelname)s [web] %(message)s",
+    )
+    log = logging.getLogger("web")
+
+
+    def db_reachable():
+        try:
+            with socket.create_connection((DB_HOST, DB_PORT), timeout=2):
+                return True
+        except OSError:
+            return False
+
+
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "lab-web-api/1.0"
+
+        def _send(self, code, payload):
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            path = self.path.split("?", 1)[0]
+            if path == "/healthz":
+                self._send(200, {"status": "ok"})
+            elif path == "/db":
+                ok = db_reachable()
+                self._send(200 if ok else 503, {
+                    "db_host": DB_HOST,
+                    "db_port": DB_PORT,
+                    "db_name": DB_NAME,
+                    "db_reachable": ok,
+                })
+            elif path == "/burn":
+                start = time.time()
+                total = 0.0
+                for i in range(1, 400000):
+                    total += math.sqrt(i)
+                self._send(200, {
+                    "pod": POD_NAME,
+                    "result": round(total, 2),
+                    "elapsed_ms": int((time.time() - start) * 1000),
+                })
+            elif path in ("/", "/api"):
+                self._send(200, {
+                    "service": "web-api",
+                    "environment": APP_ENV,
+                    "pod": POD_NAME,
+                    "log_level": LOG_LEVEL,
+                    "cache_enabled": CACHE_ENABLED,
+                    "db_host": DB_HOST,
+                    "db_user": DB_USER,
+                    "db_reachable": db_reachable(),
+                })
+            else:
+                self._send(404, {"error": "not found", "path": path})
+
+        def log_message(self, fmt, *args):
+            log.debug("%s - %s", self.address_string(), fmt % args)
+
+
+    if __name__ == "__main__":
+        log.info("web-api basliyor: env=%s port=%s cache=%s", APP_ENV, PORT, CACHE_ENABLED)
+        ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: production
+  labels:
+    app: web
+    tier: frontend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+        tier: frontend
+        db-access: "true"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: production
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: environment
+                    operator: In
+                    values:
+                      - production
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: web
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              echo "[init] PostgreSQL ${DB_HOST}:${DB_PORT} bekleniyor..."
+              until pg_isready -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -t 2; do
+                echo "[init] PostgreSQL henuz hazir degil, 2 sn sonra tekrar denenecek"
+                sleep 2
+              done
+              echo "[init] PostgreSQL hazir. Ana web container'i baslatiliyor."
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_PORT
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_USER
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      containers:
+        - name: web
+          image: python:3.12-alpine
+          command: ["python", "-u", "/app/app.py"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_DB
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 128Mi
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: app-code
+          configMap:
+            name: web-app-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: production
+  labels:
+    app: web
+spec:
+  type: ClusterIP
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# /metrics yolu icin ayri backend: PostgreSQL metriklerini Prometheus
+# formatinda sunan postgres-exporter.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: production
+  labels:
+    app: postgres-exporter
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+        tier: monitoring
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: production
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: environment
+                    operator: In
+                    values:
+                      - production
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          ports:
+            - name: metrics
+              containerPort: 9187
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_DB
+            - name: DATA_SOURCE_URI
+              value: "postgres.production.svc.cluster.local:5432/$(POSTGRES_DB)?sslmode=disable"
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_USER
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds
+                  key: POSTGRES_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: production
+  labels:
+    app: postgres-exporter
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres-exporter
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: metrics
+      protocol: TCP

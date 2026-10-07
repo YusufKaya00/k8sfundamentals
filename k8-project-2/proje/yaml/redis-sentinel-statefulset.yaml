@@ -1,0 +1,233 @@
+# =============================================================================
+# Redis StatefulSet (2 replika: 1 master + 1 replica) + Sentinel sidecar
+# - Headless service ile her pod stabil DNS kimligi alir:
+#     redis-0.redis-headless.staging.svc.cluster.local  (baslangicta master)
+#     redis-1.redis-headless.staging.svc.cluster.local  (replica)
+# - volumeClaimTemplates ile her pod kendi PVC'sine (data-redis-N) sahiptir.
+# - Init container, sentinel'e mevcut master'i sorar; bilgi yoksa redis-0'i
+#   master kabul eder. Boylece pod yeniden basladiginda split-brain onlenir.
+# NOT: 2 sentinel ile otomatik failover icin cogunluk (2/2) gerekir; gercek
+# bir production kurulumunda en az 3 sentinel onerilir.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+  namespace: staging
+  labels:
+    app: redis
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+    - name: sentinel
+      port: 26379
+      targetPort: sentinel
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: staging
+  labels:
+    app: redis
+data:
+  redis.conf: |
+    bind 0.0.0.0
+    port 6379
+    protected-mode no
+    dir /data
+    appendonly yes
+    appendfsync everysec
+    save 900 1
+    save 300 10
+    replica-read-only yes
+    maxmemory 100mb
+    maxmemory-policy allkeys-lru
+  init.sh: |
+    #!/bin/sh
+    set -eu
+    HOST="$(hostname)"
+    SVC="redis-headless.${POD_NAMESPACE}.svc.cluster.local"
+    MY_FQDN="${HOST}.${SVC}"
+    MASTER_FQDN=""
+
+    # 1) Diger pod'daki sentinel'e guncel master'i sor
+    for i in 0 1; do
+      PEER="redis-${i}"
+      if [ "${PEER}" = "${HOST}" ]; then
+        continue
+      fi
+      RESULT="$(timeout 5 redis-cli -h "${PEER}.${SVC}" -p 26379 SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -n 1 || true)"
+      if [ -n "${RESULT}" ]; then
+        MASTER_FQDN="${RESULT}"
+        echo "[init] Sentinel (${PEER}) guncel master'i bildirdi: ${MASTER_FQDN}"
+        break
+      fi
+    done
+
+    # 2) Sentinel bilgisi yoksa ilk kurulum: redis-0 master
+    if [ -z "${MASTER_FQDN}" ]; then
+      MASTER_FQDN="redis-0.${SVC}"
+      echo "[init] Sentinel bilgisi alinamadi, varsayilan master: ${MASTER_FQDN}"
+    fi
+
+    # 3) redis.conf olustur
+    cp /config/redis.conf /runtime/redis.conf
+    echo "replica-announce-ip ${MY_FQDN}" >> /runtime/redis.conf
+    if [ "${MASTER_FQDN}" = "${MY_FQDN}" ]; then
+      echo "[init] ${HOST} MASTER olarak baslatiliyor"
+    else
+      echo "replicaof ${MASTER_FQDN} 6379" >> /runtime/redis.conf
+      echo "[init] ${HOST} REPLICA olarak baslatiliyor (master: ${MASTER_FQDN})"
+    fi
+
+    # 4) sentinel.conf olustur (sentinel bu dosyayi calisirken yeniden yazar)
+    cat > /runtime/sentinel.conf <<EOF
+    port 26379
+    dir /tmp
+    sentinel resolve-hostnames yes
+    sentinel announce-hostnames yes
+    sentinel announce-ip ${MY_FQDN}
+    sentinel monitor mymaster ${MASTER_FQDN} 6379 1
+    sentinel down-after-milliseconds mymaster 5000
+    sentinel failover-timeout mymaster 60000
+    sentinel parallel-syncs mymaster 1
+    EOF
+    echo "[init] Konfigurasyon hazir."
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: staging
+  labels:
+    app: redis
+spec:
+  serviceName: redis-headless
+  replicas: 2
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: redis
+      initContainers:
+        - name: config-init
+          image: redis:7.2-alpine
+          command: ["sh", "/config/init.sh"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: 20m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: runtime
+              mountPath: /runtime
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          command: ["redis-server", "/runtime/redis.conf"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 192Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: runtime
+              mountPath: /runtime
+        - name: sentinel
+          image: redis:7.2-alpine
+          command: ["redis-server", "/runtime/sentinel.conf", "--sentinel"]
+          ports:
+            - name: sentinel
+              containerPort: 26379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "-p", "26379", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: sentinel
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: runtime
+              mountPath: /runtime
+      volumes:
+        - name: config
+          configMap:
+            name: redis-config
+            defaultMode: 0755
+        - name: runtime
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: redis
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

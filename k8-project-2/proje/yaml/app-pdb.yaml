@@ -1,0 +1,17 @@
+# Production web pod'lari icin PodDisruptionBudget (policy/v1)
+# Gonullu kesintilerde (drain, eviction, node bakimi) en az 1 web pod'u
+# daima ayakta kalir.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-pdb
+  namespace: production
+  labels:
+    app: web
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: web
+  # Zaten sagliksiz (Ready olmayan) pod'larin tahliyesi drain islemini kilitlemesin.
+  unhealthyPodEvictionPolicy: AlwaysAllow

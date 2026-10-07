@@ -1,0 +1,30 @@
+# staging namespace'indeki PostgreSQL pod'una SADECE ayni namespace icindeki
+# "app=web" ve "db-access=true" etiketli pod'lar 5432/TCP uzerinden erisebilir.
+# Bu policy "app=postgres" pod'unu sectigi icin, listelenmeyen tum diger
+# kaynaklardan (diger pod'lar, diger namespace'ler, cluster disi) gelen
+# ingress trafigi otomatik olarak reddedilir.
+#
+# NOT: NetworkPolicy'nin uygulanabilmesi icin cluster'in NetworkPolicy
+# destekleyen bir CNI ile (ornegin: minikube start --cni=calico) kurulmus olmasi gerekir.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-web-only
+  namespace: staging
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # namespaceSelector olmadan kullanilan podSelector yalnizca
+        # policy'nin bulundugu namespace'teki (staging) pod'lari eslestirir.
+        - podSelector:
+            matchLabels:
+              app: web
+              db-access: "true"
+      ports:
+        - protocol: TCP
+          port: 5432

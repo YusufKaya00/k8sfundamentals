@@ -1,0 +1,123 @@
+# =============================================================================
+# Veritabani Yedekleme: shared PVC + CronJob (batch/v1)
+# Her gece 02:00 (Europe/Istanbul) calisir. Test icin elle tetiklenebilir:
+#   kubectl create job db-backup-manual-1 --from=cronjob/db-backup-job -n production
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-backup-pvc
+  namespace: production
+  labels:
+    app: db-backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup-job
+  namespace: production
+  labels:
+    app: db-backup
+spec:
+  schedule: "0 2 * * *"
+  timeZone: "Europe/Istanbul"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    metadata:
+      labels:
+        app: db-backup
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: db-backup
+        spec:
+          restartPolicy: Never
+          tolerations:
+            - key: dedicated
+              operator: Equal
+              value: production
+              effect: NoSchedule
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: environment
+                        operator: In
+                        values:
+                          - production
+            # Yedek job'u PostgreSQL ile ayni node'a yerlesir; boylece RWO
+            # backup PVC'si her calismada ayni node uzerinden kullanilir.
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      app: postgres
+          containers:
+            - name: pg-dump
+              image: postgres:16-alpine
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-creds
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-creds
+                      key: POSTGRES_PASSWORD
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-creds
+                      key: POSTGRES_DB
+                - name: RETENTION_DAYS
+                  value: "7"
+              command:
+                - sh
+                - -c
+                - |
+                  set -euo pipefail
+                  TS="$(date +%Y%m%d-%H%M%S)"
+                  FILE="/backup/${PGDATABASE}-${TS}.sql.gz"
+                  echo "[db-backup] $(date -Iseconds) yedekleme basladi -> ${PGHOST}:${PGPORT}/${PGDATABASE}"
+                  pg_isready -t 30
+                  pg_dump --no-owner --clean --if-exists | gzip -9 > "${FILE}"
+                  gzip -t "${FILE}"
+                  SIZE="$(du -h "${FILE}" | cut -f1)"
+                  echo "[db-backup] SUCCESS: ${FILE} olusturuldu (${SIZE})"
+                  find /backup -name "*.sql.gz" -type f -mtime +"${RETENTION_DAYS}" -print -delete
+                  echo "[db-backup] Mevcut yedekler:"
+                  ls -lh /backup
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: db-backup-pvc
