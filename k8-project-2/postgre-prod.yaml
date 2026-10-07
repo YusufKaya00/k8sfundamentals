@@ -1,53 +1,6 @@
+
+
 apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: postgres-pvc
-  namespace: production
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 2Gi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgres-service
-  namespace: production
-  labels:
-    app: postgres
-spec:
-  type: ClusterIP
-  ports:
-    - port: 5432
-      targetPort: 5432
-      name: postgresql
-  selector:
-    app: postgres
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: postgres-deployment
-  namespace: production
-  labels:
-    app: postgres
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate # Disk çakışmasını (RWO) önlemek için Recreate kullanılır
-  selector:
-    matchLabels:
-      app: postgres
-  template:
-    metadata:
-      labels:
-        app: postgres
-    spec:
-     nodeselector
-      containers:
-        - name: postgresqlapiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
@@ -85,7 +38,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    type: Recreate # RWO diskin aynı anda tek pod tarafından mount edilmesini garanti eder
   selector:
     matchLabels:
       app: postgres
@@ -94,15 +47,24 @@ spec:
       labels:
         app: postgres
     spec:
-      # Sadece production worker'lara yönlendirir
-      nodeSelector:
-        environment: production
-      # Production worker taint'ini tolere eder
+      # 1. Taint Toleration (Worker üzerindeki NoSchedule engelini aşar)
       tolerations:
         - key: "dedicated"
           operator: "Equal"
           value: "production"
           effect: "NoSchedule"
+
+      # 2. Node Affinity (Pod'un kesinlikle production etiketli node'lara gitmesini zorunlu kılar)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: environment
+                    operator: In
+                    values:
+                      - production
+
       containers:
         - name: postgresql
           image: postgres:16-alpine
@@ -135,44 +97,6 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-      volumes:
-        - name: postgres-storage
-          persistentVolumeClaim:
-            claimName: postgres-pvc
-          image: postgres:16-alpine
-          ports:
-            - containerPort: 5432
-              name: postgresql
-      
-    
-          env:
-            - name: POSTGRES_DB
-              value: "appdb"
-            - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-creds
-                  key: POSTGRES_USER
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-creds
-                  key: POSTGRES_PASSWORD
-            - name: PGDATA
-              value: /var/lib/postgresql/data/pgdata
-         
-          volumeMounts:
-            - name: postgres-storage
-              mountPath: /var/lib/postgresql/data
-              subPath: pgdata # lost+found çakışmasını engellemek için subPath şarttır
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 250m
-              memory: 256Mi
-         
       volumes:
         - name: postgres-storage
           persistentVolumeClaim:
