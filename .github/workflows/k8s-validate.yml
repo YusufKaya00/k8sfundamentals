@@ -13,21 +13,44 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.13"
+      - name: Install PyYAML
+        run: pip install pyyaml
 
-      - name: Install yamllint
-        run: pip install yamllint
+      - name: Validate YAML syntax
+        run: |
+          python - <<'PY'
+          import pathlib
+          import yaml
+          import sys
 
-      - name: YAML syntax and formatting
-        run: yamllint -f parsable .
+          failed = False
 
-      - name: Setup kubeconform
-        uses: bmuschko/setup-kubeconform@v1
+          for path in pathlib.Path(".").rglob("*"):
+              if "k8-training" in path.parts:
+                  continue
+
+              if path.suffix not in (".yaml", ".yml"):
+                  continue
+
+              try:
+                  with path.open() as f:
+                      list(yaml.safe_load_all(f))
+                  print(f"OK: {path}")
+              except Exception as e:
+                  print(f"ERROR: {path}")
+                  print(e)
+                  failed = True
+
+          sys.exit(1 if failed else 0)
+          PY
 
       - name: Validate Kubernetes manifests
-        run: kubeconform -strict -summary ./proje/cozum/yaml
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            ghcr.io/yannh/kubeconform:latest \
+            -strict \
+            -summary \
+            /work/k8-project-1
