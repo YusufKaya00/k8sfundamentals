@@ -1,0 +1,33 @@
+name: Validate Kubernetes YAML
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: YAML syntax and formatting
+        run: yamllint .
+
+      - name: Setup kubeconform
+        uses: bmuschko/setup-kubeconform@v1
+
+      - name: Validate Kubernetes manifests
+        run: kubeconform -strict -summary ./proje/cozum/yaml
