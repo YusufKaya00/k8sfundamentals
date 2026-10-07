@@ -4,33 +4,40 @@ metadata:
   name: hostpath
 spec:
   containers:
-  - name: hostpathcontainer
-    image: ozgurozturknet/k8s:blue
-    ports:
-    - containerPort: 80
-    livenessProbe:
-      httpGet:
-        path: /healthcheck
-        port: 80
-      initialDelaySeconds: 5
-      periodSeconds: 5
-    volumeMounts:
-    - name: directory-vol
-      mountPath: /dir1
-    - name: dircreate-vol
-      mountPath: /cache
-    - name: file-vol
-      mountPath: /cache/config.json       
+    - name: hostpathcontainer
+      image: ozgurozturknet/k8s:blue
+      ports:
+        - containerPort: 80
+
+      livenessProbe:
+        httpGet:
+          path: /healthcheck
+          port: 80
+        initialDelaySeconds: 5
+        periodSeconds: 5
+
+      volumeMounts:
+        - name: directory-vol
+          mountPath: /dir1
+
+        - name: dircreate-vol
+          mountPath: /cache
+
+        - name: file-vol
+          mountPath: /config/config.json
+
   volumes:
-  - name: directory-vol
-    hostPath:
-      path: /tmp
-      type: Directory
-  - name: dircreate-vol
-    hostPath:
-      path: /cache
-      type: DirectoryOrCreate
-  - name: file-vol
-    hostPath:
-      path: /cache/config.json
-      type: FileOrCreate
+    - name: directory-vol
+      hostPath:
+        path: /tmp
+        type: Directory
+
+    - name: dircreate-vol
+      hostPath:
+        path: /cache
+        type: DirectoryOrCreate
+
+    - name: file-vol
+      hostPath:
+        path: /cache/config.json
+        type: FileOrCreate
