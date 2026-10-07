@@ -20,7 +20,7 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: fluentd-elasticsearch
-        image: dhi.io/fluentd-kubernetes-daemonset:1-debian-elasticsearch7-dev
+        image: fluent/fluentd-kubernetes-daemonset:v1-debian-elasticsearch7
         resources:
           limits:
             memory: 200Mi
