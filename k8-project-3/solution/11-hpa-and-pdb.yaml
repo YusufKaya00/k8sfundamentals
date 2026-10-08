@@ -1,8 +1,18 @@
+# =============================================================================
+# 11-hpa-and-pdb.yaml
+# OCI OKE Production Laboratuvarı: Otomatik Ölçeklendirme ve Kesinti Bütçesi
+# - HorizontalPodAutoscaler: CPU %60 kullanımı aştığında min 2, max 8 pod ölçekler
+# - PodDisruptionBudget: Node drenajı veya bakım anında en az 1 web pod'unun
+#   daima ayakta ve trafiğe hizmet verir durumda kalmasını garanti eder.
+# =============================================================================
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: web-api-hpa
   namespace: production
+  labels:
+    app: web-api
+    environment: production
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -17,14 +27,33 @@ spec:
         target:
           type: Utilization
           averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: web-api-pdb
   namespace: production
+  labels:
+    app: web-api
+    environment: production
 spec:
+  # Bakım anlarında en az 1 replikanın Ready durumda kalması şart koşulur
   minAvailable: 1
   selector:
     matchLabels:
       app: web-api
+  # Sağlıksız pod'ların tahliye sürecini kilitlemesini önler
+  unhealthyPodEvictionPolicy: AlwaysAllow
