@@ -69,7 +69,7 @@ spec:
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data
-              subPath: pgdata # lost+found çakışmasını engellemek için subPath şarttır
+             # subPath: pgdata # lost+found çakışmasını engellemek için subPath şarttır
           resources:
             requests:
               cpu: 100m
