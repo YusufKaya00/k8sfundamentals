@@ -1,3 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -6,8 +18,8 @@ metadata:
 spec:
   schedule: "0 2 * * *"
   concurrencyPolicy: Forbid         # Önceki yedek bitmeden yenisini başlatmaz
-  successfulJobsHistoryLimit: 3     # Başarılı son 3 pod kaydını saklar
-  failedJobsHistoryLimit: 1         # Hatalı son 1 pod kaydını saklar
+  successfulJobsHistoryLimit: 3     # Başarılı son 3 pod kaydını tutar
+  failedJobsHistoryLimit: 1         # Hatalı son 1 pod kaydını tutar
   jobTemplate:
     spec:
       template:
@@ -39,13 +51,15 @@ spec:
                 - |
                   set -e
                   TARGET_DB="${POSTGRES_DB:-postgres}"
+                  BACKUP_FILE="/backups/backup-${TARGET_DB}-$(date +%Y%m%d_%H%M%S).sql"
+
                   echo "[$(date)] PostgreSQL ($DB_HOST:$DB_PORT) için '$TARGET_DB' veritabanı yedeği başlatılıyor..."
-                  
-                  # pg_dump komutu stdout/geçici dosyaya aktarılır
-                  pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$POSTGRES_USER" "$TARGET_DB" > /tmp/backup.sql
-                  
-                  BACKUP_SIZE=$(wc -c < /tmp/backup.sql)
-                  echo "[$(date)] YEDEKLEME BAŞARILI: '$TARGET_DB' veritabanından ${BACKUP_SIZE} bayt dump alındı."
+
+                  # Çıktı PVC'nin mount edildiği /backups dizinine yazılır
+                  pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$POSTGRES_USER" "$TARGET_DB" > "$BACKUP_FILE"
+
+                  BACKUP_SIZE=$(wc -c < "$BACKUP_FILE")
+                  echo "[$(date)] YEDEKLEME BAŞARILI: '$BACKUP_FILE' oluşturuldu (${BACKUP_SIZE} bayt)."
               env:
                 - name: DB_HOST
                   value: "postgres-service"
@@ -81,4 +95,3 @@ spec:
             - name: backup-storage
               persistentVolumeClaim:
                 claimName: backup-pvc
-          
