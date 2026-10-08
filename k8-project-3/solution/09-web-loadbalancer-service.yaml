@@ -1,0 +1,33 @@
+# =============================================================================
+# 09-web-loadbalancer-service.yaml
+# OCI OKE Production Laboratuvarı: OCI Flexible Load Balancer Servisi
+# - OCI Cloud Controller Manager (CCM) ile otomatik Flexible LB oluşturur
+# - Minimum: 10 Mbps, Maksimum: 40 Mbps dinamik bant genişliği tahsis eder
+# - Dış internet trafiğini (Port 80) web-api pod'larının Port 8080'ine yönlendirir
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-api-lb
+  namespace: production
+  labels:
+    app: web-api
+    environment: production
+  annotations:
+    # OCI Native Load Balancer Tipi: Flexible Shape
+    service.beta.kubernetes.io/oci-load-balancer-shape: "flexible"
+    # Minimum Bant Genişliği (Mbps)
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-min: "10"
+    # Maksimum Bant Genişliği (Mbps)
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-max: "40"
+    # OCI VCN Güvenlik Listeleri (Security Lists) kural yönetim modu
+    service.beta.kubernetes.io/oci-load-balancer-security-list-management-mode: "All"
+spec:
+  type: LoadBalancer
+  selector:
+    app: web-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
