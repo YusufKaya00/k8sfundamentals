@@ -74,10 +74,10 @@ spec:
                 limits:
                   cpu: 200m
                   memory: 256Mi
-          volumeMounts:
+              volumeMounts:
                 - name: backup-storage
                   mountPath: /backups
-        volumes:
+          volumes:
             - name: backup-storage
               persistentVolumeClaim:
                 claimName: backup-pvc
