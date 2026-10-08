@@ -42,7 +42,7 @@ spec:
       
         - name: web-api
           image: python:3.11-slim
-          command: ["sh", "-c", "echo 'API ayakta' && sleep 3600"]
+          command: ["python3", "-m", "http.server", "8000"]
           ports:
             - containerPort: 8000
               name: http
