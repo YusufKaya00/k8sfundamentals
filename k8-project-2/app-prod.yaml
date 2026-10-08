@@ -54,12 +54,12 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: postgres-creds
+                  name: postgres-secret
                   key: POSTGRES_USER
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-creds
+                  name: postgres-secret
                   key: POSTGRES_PASSWORD
           resources:
             requests:
