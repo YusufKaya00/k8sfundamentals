@@ -7,7 +7,7 @@ spec:
   ingressClassName: nginx
   rules:
     - host : staging.lab.internal  
-      htpp:
+      http:
        paths:
           - path: /
             pathType: Prefix
