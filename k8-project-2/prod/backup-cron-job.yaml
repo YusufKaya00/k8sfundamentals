@@ -1,0 +1,84 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup-job
+  namespace: production
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid         # Önceki yedek bitmeden yenisini başlatmaz
+  successfulJobsHistoryLimit: 3     # Başarılı son 3 pod kaydını saklar
+  failedJobsHistoryLimit: 1         # Hatalı son 1 pod kaydını saklar
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: db-backup
+        spec:
+          restartPolicy: OnFailure
+          tolerations:
+            - key: "dedicated"
+              operator: "Equal"
+              value: "production"
+              effect: "NoSchedule"
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: environment
+                        operator: In
+                        values:
+                          - production
+          containers:
+            - name: postgres-backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TARGET_DB="${POSTGRES_DB:-postgres}"
+                  echo "[$(date)] PostgreSQL ($DB_HOST:$DB_PORT) için '$TARGET_DB' veritabanı yedeği başlatılıyor..."
+                  
+                  # pg_dump komutu stdout/geçici dosyaya aktarılır
+                  pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$POSTGRES_USER" "$TARGET_DB" > /tmp/backup.sql
+                  
+                  BACKUP_SIZE=$(wc -c < /tmp/backup.sql)
+                  echo "[$(date)] YEDEKLEME BAŞARILI: '$TARGET_DB' veritabanından ${BACKUP_SIZE} bayt dump alındı."
+              env:
+                - name: DB_HOST
+                  value: "postgres-service"
+                - name: DB_PORT
+                  value: "5432"
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+                      optional: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+          volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+        volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+          
