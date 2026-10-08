@@ -1,31 +1,14 @@
-# =============================================================================
-# 12-rbac-and-client-pod.yaml
-# OCI OKE Production Laboratuvarı: En Az Yetki Prensibi (RBAC) & API Client
-# - ServiceAccount: "api-client-sa"
-# - Role: Yalnızca production namespace'indeki "pods" ve "events" kaynaklarını
-#   "get" ve "list" etme yetkisi verir.
-# - RoleBinding: Role ile ServiceAccount'ı bağlar.
-# - Pod: Bu ServiceAccount'ın otomatik mount edilen token'ı ile Kubernetes
-#   API Server'a HTTPS (CA sertifikalı) sorgusu atan güvenli curl istemcisi.
-# =============================================================================
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: api-client-sa
   namespace: production
-  labels:
-    app: api-client
-    environment: production
-automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: pod-event-reader
   namespace: production
-  labels:
-    app: api-client
-    environment: production
 rules:
   - apiGroups: [""]
     resources: ["pods", "events"]
@@ -36,9 +19,6 @@ kind: RoleBinding
 metadata:
   name: pod-event-reader-binding
   namespace: production
-  labels:
-    app: api-client
-    environment: production
 subjects:
   - kind: ServiceAccount
     name: api-client-sa
@@ -53,50 +33,12 @@ kind: Pod
 metadata:
   name: api-client-pod
   namespace: production
-  labels:
-    app: api-client
-    environment: production
 spec:
   serviceAccountName: api-client-sa
-  terminationGracePeriodSeconds: 5
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 100
-    runAsGroup: 101
   containers:
     - name: curl
       image: curlimages/curl:8.10.1
-      command:
-        - sh
-        - -c
-        - |
-          APISERVER="https://kubernetes.default.svc"
-          SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
-          NS="$(cat ${SA_DIR}/namespace)"
-          TOKEN="$(cat ${SA_DIR}/token)"
-
-          echo "=========================================================="
-          echo "[api-client] OKE Kubernetes API Server Bağlantısı Başlatılıyor"
-          echo "[api-client] Hedef Namespace: ${NS}"
-          echo "=========================================================="
-
-          echo "\n>>> 1. Pod Listesi Sorgusu (/api/v1/namespaces/${NS}/pods):"
-          curl -sS --cacert "${SA_DIR}/ca.crt" \
-               -H "Authorization: Bearer ${TOKEN}" \
-               "${APISERVER}/api/v1/namespaces/${NS}/pods" \
-               | grep -E '"(name|phase)"' | head -n 30
-
-          echo "\n>>> 2. Event Listesi Sorgusu (/api/v1/namespaces/${NS}/events):"
-          curl -sS --cacert "${SA_DIR}/ca.crt" \
-               -H "Authorization: Bearer ${TOKEN}" \
-               "${APISERVER}/api/v1/namespaces/${NS}/events" \
-               | grep -E '"(reason|message)"' | head -n 20
-
-          echo "\n[api-client] Başlangıç sorguları tamamlandı. Pod bekleme modunda..."
-          while true; do sleep 3600; done
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
+      command: ["sleep", "3600"]
       resources:
         requests:
           cpu: 10m

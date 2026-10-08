@@ -1,29 +1,15 @@
-# =============================================================================
-# 08-network-policy.yaml
-# OCI OKE Production Laboratuvarı: Mikro Segmentasyon ve Ağ Güvenliği
-# - PostgreSQL pod'una Ingress trafiğini varsayılan olarak engeller (Default-Deny)
-# - Yalnızca aynı namespace içindeki "app: web-api" etiketli pod'lardan gelen
-#   5432/TCP bağlantılarına izin verir.
-# - Dış dünyadan, diğer pod'lardan veya farklı namespace'lerden gelen doğrudan
-#   veritabanı bağlantılarını OKE CNI katmanında reddeder.
-# =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: postgres-allow-web-api-only
+  name: postgres-network-policy
   namespace: production
-  labels:
-    app: postgres
-    environment: production
 spec:
-  # Bu kural 'app: postgres' etiketine sahip veritabanı pod'larını hedefler
   podSelector:
     matchLabels:
       app: postgres
   policyTypes:
     - Ingress
   ingress:
-    # Yalnızca etiketli web-api pod'larından gelen trafiğe izin ver
     - from:
         - podSelector:
             matchLabels:

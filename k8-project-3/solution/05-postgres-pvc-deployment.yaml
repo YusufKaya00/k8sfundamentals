@@ -1,26 +1,14 @@
-# =============================================================================
-# 05-postgres-pvc-deployment.yaml
-# OCI OKE Production Laboratuvarı: OCI Block Volume Destekli PostgreSQL
-# - storageClassName: oci-bv (Oracle Cloud Infrastructure Block Volume CSI)
-# - Sadece "workload=database:NoSchedule" taint'li ve "tier=database" etiketli
-#   3. worker node üzerinde çalışacak toleration ve nodeSelector tanımlıdır.
-# =============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-data-pvc
   namespace: production
-  labels:
-    app: postgres
-    environment: production
 spec:
-  # OCI OKE Block Volume CSI StorageClass
   storageClassName: oci-bv
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      # OCI Block Volume hizmetinde minimum disk boyutu 50 GiB'dir
       storage: 50Gi
 ---
 apiVersion: apps/v1
@@ -30,11 +18,8 @@ metadata:
   namespace: production
   labels:
     app: postgres
-    tier: database
-    environment: production
 spec:
   replicas: 1
-  # RWO Block Volume tek node'a bağlanabildiğinden güncellemede önce eski pod kapatılır
   strategy:
     type: Recreate
   selector:
@@ -44,48 +29,22 @@ spec:
     metadata:
       labels:
         app: postgres
-        tier: database
-        environment: production
     spec:
-      # 3. node üzerindeki veritabanı taint'ini tolere et
       tolerations:
         - key: workload
           operator: Equal
           value: database
           effect: NoSchedule
-      # Yalnızca tier=database etiketli 3. worker node'a yerleş
       nodeSelector:
         tier: database
       containers:
         - name: postgres
           image: postgres:16-alpine
           ports:
-            - name: postgres
-              containerPort: 5432
+            - containerPort: 5432
           envFrom:
             - secretRef:
                 name: postgres-secret
-          env:
-            - name: PGDATA
-              value: /var/lib/postgresql/data/pgdata
-          readinessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-            initialDelaySeconds: 10
-            periodSeconds: 5
-            timeoutSeconds: 3
-          livenessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 3
           resources:
             requests:
               cpu: 250m
@@ -94,10 +53,10 @@ spec:
               cpu: 1000m
               memory: 1Gi
           volumeMounts:
-            - name: postgres-storage
+            - name: postgres-data
               mountPath: /var/lib/postgresql/data
       volumes:
-        - name: postgres-storage
+        - name: postgres-data
           persistentVolumeClaim:
             claimName: postgres-data-pvc
 ---
@@ -108,13 +67,10 @@ metadata:
   namespace: production
   labels:
     app: postgres
-    tier: database
 spec:
   type: ClusterIP
   selector:
     app: postgres
   ports:
-    - name: postgres
-      port: 5432
-      targetPort: postgres
-      protocol: TCP
+    - port: 5432
+      targetPort: 5432
