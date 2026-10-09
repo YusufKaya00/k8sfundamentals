@@ -1,0 +1,8 @@
+apiVersion: v2
+name: web-api
+description: Enterprise SRE Web API Microservice Helm Chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: platform-sre-team

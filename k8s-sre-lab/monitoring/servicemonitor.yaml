@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: web-api-monitor
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/name: web-api
+spec:
+  # İzlenecek namespace'ler
+  namespaceSelector:
+    matchNames:
+      - production
+      - default
+  # Hedef servisin etiketleri
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web-api
+  endpoints:
+    - port: http
+      path: /
+      interval: 15s
+      scrapeTimeout: 10s

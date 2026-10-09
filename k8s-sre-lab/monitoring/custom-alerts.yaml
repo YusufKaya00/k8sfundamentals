@@ -1,0 +1,33 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: custom-sre-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+    role: alert-rules
+spec:
+  groups:
+    - name: sre.application.alerts
+      rules:
+        # 1. Pod Çökmesi ve CrashLoopBackOff Uyarısı
+        - alert: PodCrashLooping
+          expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1 or rate(kube_pod_container_status_restarts_total[5m]) * 60 > 1
+          for: 1m
+          labels:
+            severity: critical
+            tier: sre
+          annotations:
+            summary: "Pod sürekli çöküyor (CrashLoopBackOff): {{ $labels.pod }}"
+            description: "{{ $labels.namespace }} içerisindeki {{ $labels.pod }} pod'u restart döngüsüne girdi veya çöktü."
+
+        # 2. CPU Kotasının %80'ini Aşma Uyarısı
+        - alert: HighPodCpuUsage
+          expr: (sum(rate(container_cpu_usage_seconds_total{container!=""}[5m])) by (pod, namespace) / sum(kube_pod_container_resource_limits{resource="cpu"}) by (pod, namespace)) * 100 > 80
+          for: 2m
+          labels:
+            severity: warning
+            tier: sre
+          annotations:
+            summary: "Yüksek CPU Tüketimi: {{ $labels.pod }}"
+            description: "{{ $labels.pod }} pod'u ayrılan CPU limitinin %80'inden fazlasını tüketiyor."

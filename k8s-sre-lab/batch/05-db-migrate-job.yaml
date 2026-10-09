@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate-job
+  namespace: production
+  labels:
+    app: db-migration
+    tier: database
+spec:
+  # Başarısızlık durumunda azami yeniden deneme sayısı
+  backoffLimit: 3
+  # Job'ın kilitlenmesini önlemek için maksimum çalışma süresi (5 dakika)
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: db-migration
+    spec:
+      restartPolicy: OnFailure
+      # DB node'undaki taint'i tolere et ve DB node'una yerleş
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: database
+          effect: NoSchedule
+      nodeSelector:
+        tier: database
+      containers:
+        - name: migrate
+          # Oracle Linux 9 / OKE FQDN İmaj Standardı
+          image: docker.io/library/postgres:16-alpine
+          env:
+            - name: PGHOST
+              value: "postgres"
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "[migration] PostgreSQL bağlantısı kontrol ediliyor..."
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -t 5; do
+                echo "[migration] Veritabanı henüz hazır değil, bekleniyor..."
+                sleep 2
+              done
+
+              echo "[migration] Tablo şeması oluşturuluyor ve tohum (seed) veriler basılıyor..."
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" << 'EOF'
+              CREATE TABLE IF NOT EXISTS customer_orders (
+                id SERIAL PRIMARY KEY,
+                customer_name VARCHAR(100) NOT NULL,
+                order_amount NUMERIC(10,2) NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+              );
+              INSERT INTO customer_orders (customer_name, order_amount)
+              VALUES ('Ahmet Yilmaz', 1250.50), ('Mehmet Demir', 4300.00), ('Ayse Kaya', 890.25);
+              SELECT COUNT(*) AS total_seeded_orders FROM customer_orders;
+              EOF
+              echo "[migration] Migrasyon ve seeding işlemi başarıyla tamamlandı!"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

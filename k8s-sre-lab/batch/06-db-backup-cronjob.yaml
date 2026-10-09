@@ -1,0 +1,111 @@
+# =============================================================================
+# batch/06-db-backup-cronjob.yaml
+# PostgreSQL Yedekleme CronJob ve OCI Block Volume Arşiv Deposu
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-backup-pvc
+  namespace: production
+  labels:
+    app: db-backup
+spec:
+  # OCI Block Volume dinamik depolama sınıfı
+  storageClassName: oci-bv
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup-cronjob
+  namespace: production
+  labels:
+    app: db-backup
+    tier: database
+spec:
+  # Her 30 dakikada bir çalıştır
+  schedule: "*/30 * * * *"
+  # Çakışmayı önle: Önceki yedekleme bitmeden yenisini başlatma
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    metadata:
+      labels:
+        app: db-backup
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app: db-backup
+        spec:
+          restartPolicy: OnFailure
+          # DB node'undaki taint'i tolere et
+          tolerations:
+            - key: workload
+              operator: Equal
+              value: database
+              effect: NoSchedule
+          nodeSelector:
+            tier: database
+          containers:
+            - name: pg-dump
+              # Oracle Linux 9 / OKE FQDN İmaj Standardı
+              image: docker.io/library/postgres:16-alpine
+              env:
+                - name: PGHOST
+                  value: "postgres"
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="/backup/${PGDATABASE}_${TIMESTAMP}.sql.gz"
+
+                  echo "[backup] PostgreSQL veritabanı yedekleme başlıyor: ${PGDATABASE}"
+                  pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" | gzip > "$BACKUP_FILE"
+
+                  echo "[backup] Yedek başarıyla OCI Block Volume diskine yazıldı: $BACKUP_FILE"
+                  ls -lh "$BACKUP_FILE"
+
+                  # 7 günden eski yedekleri otomatik temizle
+                  find /backup -name "*.sql.gz" -type f -mtime +7 -delete || true
+                  echo "[backup] Arşivleme tamamlandı."
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              volumeMounts:
+                - name: backup-volume
+                  mountPath: /backup
+          volumes:
+            - name: backup-volume
+              persistentVolumeClaim:
+                claimName: db-backup-pvc

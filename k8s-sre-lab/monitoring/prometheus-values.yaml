@@ -1,0 +1,89 @@
+# =============================================================================
+# monitoring/prometheus-values.yaml
+# Kube-Prometheus-Stack Lightweight Tuning for 3-Node OCI OKE Cluster
+# =============================================================================
+
+# Managed OKE kontrol düzlemi bileşenleri (Oracle tarafından yönetildiği için kapalı)
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+# 1. Prometheus Sunucusu Yapılandırması
+prometheus:
+  prometheusSpec:
+    # Trial ve kota tasarrufu için metrik saklama süresi
+    retention: 24h
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+
+    # Hafifletilmiş kaynak kullanımı (OOMKilled önleme)
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # Kota tasarrufu: Kalıcı Block Volume yerine emptyDir kullanımı
+    storageSpec:
+      emptyDir: {}
+
+    # Özel ServiceMonitor ve PrometheusRule nesnelerinin otomatik keşfi için kritik ayar:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+    # Web node'larına yerleşim
+    nodeSelector:
+      tier: web
+
+# 2. Grafana Gösterge Paneli Yapılandırması
+grafana:
+  enabled: true
+  adminPassword: "prom-operator"
+  
+  # Hafifletilmiş kaynak limitleri
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  persistence:
+    enabled: false
+
+  nodeSelector:
+    tier: web
+
+# 3. Alertmanager Yapılandırması
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    retention: 24h
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    storage:
+      emptyDir: {}
+    nodeSelector:
+      tier: web
+
+# 4. Prometheus Node-Exporter DaemonSet (Kritik: 3 node'un tamamını izlemeli)
+nodeExporter:
+  enabled: true
+  tolerations:
+    # DB node'undaki (workload=database:NoSchedule) taint'i tolere ederek 3 node'u da izler
+    - key: workload
+      operator: Equal
+      value: database
+      effect: NoSchedule

@@ -1,0 +1,76 @@
+# Default values for web-api chart.
+replicaCount: 2
+
+image:
+  # Oracle Linux 9 / OKE FQDN imaj standardı
+  registry: docker.io
+  repository: library/python
+  tag: "3.11-slim"
+  pullPolicy: IfNotPresent
+
+# Uygulama çalışma komutu
+command:
+  - "python3"
+  - "-m"
+  - "http.server"
+  - "8080"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+env:
+  APP_ENV: "production"
+  PORT: "8080"
+  LOG_LEVEL: "info"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+# Sıfır kesinti (Zero-Downtime) Graceful Shutdown
+lifecycle:
+  preStop:
+    enabled: true
+    sleepSeconds: 10
+
+# Sağlık kontrolleri
+probes:
+  startup:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 3
+    failureThreshold: 10
+  readiness:
+    enabled: true
+    periodSeconds: 5
+    failureThreshold: 3
+  liveness:
+    enabled: true
+    periodSeconds: 10
+    failureThreshold: 3
+
+# OKE Node Scheduling kuralları (Web worker node'larına sabitleme)
+nodeSelector:
+  tier: web
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: web-api
+
+# Metrik kazıma (ServiceMonitor desteği için etiket)
+metrics:
+  enabled: true
+  port: 8080
+  path: /
