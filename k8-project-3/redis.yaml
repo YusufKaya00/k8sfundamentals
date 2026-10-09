@@ -6,7 +6,7 @@ metadata:
   labels:
     app: redis
 spec:
-  clusterIP: None       # Headless Service tanımı
+  clusterIP: None       # Headless Service
   ports:
     - port: 6379
       name: redis
@@ -19,7 +19,7 @@ metadata:
   name: redis
   namespace: production
 spec:
-  serviceName: "redis-service"  # Headless Service ile birebir eşleşmelidir
+  serviceName: "redis-service"
   replicas: 2
   selector:
     matchLabels:
@@ -32,21 +32,15 @@ spec:
       tolerations:
         - key: "workload"
           operator: "Equal"
-          value: "production"
+          value: "database"
           effect: "NoSchedule"
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: tier
-                    operator: In
-                    values:
-                      - database
+      nodeSelector:
+        tier: database
+
       containers:
         - name: redis
-          image: redis:7-alpine
-          command: ["redis-server", "--appendonly", "yes"] # AOF kalıcılık modu açık
+          image: docker.io/library/redis:7-alpine
+          command: ["redis-server", "--appendonly", "yes"]
           ports:
             - containerPort: 6379
               name: redis
@@ -60,12 +54,13 @@ spec:
           volumeMounts:
             - name: redis-data
               mountPath: /data
-  # Her pod için otomatik ve bağımsız PVC üreten şablon:
+  # Her pod için OCI CSI üzerinden dinamik 50Gi PVC üretir
   volumeClaimTemplates:
     - metadata:
         name: redis-data
       spec:
         accessModes: [ "ReadWriteOnce" ]
+        storageClassName: "oci-bv"
         resources:
           requests:
-            storage: 10Gi
+            storage: 50Gi
