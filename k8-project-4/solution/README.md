@@ -14,26 +14,32 @@ Bu laboratuvar; ham Kubernetes manifestolarından modern paket yönetimine (**He
 
 ---
 
+> Tüm komutlar `k8-project-4/solution/` dizini içerisinden çalıştırılacak şekilde yapılandırılmıştır.
+
+---
+
 ## Proje Dizin Yapısı
 
 ```text
-k8s-sre-lab/
-├── README.md                        # Adım adım SRE laboratuvar rehberi (bu dosya)
-├── charts/
-│   └── web-api/                     # Özel Mikroservis Helm Chart'ı
-│       ├── Chart.yaml               # Chart metadata
-│       ├── values.yaml              # Özelleştirilebilir parametreler
-│       └── templates/
-│           ├── deployment.yaml      # Deployment şablonu (probes, affinity, preStop)
-│           ├── service.yaml         # Service şablonu
-│           └── _helpers.tpl         # İsimlendirme ve etiket yardımcıları
-├── monitoring/
-│   ├── prometheus-values.yaml       # Kube-Prometheus-Stack OKE optimizasyon değerleri
-│   ├── servicemonitor.yaml          # Uygulama metrik kazıma (scrape) kuralı
-│   └── custom-alerts.yaml           # Özel CrashLoopBackOff & High CPU alarmları
-└── batch/
-    ├── 05-db-migrate-job.yaml       # Tek seferlik DB Migration/Seeding Job
-    └── 06-db-backup-cronjob.yaml    # Periyodik pg_dump ve Block Volume CronJob
+k8-project-4/
+├── README.md                        # Görev talimatları (ana dizin)
+└── solution/
+    ├── README.md                    # Adım adım çözümlü SRE rehberi (bu dosya)
+    ├── charts/
+    │   └── web-api/                 # Özel Mikroservis Helm Chart'ı
+    │       ├── Chart.yaml           # Chart metadata
+    │       ├── values.yaml          # Özelleştirilebilir parametreler
+    │       └── templates/
+    │           ├── deployment.yaml  # Deployment şablonu (probes, affinity, preStop)
+    │           ├── service.yaml     # Service şablonu
+    │           └── _helpers.tpl     # İsimlendirme ve etiket yardımcıları
+    ├── monitoring/
+    │   ├── prometheus-values.yaml   # Kube-Prometheus-Stack OKE optimizasyon değerleri
+    │   ├── servicemonitor.yaml      # Uygulama metrik kazıma (scrape) kuralı
+    │   └── custom-alerts.yaml       # Özel CrashLoopBackOff & High CPU alarmları
+    └── batch/
+        ├── 05-db-migrate-job.yaml   # Tek seferlik DB Migration/Seeding Job
+        └── 06-db-backup-cronjob.yaml # Periyodik pg_dump ve Block Volume CronJob
 ```
 
 ---
