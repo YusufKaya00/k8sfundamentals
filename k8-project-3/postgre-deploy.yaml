@@ -51,7 +51,7 @@ spec:
       tolerations:
         - key: "workloads"
           operator: "Equal"
-          value: "production"
+          value: "database"
           effect: "NoSchedule"
 
       # 2. Node Affinity (Pod'un kesinlikle production etiketli node'lara gitmesini zorunlu kılar)
