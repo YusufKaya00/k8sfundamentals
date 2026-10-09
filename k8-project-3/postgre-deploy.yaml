@@ -49,7 +49,7 @@ spec:
     spec:
       # 1. Taint Toleration (Worker üzerindeki NoSchedule engelini aşar)
       tolerations:
-        - key: "workloads"
+        - key: "workload"
           operator: "Equal"
           value: "database"
           effect: "NoSchedule"
