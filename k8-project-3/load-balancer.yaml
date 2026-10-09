@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-loadbalancer
+  namespace: production
+  labels:
+    app: web-api
+  annotations:
+    # OCI Yük Dengeleyici Şekli: Flexible (Esnek)
+    service.beta.kubernetes.io/oci-load-balancer-shape: "flexible"
+    # Dinamik bant genişliği aralığı: min 10 Mbps - max 40 Mbps
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-min: "10"
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-max: "40"
+spec:
+  type: LoadBalancer
+  selector:
+    app: web-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
