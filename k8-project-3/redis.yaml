@@ -20,7 +20,7 @@ metadata:
   namespace: production
 spec:
   serviceName: "redis-service"
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: redis
