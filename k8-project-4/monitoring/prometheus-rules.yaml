@@ -2,33 +2,32 @@ apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: order-service-alerts
-  namespace: production
+  namespace: monitoring
   labels:
-    # Prometheus Operator'ün kuralı yakalaması için zorunlu etiket:
     release: kubeprostack
     role: alert-rules
 spec:
   groups:
     - name: order.rules
       rules:
-        # 1. Kural: Yüksek Ödeme Gecikmesi (SLO İhlali)
+        # Test amaçlı: 0.05s üzeri her gecikmede 15 sn sonra tetiklenir
         - alert: HighPaymentLatency
-          expr: payment_gateway_latency_seconds{namespace="production"} > 0.35
-          for: 1m
+          expr: payment_gateway_latency_seconds{namespace="production"} > 0.05
+          for: 15s
           labels:
             severity: warning
             tier: web
           annotations:
-            summary: "Yuksek odeme ag gecidi gecikmesi saptandi"
-            description: "Pod {{ $labels.instance }} uzerinde odeme gecikmesi 350ms esigini asti (Guncel deger: {{ $value }}s)."
+            summary: "Yuksek odeme gecikmesi saptandi"
+            description: "Gecikme 50ms esigini asti."
 
-        # 2. Kural: Servis Erisilemezligi (SLA Kesintisi)
+        # Pod'lar 0'a indiğinde (hedef yok olduğunda) 15 sn sonra tetiklenir
         - alert: OrderServiceDown
-          expr: up{job="production/order-metrics-servicemonitor"} == 0
-          for: 30s
+          expr: absent(up{job="production/order-metrics-servicemonitor"} == 1)
+          for: 15s
           labels:
             severity: critical
             tier: web
           annotations:
-            summary: "Siparis metrik servisi down durumda"
-            description: "Pod {{ $labels.instance }} metrik veremiyor veya tamamen dustu."
+            summary: "Siparis servisi podlari bulunamiyor"
+            description: "Scrape hedefinde hicbir aktif pod yok."
