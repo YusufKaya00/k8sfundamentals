@@ -1,0 +1,30 @@
+# ==============================================================================
+# Argo Rollouts Lightweight OKE 3-Node Cluster Values
+# ==============================================================================
+
+controller:
+  nodeSelector:
+    tier: web
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 128Mi
+
+# Canli canary durumunu tarayicidan izlemek icin Dashboard
+dashboard:
+  enabled: true
+  nodeSelector:
+    tier: web
+  service:
+    type: ClusterIP
+    port: 3100
+  resources:
+    requests:
+      cpu: 30m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi

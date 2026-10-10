@@ -1,0 +1,68 @@
+# ==============================================================================
+# v3 (Bad Red - Synthetic Error Injection) Rollout & Automated Rollback
+# ==============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: payment-service
+  namespace: production
+  labels:
+    app: payment-service
+spec:
+  replicas: 4
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: payment-service
+  strategy:
+    canary:
+      canaryService: payment-service-canary
+      stableService: payment-service-stable
+      analysis:
+        templates:
+          - templateName: payment-success-rate
+      steps:
+        - setWeight: 25
+        - pause: { duration: 30s }
+        - setWeight: 50
+        - pause: { duration: 30s }
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: payment-api
+          image: docker.io/argoproj/rollouts-demo:bad-red # %80 HTTP 500 ureten hatali surum
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: COLOR
+              value: "red"
+            - name: ERROR_PERCENT
+              value: "80" # Sentetik hata enjeksiyonu
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5

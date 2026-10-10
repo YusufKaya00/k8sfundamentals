@@ -1,0 +1,72 @@
+# ==============================================================================
+# OCI OKE 3-Node Cluster Optimized ArgoCD Values (Lightweight Production)
+# ==============================================================================
+
+global:
+  nodeSelector:
+    tier: web
+
+# Single replica controllers to save trial memory/CPU
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+# Lightweight Web Server & API
+server:
+  replicas: 1
+  service:
+    type: ClusterIP # Port-forward veya Ingress ile erisilir
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  config:
+    application.instanceLabelKey: argocd.argoproj.io/instance
+
+# Repo Server (Manifest derleyici)
+repoServer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+# Redis Non-HA (Trial cluster icin minimum ayak izi)
+redis:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 128Mi
+
+# Devre disi birakilan agir opsiyonel bilesenler
+dex:
+  enabled: false # Dahili SSO, trial bellek tasarrufu icin kapali
+
+notifications:
+  enabled: false # Slack/Email bildirim daemon'i kapali
+
+applicationSet:
+  enabled: true # Faz 1 Adim 3 icin aktif
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
