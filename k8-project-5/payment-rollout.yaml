@@ -1,0 +1,55 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: payment-service
+  namespace: production
+  labels:
+    app: payment-service
+spec:
+  replicas: 4
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: payment-service
+  strategy:
+    canary:
+      stableService: payment-service-stable
+      canaryService: payment-service-canary
+      trafficRouting:
+        # Service Mesh (Istio/Linkerd) veya Ingress olmadan pod replika oranlarıyla trafik bölme
+        smi: {}
+      steps:
+        # 1. Aşama: Trafiğin %25'i canary sürüme (4 pod'un 1'i)
+        - setWeight: 25
+        - pause: { duration: 30s }
+        # 2. Aşama: Trafiğin %50'si canary sürüme (4 pod'un 2'si)
+        - setWeight: 50
+        - pause: { duration: 30s }
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: payment-service
+          image: docker.io/argoproj/rollouts-demo:blue
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 30m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5

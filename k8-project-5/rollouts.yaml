@@ -1,0 +1,26 @@
+# Controller ayarları
+controller:
+  replicas: 1
+  nodeSelector:
+    tier: web
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Görsel Arayüz (Dashboard)
+dashboard:
+  enabled: true
+  replicas: 1
+  nodeSelector:
+    tier: web
+  resources:
+    requests:
+      cpu: 30m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi

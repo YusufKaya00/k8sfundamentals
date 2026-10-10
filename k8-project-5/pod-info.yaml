@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: podinfo-service
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    # 1. Doğrudan upstream Helm deposu
+    repoURL: https://stefanprodan.github.io/podinfo
+    chart: podinfo
+    targetRevision: 6.6.0 # Sabit, deterministik sürüm kontrolü
+    helm:
+      releaseName: payment-frontend # Helm release adı
+      # 2. Değerlerin Zero-Fork yöntemiyle ezilmesi (Values Overrides)
+      valuesObject:
+        replicaCount: 2
+        ui:
+          message: "OKE GitOps Pipeline Aktif"
+          color: "#0f52ba" # Safir mavisi tema
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        nodeSelector:
+          tier: web
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
