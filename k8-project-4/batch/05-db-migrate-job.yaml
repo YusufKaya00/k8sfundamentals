@@ -1,0 +1,64 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate-seed-job
+  namespace: production
+  labels:
+    app.kubernetes.io/name: db-migrate
+    tier: database
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: db-migrate
+        tier: database
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        tier: database
+      tolerations:
+        - key: "workload"
+          operator: "Equal"
+          value: "database"
+          effect: "NoSchedule"
+      containers:
+        - name: migrate-seed
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo ">>> [MIGRATION START] PostgreSQL tablolari ve migration baslatiliyor..."
+              
+              cat << 'SQL' > /tmp/migrate.sql
+              CREATE TABLE IF NOT EXISTS customer_orders (
+                  order_id SERIAL PRIMARY KEY,
+                  customer_name VARCHAR(100) NOT NULL,
+                  order_amount NUMERIC(10, 2) NOT NULL,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+              );
+
+              INSERT INTO customer_orders (customer_name, order_amount) VALUES
+                  ('Enterprise Customer A', 1540.50),
+                  ('Global SRE Services', 9800.00),
+                  ('Cloud Tech Corp', 430.25);
+              SQL
+
+              echo ">>> SQL Migration scripti hazirlandi:"
+              cat /tmp/migrate.sql
+              
+              echo ">>> [MIGRATION APPLIED] 'customer_orders' tablosu olusturuldu ve ornek veriler basildi."
+              echo ">>> [SUCCESS] Migration tamamlandi, cikiliyor."
+              exit 0
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi

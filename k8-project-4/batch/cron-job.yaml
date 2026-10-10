@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup-cronjob
+  namespace: production
+  labels:
+    app.kubernetes.io/name: db-backup
+    tier: database
+spec:
+  # Her 30 dakikada bir çalıştır
+  schedule: "*/30 * * * *"
+  # Çakışmayı engelle: Önceki yedek bitmediyse yenisini başlatma
+  concurrencyPolicy: Forbid
+  # Geçmiş pod temizliği (etcd optimizasyonu)
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: db-backup
+            tier: database
+        spec:
+          restartPolicy: OnFailure
+          nodeSelector:
+            tier: database
+          tolerations:
+            - key: "workload"
+              operator: "Equal"
+              value: "database"
+              effect: "NoSchedule"
+          containers:
+            - name: postgres-backup
+              image: docker.io/library/postgres:16-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="/tmp/backup_customer_orders_${TIMESTAMP}.sql.gz"
+                  
+                  echo ">>> [BACKUP START] Periyodik veritabani yedekleme baslatildi: $(date)"
+                  
+                  # pg_dump ve gzip sikistirma simulasyonu
+                  echo "-- PostgreSQL Dump Simulation: customer_orders --" | gzip > "${BACKUP_FILE}"
+                  
+                  echo ">>> [BACKUP COMPLETED] Arsiv basariyla olusturuldu: ${BACKUP_FILE}"
+                  ls -lh "${BACKUP_FILE}"
+                  
+                  echo ">>> [SUCCESS] Yedekleme rutini tamamlandi."
+                  exit 0
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 100m
+                  memory: 128Mi
