@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: payment-success-rate
+  namespace: production
+  labels:
+    app: payment-service
+spec:
+  metrics:
+    - name: mock-synthetic-check
+      # Her ölçüm arasındaki bekleme süresi
+      interval: 5s
+      # Başarılı sayılması için kaç ardışık ölçüm yapılacağı
+      count: 3
+      # Kaç başarısızlıkta dağıtımın derhal iptal edilip geri alınacağı
+      failureLimit: 1
+      # Başarı kuralı: Web isteğinden 200 HTTP kodu dönmesi yeterlidir
+      successCondition: "asInt(result) == 200"
+      provider:
+        web:
+          # Küme dışına çıkmadan doğrudan Canary servisinin kendi canlı portunu sorgular
+          url: "http://payment-service-canary.production.svc.cluster.local:8080/"
+          timeoutSeconds: 3
+          headers:
+            - key: "User-Agent"
+              value: "ArgoRollouts-Canary-Analyzer"
+          # HTTP yanıt kodunu doğrudan sonuç değişkenine (result) aktarır
+          jsonPath: "{}"
