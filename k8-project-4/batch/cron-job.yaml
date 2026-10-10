@@ -7,11 +7,8 @@ metadata:
     app.kubernetes.io/name: db-backup
     tier: database
 spec:
-  # Her 30 dakikada bir çalıştır
   schedule: "*/30 * * * *"
-  # Çakışmayı engelle: Önceki yedek bitmediyse yenisini başlatma
   concurrencyPolicy: Forbid
-  # Geçmiş pod temizliği (etcd optimizasyonu)
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 2
   jobTemplate:
@@ -32,27 +29,34 @@ spec:
               operator: "Equal"
               value: "database"
               effect: "NoSchedule"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: db-backup-pvc
           containers:
             - name: postgres-backup
               image: docker.io/library/postgres:16-alpine
               imagePullPolicy: IfNotPresent
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
               command:
                 - /bin/sh
                 - -c
                 - |
                   set -e
                   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-                  BACKUP_FILE="/tmp/backup_customer_orders_${TIMESTAMP}.sql.gz"
+                  BACKUP_FILE="/backups/backup_customer_orders_${TIMESTAMP}.sql.gz"
                   
-                  echo ">>> [BACKUP START] Periyodik veritabani yedekleme baslatildi: $(date)"
+                  echo ">>> [BACKUP START] OCI Block Volume uzerine yedekleme baslatildi: $(date)"
                   
-                  # pg_dump ve gzip sikistirma simulasyonu
-                  echo "-- PostgreSQL Dump Simulation: customer_orders --" | gzip > "${BACKUP_FILE}"
+                  # Kalici diske .sql.gz dump simulasyonu
+                  echo "-- OCI Block Volume Backup: customer_orders $(date) --" | gzip > "${BACKUP_FILE}"
                   
-                  echo ">>> [BACKUP COMPLETED] Arsiv basariyla olusturuldu: ${BACKUP_FILE}"
-                  ls -lh "${BACKUP_FILE}"
+                  echo ">>> [SAVED] Dosya kalici diske yazildi:"
+                  ls -lh /backups/
                   
-                  echo ">>> [SUCCESS] Yedekleme rutini tamamlandi."
+                  echo ">>> [SUCCESS] Islem tamamlandi."
                   exit 0
               resources:
                 requests:
