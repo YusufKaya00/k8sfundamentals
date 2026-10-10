@@ -1,0 +1,58 @@
+replicaCount: 2
+
+image:
+  repository: docker.io/library/nginx
+  tag: "1.25-alpine"
+  pullPolicy: IfNotPresent
+
+tier: web
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+lifecycle:
+  preStopSleepSeconds: 10
+
+probes:
+  liveness:
+    path: /
+    port: 80
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readiness:
+    path: /
+    port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  startup:
+    path: /
+    port: 80
+    failureThreshold: 30
+    periodSeconds: 2
+
+# DB node taint'ine takılmayıp sadece 2 web node'una dağılması için:
+nodeSelector:
+  tier: web
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - web-api
+          topologyKey: kubernetes.io/hostname
