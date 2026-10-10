@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-metrics-exporter
+  namespace: production
+  labels:
+    app.kubernetes.io/name: custom-order-exporter
+    tier: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: custom-order-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: custom-order-exporter
+        tier: web
+    spec:
+      containers:
+        - name: metrics-app
+          image: docker.io/library/python:3.11-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              cat << 'PY' > /app.py
+              import http.server
+              import random
+              import time
+
+              class MetricsHandler(http.server.BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      if self.path == '/metrics':
+                          orders = int(time.time() % 1000)
+                          latency = round(random.uniform(0.05, 0.45), 3)
+                          active_users = random.randint(25, 120)
+                          
+                          metrics = f"""# HELP business_orders_total Toplam basarili siparis adedi
+              # TYPE business_orders_total counter
+              business_orders_total{{status="success",tier="premium"}} {orders}
+              # HELP payment_gateway_latency_seconds Odeme gecikme suresi
+              # TYPE payment_gateway_latency_seconds gauge
+              payment_gateway_latency_seconds {latency}
+              # HELP active_checkout_users Sepetteki anlik aktif kullanici sayisi
+              # TYPE active_checkout_users gauge
+              active_checkout_users {active_users}
+              """
+                          self.send_response(200)
+                          self.send_header('Content-Type', 'text/plain; version=0.0.4')
+                          self.end_headers()
+                          self.wfile.write(metrics.encode('utf-8'))
+                      else:
+                          self.send_response(404)
+                          self.end_headers()
+
+              server = http.server.HTTPServer(('0.0.0.0', 8080), MetricsHandler)
+              server.serve_forever()
+              PY
+              python3 /app.py
+          ports:
+            - name: http-metrics
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-metrics-service
+  namespace: production
+  labels:
+    app.kubernetes.io/name: custom-order-exporter
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      port: 8080
+      targetPort: http-metrics
+  selector:
+    app.kubernetes.io/name: custom-order-exporter
