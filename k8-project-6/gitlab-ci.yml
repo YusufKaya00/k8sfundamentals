@@ -1,0 +1,36 @@
+stages:
+  - test
+  - build
+
+variables:
+  STORAGE_DRIVER: "vfs"
+  BUILDAH_ISOLATION: "chroot"
+
+# 1. Aşama: OKE Dinamik Pod Testi
+smoke-test:
+  stage: test
+  image: docker.io/alpine:latest
+  script:
+    - echo "=== OKE KUBERNETES EXECUTOR TESTI ==="
+    - uname -a
+    - id
+    - sleep 10
+
+# 2. Aşama: Dockerfile OLMADAN İmajı Registry'ye Çekip/Etiketleyip Pushlama
+buildah-build:
+  stage: build
+  image: quay.io/buildah/stable:v1.37.1
+  script:
+    - echo "=== DOCKERFILE OLMADAN IMAJ HAZIRLANIYOR ==="
+    # Registry oturumu
+    - echo "$CI_REGISTRY_PASSWORD" | buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    
+    # Dockerfile OLMADAN doğrudan base imajdan OCI imajı üret
+    - CONTAINER=$(buildah from docker.io/library/alpine:3.20)
+    - buildah commit $CONTAINER "$CI_REGISTRY_IMAGE/k8-project-6:latest"
+    - buildah commit $CONTAINER "$CI_REGISTRY_IMAGE/k8-project-6:$CI_COMMIT_SHORT_SHA"
+    
+    # Registry'ye yükle
+    - buildah push "$CI_REGISTRY_IMAGE/k8-project-6:latest"
+    - buildah push "$CI_REGISTRY_IMAGE/k8-project-6:$CI_COMMIT_SHORT_SHA"
+    - echo "Imaj basariyla hazirlandi ve yüklendi."
