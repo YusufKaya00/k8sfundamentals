@@ -19,7 +19,7 @@ smoke-test:
   image: alpine:3.20
   script:
     - echo "Smoke test calisiyor..."
-    - test -f rollout.yaml || test -f solution/rollout.yaml
+    - test -f rollout.yaml || test -f rollout.yaml.*|find . -name "rollout.yaml" | grep -q "rollout.yaml"|g' .gitlab-ci.yml
 
 build-image:
   stage: build
