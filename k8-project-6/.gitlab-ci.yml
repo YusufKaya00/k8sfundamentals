@@ -3,64 +3,95 @@ stages:
   - build
   - scan
   - sbom
+  - deploy
 
 variables:
-  STORAGE_DRIVER: "vfs"
-  BUILDAH_ISOLATION: "chroot"
-  IMAGE_TAG: "$CI_REGISTRY_IMAGE/k8-project-6:$CI_COMMIT_SHORT_SHA"
-  IMAGE_LATEST: "$CI_REGISTRY_IMAGE/k8-project-6:latest"
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  TRIVY_NO_PROGRESS: "true"
+  TRIVY_CACHE_DIR: ".trivycache/"
 
-# 1. Aşama: Küme Doğrulaması
+# ------------------------------------------------------------------------------
+# Faz 2: Test, Build, Scan, SBOM
+# ------------------------------------------------------------------------------
+
 smoke-test:
   stage: test
-  image: docker.io/alpine:latest
+  image: alpine:3.20
   script:
-    - echo "=== OKE KUBERNETES EXECUTOR DOGRULAMA ==="
-    - uname -a
-    - id
+    - echo "Smoke test calisiyor..."
+    - test -f rollout.yaml || test -f solution/rollout.yaml
 
-# 2. Aşama: Rootless Buildah ile Dockerfile'sız İmaj Derleme ve Push
 build-image:
   stage: build
   image: quay.io/buildah/stable:v1.37.1
-  script:
-    - echo "=== ROOTLESS BUILDAH ILE GUVENLI DERLEME ==="
+  variables:
+    STORAGE_DRIVER: "vfs"
+    BUILDAH_ISOLATION: "chroot"
+  before_script:
     - echo "$CI_REGISTRY_PASSWORD" | buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - CONTAINER=$(buildah from docker.io/library/alpine:3.20)
-    - buildah run $CONTAINER sh -c "echo 'k8-project-6 Payment Service v1.0.0' > /status.txt"
-    - buildah commit $CONTAINER "$IMAGE_TAG"
-    - buildah tag "$IMAGE_TAG" "$IMAGE_LATEST"
+  script:
+    - echo "Rootless Buildah ile imaj derleniyor..."
+    - cnt=$(buildah from alpine:3.20)
+    - buildah config --label maintainer="DevSecOps Team" $cnt
+    - buildah commit $cnt "$IMAGE_TAG"
+    - buildah commit $cnt "$CI_REGISTRY_IMAGE:latest"
     - buildah push "$IMAGE_TAG"
-    - buildah push "$IMAGE_LATEST"
+    - buildah push "$CI_REGISTRY_IMAGE:latest"
 
-# 3. Aşama: Trivy ile Guvenlik Kapisi (Vulnerability Gating)
 trivy-scan:
   stage: scan
   image:
     name: docker.io/aquasec/trivy:0.55.0
     entrypoint: [""]
+  cache:
+    key: trivy-cache
+    paths:
+      - .trivycache/
   script:
-    - echo "=== TRIVY GUVENLIK TARAMASI ==="
-    - export TRIVY_AUTH_URL="$CI_REGISTRY"
-    - export TRIVY_USERNAME="$CI_REGISTRY_USER"
-    - export TRIVY_PASSWORD="$CI_REGISTRY_PASSWORD"
-    - trivy image --severity LOW,MEDIUM,HIGH,CRITICAL "$IMAGE_TAG"
+    - echo "Trivy guvenlik kapisi calisiyor..."
     - trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed "$IMAGE_TAG"
 
-# 4. Aşama: SBOM (CycloneDX) Uretimi
 generate-sbom:
   stage: sbom
   image:
     name: docker.io/aquasec/trivy:0.55.0
     entrypoint: [""]
   script:
-    - echo "=== SBOM ENVANTERI URETILIYOR ==="
-    - export TRIVY_AUTH_URL="$CI_REGISTRY"
-    - export TRIVY_USERNAME="$CI_REGISTRY_USER"
-    - export TRIVY_PASSWORD="$CI_REGISTRY_PASSWORD"
-    - trivy image --format cyclonedx --output sbom-k8-project-6.json "$IMAGE_TAG"
+    - echo "CycloneDX SBOM raporu uretiliyor..."
+    - trivy image --format cyclonedx --output sbom-report.cdx.json "$IMAGE_TAG"
   artifacts:
     name: "sbom-$CI_COMMIT_SHORT_SHA"
     paths:
-      - sbom-k8-project-6.json
+      - sbom-report.cdx.json
     expire_in: 1 week
+
+# ------------------------------------------------------------------------------
+# Faz 4: GitOps Promotion Bridge (Adım 8 & 9)
+# ------------------------------------------------------------------------------
+
+promote-to-gitops:
+  stage: deploy
+  image:
+    name: docker.io/line/kubectl-kustomize:latest
+    entrypoint: [""]
+  variables:
+    GITOPS_REPO: "gitlab.com/ysf-group1074641/ysf-project.git"
+    GITOPS_BRANCH: "main"
+  before_script:
+    - git config --global user.email "ci-bot@enterprise.corp"
+    - git config --global user.name "GitOps Automation Bot"
+  script:
+    - echo "1. GitOps deposu klonlaniyor..."
+    - git clone "https://oauth2:${GITLABS_ACCESS_TOKEN}@${GITOPS_REPO}" gitops-repo
+    - cd gitops-repo
+    - echo "2. Manifest icindeki imaj etiketi $IMAGE_TAG ile guncelleniyor..."
+    # rollout.yaml dosyasını repo içinde bul ve imaj satırını güncelle
+    - MANIFEST=$(find . -name "rollout.yaml" | head -n 1)
+    - 'sed -i "s|image: .*|image: $IMAGE_TAG|g" "$MANIFEST"'
+    - echo "3. Guncelleme GitOps reposuna gonderiliyor..."
+    - git add "$MANIFEST"
+    - 'git commit -m "chore(release): promote payment-service to $CI_COMMIT_SHORT_SHA [skip ci]" || echo "No changes to commit"'
+    - git push origin "$GITOPS_BRANCH"
+    - echo "Tamamlandi! ArgoCD yeni imaji canliya alacak."
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
