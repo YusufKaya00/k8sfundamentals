@@ -76,7 +76,7 @@ generate-sbom:
 promote-to-gitops:
   stage: deploy
   image:
-    name: docker.io/line/kubectl-kustomize:latest
+    name: alpine/git:latest
     entrypoint: [""]
   variables:
     GITOPS_REPO: "gitlab.com/ysf-group1074641/ysf-project.git"
