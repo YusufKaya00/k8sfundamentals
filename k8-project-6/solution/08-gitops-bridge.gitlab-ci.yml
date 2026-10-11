@@ -1,0 +1,32 @@
+# ==============================================================================
+# Upstream CI to Downstream CD Bridge (ArgoCD GitOps Promotion)
+# ==============================================================================
+
+promote-to-gitops:
+  stage: deploy
+  image:
+    name: docker.io/line/kubectl-kustomize:latest
+    entrypoint: [""]
+  variables:
+    # GitOps Deposunun Bilgileri (Deploy Token veya Project Access Token ile)
+    GITOPS_REPO: "gitlab.com/your-org/gitops-deployments.git"
+    GITOPS_BRANCH: "main"
+    TARGET_MANIFEST: "k8-project-5/solution/07-payment-rollout.yaml"
+  before_script:
+    - git config --global user.email "ci-bot@enterprise.corp"
+    - git config --global user.name "GitOps Automation Bot"
+  script:
+    - echo "1. GitOps deposu klonlaniyor..."
+    - git clone https://oauth2:${GITOPS_ACCESS_TOKEN}@${GITOPS_REPO} gitops-repo
+    - cd gitops-repo
+
+    - echo "2. Manifest icindeki imaj tag'i yeni derlenen $CI_COMMIT_SHA ile guncelleniyor..."
+    - sed -i "s|image: docker.io/argoproj/rollouts-demo:.*|image: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA|g" $TARGET_MANIFEST
+
+    - echo "3. Degisiklik commit'lenip pushlaniyor (Bu islem Lab 5'teki ArgoCD'yi tetikler)..."
+    - git add $TARGET_MANIFEST
+    - git commit -m "chore(release): promote payment-service to tag $CI_COMMIT_SHA [skip ci]"
+    - git push origin $GITOPS_BRANCH
+    - echo "Basariyla tamamlandi! ArgoCD simdi kumedeki Rollout'u otomatik guncelleyecek."
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

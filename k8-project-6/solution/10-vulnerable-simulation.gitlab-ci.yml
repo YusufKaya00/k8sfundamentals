@@ -1,0 +1,20 @@
+# ==============================================================================
+# Synthetic Vulnerability Injection & Gating Failure Simulation
+# ==============================================================================
+# Bu senaryoda icinde bilerek kritik guvenlik aciklari (Log4j, OpenSSL CVE'leri)
+# barindiran eski bir imaj taranir ve Trivy'nin pipeline'i nasil kirdigi kanitlanir.
+
+simulate-vulnerable-release:
+  stage: test
+  image:
+    name: docker.io/aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - echo "Kasıtlı olarak zafiyetli bir imaj taranıyor (Simülasyon)..."
+    # Eski ve kritik aciklari bulunan ornek sentetik imaj
+    - echo "Hedef: docker.io/vulnerables/web-dvwa:latest"
+    - echo "Trivy taramasi baslatiliyor..."
+    # exit-code 1 ile kritik acikta pipeline durdurulur
+    - trivy image --exit-code 1 --severity CRITICAL docker.io/vulnerables/web-dvwa:latest
+  rules:
+    - when: manual # Yalnizca laboratuvar testi icin manuel tetiklenir

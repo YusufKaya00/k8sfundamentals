@@ -1,0 +1,26 @@
+# ==============================================================================
+# GitLab Agent for Kubernetes (agentk) Helm Values
+# ==============================================================================
+
+# Kume icinden GitLab'a guvenli gRPC tuneli (KAS - Kubernetes Agent Server)
+image:
+  repository: "registry.gitlab.com/gitlab-org/cluster-integration/gitlab-agent/agentk"
+  tag: "v17.4.0"
+
+# OKE Web/Worker node secimi
+nodeSelector:
+  tier: web
+
+# Minimum kaynak ayak izi (Hafifletilmis)
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 150m
+    memory: 128Mi
+
+# Agent Token (GitLab UI'dan Agent olusturuldugunda verilen token)
+# config:
+#   token: "glagent-xxxxxxxxxxxx"
+#   kasAddress: "wss://kas.gitlab.com"

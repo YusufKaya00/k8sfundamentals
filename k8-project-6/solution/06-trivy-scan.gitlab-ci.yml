@@ -1,0 +1,42 @@
+# ==============================================================================
+# DevSecOps Gating: Trivy Security Scan & CycloneDX SBOM Generation
+# ==============================================================================
+
+security-vulnerability-scan:
+  stage: test
+  image:
+    name: docker.io/aquasec/trivy:latest
+    entrypoint: [""]
+  variables:
+    IMAGE_NAME: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    # Trivy veritabani onbellegi
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_CACHE_DIR: ".trivycache/"
+  cache:
+    paths:
+      - .trivycache/
+  before_script:
+    - echo "Trivy veritabanini guncelliyor..."
+    - export TRIVY_AUTH_URL="$CI_REGISTRY"
+    - export TRIVY_USERNAME="$CI_REGISTRY_USER"
+    - export TRIVY_PASSWORD="$CI_REGISTRY_PASSWORD"
+  script:
+    # 1. Bilgilendirici Rapor ve CycloneDX SBOM Uretimi
+    - echo "1. Yazilim Malzeme Listesi (SBOM) olusturuluyor..."
+    - trivy image --format cyclonedx --output sbom-cyclonedx.json "$IMAGE_NAME"
+
+    # 2. Insan tarafindan okunabilir ozet tablosu
+    - trivy image --severity HIGH,CRITICAL --format table "$IMAGE_NAME"
+
+    # 3. KESIN GUVENLIK KAPISI (GATING):
+    # Eger imaj icinde CRITICAL (Kritik) seviyede cozulmemis acik varsa exit code 1 ile pipeline'i KIR!
+    - echo "3. Guvenlik kapisi denetleniyor (CRITICAL CVEs)..."
+    - trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed "$IMAGE_NAME"
+  artifacts:
+    when: always
+    reports:
+      cyclonedx: sbom-cyclonedx.json
+    paths:
+      - sbom-cyclonedx.json
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

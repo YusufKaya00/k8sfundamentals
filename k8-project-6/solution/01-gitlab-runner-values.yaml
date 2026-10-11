@@ -1,0 +1,70 @@
+# ==============================================================================
+# GitLab Runner Helm Values (OKE 3-Node Cluster Optimized - Kubernetes Executor)
+# ==============================================================================
+
+# Runner Manager podunun calisacagi node
+nodeSelector:
+  tier: web
+
+# Hafifletilmis Runner Manager kaynaklari
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Ayni anda calisabilecek maksimum is paralelelligi (Trial kota guvenligi icin 4 ile sinirli)
+concurrent: 4
+
+# Kontrol araligi (saniye)
+checkInterval: 5
+
+# Kubernetes Executor Ayarlari (Her CI job'i icin dinamik pod baslatir)
+runners:
+  # GitLab URL ve Kayit Token'i (gitlab.com veya self-hosted)
+  # gitlabUrl: https://gitlab.com/
+  # runnerRegistrationToken: "GR1348941..." (veya yeni token mekanizmasi)
+
+  name: "oke-k8s-runner"
+  executor: "kubernetes"
+
+  # Guvenlik: Asla privileged modda calisma!
+  privileged: false
+
+  # Job podlarinin baslatilacagi namespace
+  namespace: "gitlab-runner"
+
+  # Varsayilan build imaji
+  image: "docker.io/library/ubuntu:22.04"
+
+  # Dinamik olusturulan her bir Job Pod'u icin kaynak sinirlari
+  # Noisy-neighbor sorununu onler ve trial sunucularin OOM olmasini engeller
+  builds:
+    cpuRequests: "100m"
+    cpuRequestsOverwriteMax: "500m"
+    cpuLimit: "1000m"
+    cpuLimitOverwriteMax: "2000m"
+    memoryRequests: "256Mi"
+    memoryRequestsOverwriteMax: "512Mi"
+    memoryLimit: "1Gi"
+    memoryLimitOverwriteMax: "2Gi"
+
+  # Dinamik Podlarin yalnizca web/worker node'larina yerlesmesini zorunlu kil
+  nodeSelector:
+    tier: web
+
+  # Pod Security Standards (PSS) Uyumu: rootless calisma
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+
+  # Helper Container (Git clone, cache yukleme podu) kaynaklari
+  helpers:
+    cpuRequests: "50m"
+    memoryRequests: "64Mi"
+    cpuLimit: "200m"
+    memoryLimit: "256Mi"
+    image: "gitlab/gitlab-runner-helper:x86_64-latest"
