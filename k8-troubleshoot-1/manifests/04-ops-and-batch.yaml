@@ -1,0 +1,109 @@
+# ==============================================================================
+# Katman 4: DaemonSet, RBAC Auditor ve Batch CronJob
+# ==============================================================================
+
+# BİLET #9 HATASI: Master / Control-plane taint'i tolere edilmediği için pod schedule olamaz!
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-log-collector
+  namespace: ecom-prod
+  labels:
+    app: node-log-collector
+spec:
+  selector:
+    matchLabels:
+      app: node-log-collector
+  template:
+    metadata:
+      labels:
+        app: node-log-collector
+    spec:
+      # HATA: 'control-plane' veya 'master' toleration'ı eksik!
+      # Minikube gibi tek node'lu veya control-plane tainty olan sunucularda çalışmaz.
+      containers:
+        - name: collector
+          image: docker.io/library/alpine:3.19
+          command: ["sh", "-c", "echo Log toplayıcı çalışıyor; sleep 3600"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+---
+# BİLET #10 HATASI:
+# 1) apiGroups içinde ["core"] yazılmış (Boş string "" olmalı)!
+# 2) ClusterRoleBinding içinde 'namespace: ecom-prod' unutulmuş ('default' varsayılır)!
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecom-auditor-sa
+  namespace: ecom-prod
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ecom-auditor-role
+rules:
+  - apiGroups: ["core"] # HATA: Kubernetes core grubu "" (boş dize) olmalıdır!
+    resources: ["pods", "services"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ecom-auditor-binding
+subjects:
+  - kind: ServiceAccount
+    name: ecom-auditor-sa # HATA: 'namespace: ecom-prod' eksik! K8s bunu 'default' kabul eder.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ecom-auditor-role
+---
+# Auditor Test Pod'u (API Server'a sorgu atıp yetkiyi denetler)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ecom-auditor-pod
+  namespace: ecom-prod
+spec:
+  serviceAccountName: ecom-auditor-sa
+  containers:
+    - name: auditor
+      image: docker.io/curlimages/curl:8.6.0
+      command:
+        - sh
+        - -c
+        - |
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          echo "Kubernetes API'sinden pod listesi isteniyor..."
+          curl -s --cacert $CACERT -H "Authorization: Bearer $TOKEN" \
+            https://kubernetes.default.svc/api/v1/namespaces/ecom-prod/pods
+          sleep 3600
+---
+# BİLET #11 HATALARI:
+# 1) 6 alanlı geçersiz cron sözdizimi: "0 2 ? * * *"
+# 2) -c sonrasına virgülle ayrı argüman yazılması (ikincisi çalışmaz)
+# 3) $(date) ifadesinin kubelet tarafından boş string'e dönüştürülmesi
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup-cronjob
+  namespace: ecom-prod
+spec:
+  schedule: "0 2 ? * * *" # HATA: Geçersiz 6 alanlı sözdizimi ('?' karakteri K8s cron'da yoktur)
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: docker.io/library/postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - echo "Yedekleme başlatılıyor..." # HATA: Sadece bu satır çalışır!
+                - 'pg_dump -h postgres-service.ecom-prod.svc -U postgres ecom_db > /tmp/backup-$(date +%F).sql'

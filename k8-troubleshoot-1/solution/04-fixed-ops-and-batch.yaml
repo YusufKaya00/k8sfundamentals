@@ -1,0 +1,122 @@
+# ==============================================================================
+# ÇÖZÜM 4: Düzeltilmiş DaemonSet, RBAC ve CronJob
+# ==============================================================================
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-log-collector
+  namespace: ecom-prod
+  labels:
+    app: node-log-collector
+spec:
+  selector:
+    matchLabels:
+      app: node-log-collector
+  template:
+    metadata:
+      labels:
+        app: node-log-collector
+    spec:
+      # DÜZELTME: Master ve Control-plane taints tolerations eklendi!
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "node-role.kubernetes.io/master"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: collector
+          image: docker.io/library/alpine:3.19
+          command: ["sh", "-c", "echo Log toplayıcı çalışıyor; sleep 3600"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecom-auditor-sa
+  namespace: ecom-prod
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ecom-auditor-role
+rules:
+  # DÜZELTME 1: Core API kaynakları için apiGroups [""] (boş dize) olmalı!
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ecom-auditor-binding
+subjects:
+  - kind: ServiceAccount
+    name: ecom-auditor-sa
+    # DÜZELTME 2: ServiceAccount'ın namespace'i açıkça belirtildi!
+    namespace: ecom-prod
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ecom-auditor-role
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ecom-auditor-pod
+  namespace: ecom-prod
+spec:
+  serviceAccountName: ecom-auditor-sa
+  containers:
+    - name: auditor
+      image: docker.io/curlimages/curl:8.6.0
+      command:
+        - sh
+        - -c
+        - |
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          echo "Kubernetes API'sinden pod listesi isteniyor..."
+          curl -s --cacert $CACERT -H "Authorization: Bearer $TOKEN" \
+            https://kubernetes.default.svc/api/v1/namespaces/ecom-prod/pods
+          sleep 3600
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup-cronjob
+  namespace: ecom-prod
+spec:
+  # DÜZELTME 1: Standart 5-alanlı POSIX cron formatı (Her gece 02:00)
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: docker.io/library/postgres:16-alpine
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: ecom-secret
+                      key: database_password
+              # DÜZELTME 2: Tek bir multiline betik, pipefail ve date kaçışı
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  DATE_TAG=$(date +%Y-%m-%d)
+                  echo "Veritabanı yedeği alınıyor: /tmp/backup-${DATE_TAG}.sql"
+                  pg_dump -h postgres-service.ecom-prod.svc -U postgres ecom_db > "/tmp/backup-${DATE_TAG}.sql"
+                  echo "Yedek başarıyla tamamlandı. Dosya boyutu: $(wc -c < /tmp/backup-${DATE_TAG}.sql) bayt."

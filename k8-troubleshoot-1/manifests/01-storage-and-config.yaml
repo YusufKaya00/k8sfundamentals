@@ -1,0 +1,98 @@
+# ==============================================================================
+# Katman 1: Namespace, Konfigürasyon, Gizli Bilgiler ve Veritabanı Depolama
+# ==============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ecom-prod
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecom-config
+  namespace: ecom-prod
+data:
+  APP_ENV: "production"
+  PORT: "8080"
+  DB_HOST: "postgres-service.ecom-prod.svc.cluster.local"
+  DB_PORT: "5432"
+  REDIS_HOST: "redis-0.redis-service.ecom-prod.svc.cluster.local"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ecom-secret
+  namespace: ecom-prod
+type: Opaque
+stringData:
+  # DİKKAT: Secret icinde key 'database_password' olarak tanimli
+  database_password: "SuperSecretPassword123!"
+  api_key: "ecom-live-jwt-token-xyz"
+---
+# BİLET #5 HATASI: Bulut odaklı 'gp3' StorageClass lokal kümede bulunamaz!
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: ecom-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3 # HATA: Minikube/yerel k8s üzerinde 'gp3' yoktur, 'standard' olmalı veya boş bırakılmalı
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-db
+  namespace: ecom-prod
+  labels:
+    app: postgres-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-db
+  template:
+    metadata:
+      labels:
+        app: postgres-db
+    spec:
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "ecom_db"
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecom-secret
+                  key: database_password
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: ecom-prod
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: postgres-db

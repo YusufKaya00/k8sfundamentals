@@ -1,0 +1,161 @@
+# ==============================================================================
+# Katman 2: Redis StatefulSet ve Backend API Mikroservisleri
+# ==============================================================================
+
+# BİLET #6 HATASI: Headless Service adı 'redis-service' iken StatefulSet'in 'serviceName: redis' olması!
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: ecom-prod
+  labels:
+    app: redis
+spec:
+  clusterIP: None
+  ports:
+    - port: 6379
+      name: redis
+  selector:
+    app: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: ecom-prod
+spec:
+  serviceName: "redis" # HATA: Service metadata.name 'redis-service' ile uyuşmuyor! DNS NXDOMAIN verir.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: docker.io/library/redis:7.2-alpine
+          ports:
+            - containerPort: 6379
+              name: redis
+          command: ["redis-server", "--appendonly", "yes"]
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+---
+# BİLET #3 & #8 HATALARI:
+# 1) Secret key typo (database_pass vs database_password) -> CreateContainerConfigError
+# 2) Aşırı agresif LivenessProbe -> CrashLoopBackOff
+# 3) 'resources.requests.cpu' eksikliği -> HPA <unknown> hatası
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-api
+  namespace: ecom-prod
+  labels:
+    app: catalog-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: catalog-api
+  template:
+    metadata:
+      labels:
+        app: catalog-api
+    spec:
+      containers:
+        - name: catalog
+          image: docker.io/library/python:3.11-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Catalog servisi başlatılıyor, önbellek ısınıyor..."
+              sleep 10
+              python3 -m http.server 8080
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecom-secret
+                  key: db_password # HATA: Secret içindeki key 'database_password'!
+          # HATA: startupProbe yok, livenessProbe 2. saniyede başlıyor ve 2 hatada öldürüyor!
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            failureThreshold: 2
+          resources:
+            # HATA: limits var ama requests yok! HPA CPU yüzdesi hesaplayamaz.
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+# BİLET #2 HATASI: Service selector'ünde fazladan 'tier: backend' var! Endpoints <none> kalır.
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  namespace: ecom-prod
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+  selector:
+    app: catalog-api
+    tier: backend # HATA: Catalog-api podunda 'tier: backend' etiketi yok!
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-api
+  namespace: ecom-prod
+  labels:
+    app: order-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-api
+  template:
+    metadata:
+      labels:
+        app: order-api
+    spec:
+      containers:
+        - name: order
+          image: docker.io/library/python:3.11-alpine
+          command: ["python3", "-m", "http.server", "8080"]
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+# BİLET #4 HATASI: targetPort 80 yazılmış ama container 8080 dinliyor! Connection Refused.
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: ecom-prod
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80 # HATA: Container port 8080 dinliyor, 80 değil!
+      name: http
+  selector:
+    app: order-api
