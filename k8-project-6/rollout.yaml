@@ -1,0 +1,56 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: payment-service-rollout
+  namespace: k8-project-6
+spec:
+  replicas: 5
+  strategy:
+    canary:
+      stableService: payment-service-active
+      canaryService: payment-service-preview
+      steps:
+        - setWeight: 20
+        - pause: { duration: 30s }
+        - setWeight: 40
+        - pause: { duration: 30s }
+        - setWeight: 80
+        - pause: { duration: 20s }
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      nodeSelector:
+        tier: web
+      imagePullSecrets:
+        - name: gitlab-registry-secret
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: payment-service
+          image: registry.gitlab.com/ysf-group1074641/ysf-project/k8-project-6:latest
+          command: ["sleep", "infinity"]
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "150m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
