@@ -9,6 +9,10 @@ variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   TRIVY_NO_PROGRESS: "true"
   TRIVY_CACHE_DIR: ".trivycache/"
+  # Trivy'nin private registry'den imaj çekebilmesi için gerekli auth bilgileri:
+  TRIVY_AUTH_URL: $CI_REGISTRY
+  TRIVY_USERNAME: $CI_REGISTRY_USER
+  TRIVY_PASSWORD: $CI_REGISTRY_PASSWORD
 
 # ------------------------------------------------------------------------------
 # Faz 2: Test, Build, Scan, SBOM
