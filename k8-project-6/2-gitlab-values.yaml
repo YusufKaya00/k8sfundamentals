@@ -1,0 +1,65 @@
+# ==============================================================================
+# GitLab Runner Helm Values (OKE 3-Node Cluster Optimized - Kubernetes Executor)
+# ==============================================================================
+
+# GitLab Sunucu Adresi (Kök dizinde ve tırnak içinde olmalıdır)
+gitlabUrl: "https://gitlab.com/"
+
+# RBAC: Adım 1'de oluşturduğumuz izole ServiceAccount'ı bağla
+rbac:
+  create: false
+  serviceAccount:
+    create: false
+    name: gitlab-runner-sa
+
+# Runner Manager Pod Ayarları (Sürekli çalışan yönetici podu)
+nodeSelector:
+  tier: web
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Aynı anda çalışabilecek paralel CI işi sınırı (Trial kota koruması)
+concurrent: 2
+checkInterval: 5
+
+# Kubernetes Executor ve Dinamik İş Podları Yapılandırması
+runners:
+  # Oluşturduğumuz Kubernetes secret'ını bağla (içindeki runner-token okunur)
+  secret: gitlab-runner-secret
+
+  name: "oke-k8s-runner"
+  executor: "kubernetes"
+
+  # Güvenlik: Asla privileged modda çalışma
+  privileged: false
+
+  # Dinamik podların başlatılacağı izole namespace
+  namespace: "gitlab-runner"
+
+  # Varsayılan derleme imajı (Oracle Linux 9 / OKE FQDN standardı)
+  image: "docker.io/library/ubuntu:22.04"
+
+  # Dinamik Podların yalnızca web node'larına yerleşmesini zorunlu kıl
+  nodeSelector:
+    tier: web
+
+  # Dinamik her bir CI Pod'u için kaynak sınırları
+  builds:
+    cpuRequests: "100m"
+    cpuLimits: "500m"
+    memoryRequests: "128Mi"
+    memoryLimits: "512Mi"
+
+  # Git clone ve artifact yükleyen Helper konteyner ayarları
+  helpers:
+    cpuRequests: "50m"
+    cpuLimits: "100m"
+    memoryRequests: "64Mi"
+    memoryLimits: "128Mi"
+    image: "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-latest"
