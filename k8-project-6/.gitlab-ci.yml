@@ -19,7 +19,7 @@ smoke-test:
   image: alpine:3.20
   script:
     - echo "Smoke test calisiyor..."
-    - test -f rollout.yaml || test -f rollout.yaml.*|find . -name "rollout.yaml" | grep -q "rollout.yaml"|g' .gitlab-ci.yml
+    - find . -name "rollout.yaml" | grep -q "rollout.yaml"
 
 build-image:
   stage: build
@@ -82,10 +82,10 @@ promote-to-gitops:
     - git config --global user.name "GitOps Automation Bot"
   script:
     - echo "1. GitOps deposu klonlaniyor..."
-    - git clone "https://oauth2:${GITLABS_ACCESS_TOKEN}@${GITOPS_REPO}" gitops-repo
+    - TOKEN="${GITLAB_ACCESS_TOKEN:-$GITOPS_ACCESS_TOKEN}"
+    - git clone "https://oauth2:${TOKEN}@${GITOPS_REPO}" gitops-repo
     - cd gitops-repo
     - echo "2. Manifest icindeki imaj etiketi $IMAGE_TAG ile guncelleniyor..."
-    # rollout.yaml dosyasını repo içinde bul ve imaj satırını güncelle
     - MANIFEST=$(find . -name "rollout.yaml" | head -n 1)
     - 'sed -i "s|image: .*|image: $IMAGE_TAG|g" "$MANIFEST"'
     - echo "3. Guncelleme GitOps reposuna gonderiliyor..."
