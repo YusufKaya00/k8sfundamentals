@@ -1,36 +1,66 @@
 stages:
   - test
   - build
+  - scan
+  - sbom
 
 variables:
   STORAGE_DRIVER: "vfs"
   BUILDAH_ISOLATION: "chroot"
+  IMAGE_TAG: "$CI_REGISTRY_IMAGE/k8-project-6:$CI_COMMIT_SHORT_SHA"
+  IMAGE_LATEST: "$CI_REGISTRY_IMAGE/k8-project-6:latest"
 
-# 1. Aşama: OKE Dinamik Pod Testi
+# 1. Aşama: Küme Doğrulaması
 smoke-test:
   stage: test
   image: docker.io/alpine:latest
   script:
-    - echo "=== OKE KUBERNETES EXECUTOR TESTI ==="
+    - echo "=== OKE KUBERNETES EXECUTOR DOGRULAMA ==="
     - uname -a
     - id
-    - sleep 10
 
-# 2. Aşama: Dockerfile OLMADAN İmajı Registry'ye Çekip/Etiketleyip Pushlama
-buildah-build:
+# 2. Aşama: Rootless Buildah ile Dockerfile'sız İmaj Derleme ve Push
+build-image:
   stage: build
   image: quay.io/buildah/stable:v1.37.1
   script:
-    - echo "=== DOCKERFILE OLMADAN IMAJ HAZIRLANIYOR ==="
-    # Registry oturumu
+    - echo "=== ROOTLESS BUILDAH ILE GUVENLI DERLEME ==="
     - echo "$CI_REGISTRY_PASSWORD" | buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    
-    # Dockerfile OLMADAN doğrudan base imajdan OCI imajı üret
     - CONTAINER=$(buildah from docker.io/library/alpine:3.20)
-    - buildah commit $CONTAINER "$CI_REGISTRY_IMAGE/k8-project-6:latest"
-    - buildah commit $CONTAINER "$CI_REGISTRY_IMAGE/k8-project-6:$CI_COMMIT_SHORT_SHA"
-    
-    # Registry'ye yükle
-    - buildah push "$CI_REGISTRY_IMAGE/k8-project-6:latest"
-    - buildah push "$CI_REGISTRY_IMAGE/k8-project-6:$CI_COMMIT_SHORT_SHA"
-    - echo "Imaj basariyla hazirlandi ve yüklendi."
+    - buildah run $CONTAINER sh -c "echo 'k8-project-6 Payment Service v1.0.0' > /status.txt"
+    - buildah commit $CONTAINER "$IMAGE_TAG"
+    - buildah tag "$IMAGE_TAG" "$IMAGE_LATEST"
+    - buildah push "$IMAGE_TAG"
+    - buildah push "$IMAGE_LATEST"
+
+# 3. Aşama: Trivy ile Guvenlik Kapisi (Vulnerability Gating)
+trivy-scan:
+  stage: scan
+  image:
+    name: docker.io/aquasec/trivy:0.55.0
+    entrypoint: [""]
+  script:
+    - echo "=== TRIVY GUVENLIK TARAMASI ==="
+    - export TRIVY_AUTH_URL="$CI_REGISTRY"
+    - export TRIVY_USERNAME="$CI_REGISTRY_USER"
+    - export TRIVY_PASSWORD="$CI_REGISTRY_PASSWORD"
+    - trivy image --severity LOW,MEDIUM,HIGH,CRITICAL "$IMAGE_TAG"
+    - trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed "$IMAGE_TAG"
+
+# 4. Aşama: SBOM (CycloneDX) Uretimi
+generate-sbom:
+  stage: sbom
+  image:
+    name: docker.io/aquasec/trivy:0.55.0
+    entrypoint: [""]
+  script:
+    - echo "=== SBOM ENVANTERI URETILIYOR ==="
+    - export TRIVY_AUTH_URL="$CI_REGISTRY"
+    - export TRIVY_USERNAME="$CI_REGISTRY_USER"
+    - export TRIVY_PASSWORD="$CI_REGISTRY_PASSWORD"
+    - trivy image --format cyclonedx --output sbom-k8-project-6.json "$IMAGE_TAG"
+  artifacts:
+    name: "sbom-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - sbom-k8-project-6.json
+    expire_in: 1 week
