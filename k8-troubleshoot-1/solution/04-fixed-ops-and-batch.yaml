@@ -26,6 +26,11 @@ spec:
         - key: "node-role.kubernetes.io/master"
           operator: "Exists"
           effect: "NoSchedule"
+        - key: "workload"
+          operator: "Equal"
+          value: "database"
+          effect: "NoSchedule"
+        - operator: "Exists"
       containers:
         - name: collector
           image: docker.io/library/alpine:3.19

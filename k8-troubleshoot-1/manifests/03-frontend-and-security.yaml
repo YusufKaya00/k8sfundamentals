@@ -22,7 +22,7 @@ spec:
     spec:
       # HATA: Lokal minikube kümesinde AWS zone etiketi bulunmaz!
       nodeSelector:
-        topology.kubernetes.io/zone: eu-west-1a
+        tier : web
       containers:
         - name: web
           image: docker.io/library/nginx:1.25-alpine

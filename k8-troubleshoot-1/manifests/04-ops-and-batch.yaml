@@ -19,8 +19,18 @@ spec:
       labels:
         app: node-log-collector
     spec:
-      # HATA: 'control-plane' veya 'master' toleration'ı eksik!
-      # Minikube gibi tek node'lu veya control-plane tainty olan sunucularda çalışmaz.
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "node-role.kubernetes.io/master"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "workload"
+          operator: "Equal"
+          value: "database"
+          effect: "NoSchedule"
+        - operator: "Exists"
       containers:
         - name: collector
           image: docker.io/library/alpine:3.19
@@ -44,7 +54,7 @@ kind: ClusterRole
 metadata:
   name: ecom-auditor-role
 rules:
-  - apiGroups: ["core"] # HATA: Kubernetes core grubu "" (boş dize) olmalıdır!
+  - apiGroups: [""] # HATA: Kubernetes core grubu "" (boş dize) olmalıdır!
     resources: ["pods", "services"]
     verbs: ["get", "list"]
 ---
@@ -52,8 +62,10 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: ecom-auditor-binding
+  namespace : ecom-prod
 subjects:
   - kind: ServiceAccount
+    namespace : ecom-prod
     name: ecom-auditor-sa # HATA: 'namespace: ecom-prod' eksik! K8s bunu 'default' kabul eder.
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -102,8 +114,18 @@ spec:
           containers:
             - name: backup
               image: docker.io/library/postgres:16-alpine
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: ecom-secret
+                      key: database_password
               command:
                 - /bin/sh
                 - -c
-                - echo "Yedekleme başlatılıyor..." # HATA: Sadece bu satır çalışır!
-                - 'pg_dump -h postgres-service.ecom-prod.svc -U postgres ecom_db > /tmp/backup-$(date +%F).sql'
+                - |
+                  set -euo pipefail
+                  DATE_TAG=$(date +%Y-%m-%d)
+                  echo "Veritabanı yedeği alınıyor: /tmp/backup-${DATE_TAG}.sql"
+                  pg_dump -h postgres-service.ecom-prod.svc -U postgres ecom_db > "/tmp/backup-${DATE_TAG}.sql"
+                  echo "Yedek başarıyla tamamlandı. Dosya boyutu: $(wc -c < /tmp/backup-${DATE_TAG}.sql) bayt."

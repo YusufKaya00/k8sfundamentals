@@ -37,12 +37,13 @@ metadata:
   name: postgres-pvc
   namespace: ecom-prod
 spec:
+  storageClassName: "oci-bv"
   accessModes:
     - ReadWriteOnce
-  storageClassName: gp3 # HATA: Minikube/yerel k8s üzerinde 'gp3' yoktur, 'standard' olmalı veya boş bırakılmalı
   resources:
     requests:
       storage: 5Gi
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -79,6 +80,7 @@ spec:
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/data
+              subPath : postgres-data
       volumes:
         - name: pgdata
           persistentVolumeClaim:

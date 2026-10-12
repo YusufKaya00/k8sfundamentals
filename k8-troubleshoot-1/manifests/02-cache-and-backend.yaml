@@ -21,10 +21,10 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: redis
+  name: redis-service
   namespace: ecom-prod
 spec:
-  serviceName: "redis" # HATA: Service metadata.name 'redis-service' ile uyuşmuyor! DNS NXDOMAIN verir.
+  serviceName: "redis-service" # HATA: Service metadata.name 'redis-service' ile uyuşmuyor! DNS NXDOMAIN verir.
   replicas: 1
   selector:
     matchLabels:
@@ -80,23 +80,37 @@ spec:
               sleep 10
               python3 -m http.server 8080
           ports:
-            - containerPort: 8080
+            - name: http
+              containerPort: 8080
           env:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: ecom-secret
-                  key: db_password # HATA: Secret içindeki key 'database_password'!
-          # HATA: startupProbe yok, livenessProbe 2. saniyede başlıyor ve 2 hatada öldürüyor!
+                  key: database_password
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 2
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 2
           livenessProbe:
             httpGet:
               path: /
               port: 8080
-            initialDelaySeconds: 2
-            periodSeconds: 2
-            failureThreshold: 2
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
-            # HATA: limits var ama requests yok! HPA CPU yüzdesi hesaplayamaz.
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
             limits:
               cpu: "300m"
               memory: "256Mi"
@@ -115,7 +129,6 @@ spec:
       name: http
   selector:
     app: catalog-api
-    tier: backend # HATA: Catalog-api podunda 'tier: backend' etiketi yok!
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -155,7 +168,7 @@ spec:
   type: ClusterIP
   ports:
     - port: 80
-      targetPort: 80 # HATA: Container port 8080 dinliyor, 80 değil!
+      targetPort: 8080 # HATA: Container port 8080 dinliyor, 80 değil!
       name: http
   selector:
     app: order-api
