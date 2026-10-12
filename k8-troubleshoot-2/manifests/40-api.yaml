@@ -34,7 +34,7 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: api-config
-                  key: DATABASE_HOST
+                  key: DB_HOST
                   optional: true
             - name: DB_PORT
               valueFrom:
@@ -60,19 +60,22 @@ spec:
             httpGet:
               path: /healthz
               port: 8080
-            periodSeconds: 2
+            periodSeconds: 5
             failureThreshold: 3
+     
           readinessProbe:
             httpGet:
               path: /ready
               port: 8080
             periodSeconds: 5
+            
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
             periodSeconds: 10
+          
             failureThreshold: 3
           resources:
             requests:

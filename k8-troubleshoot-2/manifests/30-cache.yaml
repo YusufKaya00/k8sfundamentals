@@ -53,4 +53,4 @@ spec:
       name: redis
   selector:
     app.kubernetes.io/name: redis
-    app.kubernetes.io/component: cache
+    #app.kubernetes.io/component: cache
