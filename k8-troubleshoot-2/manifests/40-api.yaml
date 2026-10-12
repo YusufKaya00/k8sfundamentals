@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: nova-prod
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: novamarket
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/part-of: novamarket
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: api
+          image: docker.io/library/python:3.11-alpine
+          command:
+            - python3
+            - -u
+            - /app/server.py
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: api-config
+                  key: DATABASE_HOST
+                  optional: true
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: api-config
+                  key: DB_PORT
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: api-config
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: api-config
+                  key: REDIS_PORT
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: api-config
+                  key: PORT
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: api-code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: api-code
+          configMap:
+            name: api-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: nova-prod
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: novamarket
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app.kubernetes.io/name: api
