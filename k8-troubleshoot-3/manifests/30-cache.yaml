@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-cache
+  namespace: apex-prod
+  labels:
+    app.kubernetes.io/name: transaction-cache
+    app.kubernetes.io/part-of: apexpay
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: transaction-cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transaction-cache
+        app.kubernetes.io/part-of: apexpay
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: redis
+          image: docker.io/library/redis:7.2-alpine
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-cache
+  namespace: apex-prod
+  labels:
+    app.kubernetes.io/name: transaction-cache
+    app.kubernetes.io/part-of: apexpay
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: redis-port
+      name: redis
+  selector:
+    app.kubernetes.io/name: transaction-cache
