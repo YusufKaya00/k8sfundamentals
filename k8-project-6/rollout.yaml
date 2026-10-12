@@ -36,7 +36,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: payment-service
-          image: registry.gitlab.com/ysf-group1074641/ysf-project:e7db24ac
+          image: registry.gitlab.com/ysf-group1074641/ysf-project:9d298292
           command: ["sleep", "infinity"]
           imagePullPolicy: Always
           ports:
