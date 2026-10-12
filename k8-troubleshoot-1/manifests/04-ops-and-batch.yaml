@@ -92,7 +92,7 @@ metadata:
   name: db-backup-cronjob
   namespace: ecom-prod
 spec:
-  schedule: "0 2 ? * * *" # HATA: Geçersiz 6 alanlı sözdizimi ('?' karakteri K8s cron'da yoktur)
+  schedule: "0 2 * * *" # HATA: Geçersiz 6 alanlı sözdizimi ('?' karakteri K8s cron'da yoktur)
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
