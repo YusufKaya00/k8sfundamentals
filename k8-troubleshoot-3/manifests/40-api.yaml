@@ -34,31 +34,41 @@ spec:
                 name: api-config
           resources:
             requests:
-              cpu: "4"
-              memory: "128Mi"
+              cpu: "50m"
+              memory: "50Mi"
             limits:
-              cpu: "4"
+              cpu: "250m"
               memory: "256Mi"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
             periodSeconds: 10
-            timeoutSeconds: 1
-            failureThreshold: 2
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
           readinessProbe:
             httpGet:
               path: /ready
               port: 8080
             periodSeconds: 5
-            timeoutSeconds: 3
+
             failureThreshold: 3
           volumeMounts:
             - name: code-volume
               mountPath: /app/server.py
               subPath: server.py
             - name: settings-volume
-              mountPath: /app
+              mountPath: /app/settings.py
+              subPath: settings.py
       volumes:
         - name: code-volume
           configMap:

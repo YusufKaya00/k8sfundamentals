@@ -47,10 +47,8 @@ spec:
                   - key: tier
                     operator: In
                     values:
-                      - db
-      securityContext:
-        runAsUser: 999
-        runAsGroup: 999
+                      - database
+   
       containers:
         - name: postgresql
           image: docker.io/library/postgres:16-alpine
@@ -78,7 +76,7 @@ spec:
           volumeMounts:
             - name: ledger-storage
               mountPath: /var/lib/postgresql/data
-              subPath: data
+              subPath: pgdata
           resources:
             requests:
               cpu: 100m

@@ -28,7 +28,7 @@ spec:
             - "yes"
           ports:
             - containerPort: 6379
-              name: redis
+              name: redis-port
           resources:
             requests:
               cpu: 50m
