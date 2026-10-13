@@ -18,7 +18,7 @@ spec:
   - name: events
     port: 9000
     targetPort: 9000
-    protocol: UDP
+    protocol: TCP
 ---
 apiVersion: apps/v1
 kind: Deployment

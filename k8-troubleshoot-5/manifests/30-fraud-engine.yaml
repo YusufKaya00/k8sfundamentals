@@ -11,7 +11,6 @@ spec:
   selector:
     app.kubernetes.io/name: fraud-engine
     component: inspector
-    environment: production
   ports:
   - name: http
     port: 8080
