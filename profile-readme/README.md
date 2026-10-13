@@ -1,4 +1,6 @@
-<h1 align="center">Hi there, I'm Yusuf 👋</h1>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/YusufKaya00/YusufKaya00/main/assets/hi-there-yusuf.gif" width="700" alt="Hi there, I'm Yusuf" />
+</p>
 
 <p align="center">
   <a href="https://github.com/YusufKaya00">
@@ -80,7 +82,7 @@ focus_areas:
 
 ---
 
-### 🟩 Contribution Grid Snake
+### ⚡ Contribution Grid Snake
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/YusufKaya00/YusufKaya00/output/github-contribution-grid-snake-dark.svg" width="100%" alt="Yusuf's Contribution Snake Animation" />
