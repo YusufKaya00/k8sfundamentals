@@ -1,3 +1,174 @@
+# 💡 SRE Incident Lab 1 Solutions: ShopSphere Outage Triage & RCA Runbook
+
+This document contains in-depth Root Cause Analyses (RCA), diagnostic CLI commands, and permanent remediations for all **11 Production Incident Tickets** in `k8-troubleshoot-1`.
+
+---
+
+## 🇬🇧 English Solutions
+
+### Incident Ticket Index & RCA Matrix
+
+| Ticket | Impacted Component | Symptom | Root Cause (RCA) |
+|---|---|---|---|
+| **Ticket #1** | `frontend-web` | Pod `Pending` (Cannot schedule) | Non-existent cloud zone (`eu-west-1a`) hardcoded in `nodeSelector`. |
+| **Ticket #2** | `catalog-service` | `Endpoints: <none>` (503 Service Unavailable) | Service selector specifies `tier: backend`, which does not exist on target pods. |
+| **Ticket #3** | `catalog-api` | Pod `CrashLoopBackOff` & `CreateContainerConfigError` | Secret key name typo (`db_password` instead of `database_password`) and aggressive livenessProbe killing slow boot container. |
+| **Ticket #4** | `order-service` | `Connection Refused` on port 80 | Service `targetPort: 80` misconfigured; container listens on port `8080`. |
+| **Ticket #5** | `postgres-pvc` | PVC `Pending` (PostgreSQL unbootable) | Non-existent cloud storage class `storageClassName: gp3` requested on local cluster. |
+| **Ticket #6** | `redis` | Cluster DNS `NXDOMAIN` failure | StatefulSet `serviceName: redis` diverges from Headless Service name `redis-service`. |
+| **Ticket #7** | `ecom-network-policy` | Inter-service DNS queries hang 30s | NetworkPolicy egress rule omits CoreDNS port 53 UDP in `kube-system`. |
+| **Ticket #8** | `catalog-hpa` | HPA shows `<unknown>/50%` | Container omits mandatory `resources.requests.cpu` required for percentage computation. |
+| **Ticket #9** | `node-log-collector` | DaemonSet missing from control plane | Missing toleration for `node-role.kubernetes.io/control-plane:NoSchedule` taint. |
+| **Ticket #10** | `ecom-auditor-pod` | `403 Forbidden` querying K8s API | Core API group misconfigured as `apiGroups: ["core"]` (`[""]` required) and missing namespace in RoleBinding. |
+| **Ticket #11** | `db-backup-cronjob` | CronJob fails or generates 0-byte dumps | Invalid 6-field Quartz syntax, Kubelet shell expansion dropping `$(date)`, and split `-c` array parameters. |
+
+---
+
+### Step-by-Step Ticket Diagnoses & Remediations
+
+#### Ticket #1: Frontend Pods Stuck in `Pending`
+```bash
+# Diagnosis
+kubectl get pods -n ecom-prod -l app=frontend-web
+kubectl describe pod -n ecom-prod -l app=frontend-web | grep -A 5 Events
+```
+* **Root Cause (RCA):** `nodeSelector` requires `topology.kubernetes.io/zone: eu-west-1a`, which does not match any cluster node.
+* **Fix:** Change `nodeSelector` to `kubernetes.io/os: linux` or remove it. Apply `solution/03-fixed-frontend-and-security.yaml`.
+
+---
+
+#### Ticket #2: Catalog Service Reports `Endpoints: <none>`
+```bash
+# Diagnosis
+kubectl get endpoints catalog-service -n ecom-prod
+kubectl get svc catalog-service -n ecom-prod -o jsonpath='{.spec.selector}'
+kubectl get pods -n ecom-prod -l app=catalog-api --show-labels
+```
+* **Root Cause (RCA):** Kubernetes Service selectors perform a logical AND. The service selects `app: catalog-api` AND `tier: backend`, but pods only carry `app: catalog-api`.
+* **Fix:** Remove `tier: backend` from Service selector. Apply `solution/02-fixed-cache-and-backend.yaml`.
+
+---
+
+#### Ticket #3: Catalog API `CreateContainerConfigError` & `CrashLoopBackOff`
+```bash
+# Diagnosis
+kubectl get pods -n ecom-prod -l app=catalog-api
+kubectl describe pod -n ecom-prod -l app=catalog-api
+```
+* **Root Cause (RCA):**
+  1. Pod refers to key `db_password`, but `ecom-secret` defines `database_password`.
+  2. The application takes 10 seconds to warm up caches, but `livenessProbe` runs after 2 seconds with `failureThreshold: 2`, killing the container repeatedly.
+* **Fix:** Update env reference to `database_password`, and add a `startupProbe` with adequate failure threshold.
+
+---
+
+#### Ticket #4: Order Service Returns `Connection Refused`
+```bash
+# Diagnosis
+kubectl get endpoints order-service -n ecom-prod
+kubectl run test-curl --rm -it --image=curlimages/curl -n ecom-prod -- curl -v http://order-service:80
+```
+* **Root Cause (RCA):** `order-service` sets `targetPort: 80`, but the application container actually listens on port `8080`.
+* **Fix:** Update `targetPort: 8080` in the Service manifest.
+
+---
+
+#### Ticket #5: PostgreSQL Pod Stuck Due to `Pending` PVC
+```bash
+# Diagnosis
+kubectl get pvc -n ecom-prod
+kubectl describe pvc postgres-pvc -n ecom-prod
+```
+* **Root Cause (RCA):** `postgres-pvc` requests `storageClassName: gp3`, which does not exist in local/OKE environments.
+* **Fix:** Change `storageClassName` to `standard` (or `oci-bv` for OKE). Apply `solution/01-fixed-storage-and-config.yaml`.
+
+---
+
+#### Ticket #6: Redis StatefulSet DNS NXDOMAIN Resolution Failure
+```bash
+# Diagnosis
+kubectl exec -it redis-0 -n ecom-prod -- nslookup redis-0.redis-service.ecom-prod.svc.cluster.local
+```
+* **Root Cause (RCA):** StatefulSet `spec.serviceName` is set to `redis`, while the Headless Service is named `redis-service`. In Kubernetes, `serviceName` must match the Headless Service `metadata.name` exactly.
+* **Fix:** Change StatefulSet `spec.serviceName` to `redis-service`. Apply `solution/02-fixed-cache-and-backend.yaml`.
+
+---
+
+#### Ticket #7: Inter-Service DNS Queries Hang in NetworkPolicy
+```bash
+# Diagnosis
+kubectl exec -it deploy/catalog-api -n ecom-prod -- nslookup postgres-service
+```
+* **Root Cause (RCA):** NetworkPolicy restricts Egress but omits UDP port 53 for CoreDNS in `kube-system`.
+* **Fix:** Add an egress rule permitting TCP/UDP port 53 to CoreDNS in `kube-system`.
+
+---
+
+#### Ticket #8: HPA Shows `<unknown>/50%`
+```bash
+# Diagnosis
+kubectl get hpa catalog-hpa -n ecom-prod
+kubectl describe hpa catalog-hpa -n ecom-prod
+```
+* **Root Cause (RCA):** HPA requires `resources.requests.cpu` to compute utilization percentages ($\text{Usage} / \text{Request} \times 100$). Without requests, the denominator is undefined.
+* **Fix:** Add `resources.requests.cpu: 100m` to `catalog-api`.
+
+---
+
+#### Ticket #9: DaemonSet Not Running on Control Plane Nodes
+```bash
+# Diagnosis
+kubectl get ds node-log-collector -n ecom-prod
+```
+* **Root Cause (RCA):** Control-plane nodes carry `node-role.kubernetes.io/control-plane:NoSchedule` taint, which DaemonSets do not tolerate by default.
+* **Fix:** Add tolerations for `control-plane` and `master` taints with `Exists` operator.
+
+---
+
+#### Ticket #10: Auditor Pod Receives `403 Forbidden`
+```bash
+# Diagnosis
+kubectl logs ecom-auditor-pod -n ecom-prod
+kubectl auth can-i list pods --as=system:serviceaccount:ecom-prod:ecom-auditor-sa -n ecom-prod
+```
+* **Root Cause (RCA):**
+  1. Core Kubernetes resources (Pods, Services) reside in `apiGroups: [""]` (empty string), NOT `["core"]`.
+  2. `ClusterRoleBinding` subjects omitted `namespace: ecom-prod`, defaulting to `default`.
+* **Fix:** Change `apiGroups: [""]` and specify `namespace: ecom-prod` in `ClusterRoleBinding`.
+
+---
+
+#### Ticket #11: Database Backup CronJob Fails or Produces Empty Files
+```bash
+# Diagnosis
+kubectl get cronjob db-backup-cronjob -n ecom-prod
+kubectl create job --from=cronjob/db-backup-cronjob test-run -n ecom-prod
+kubectl logs job/test-run -n ecom-prod
+```
+* **Root Cause (RCA):**
+  1. Non-standard 6-field Quartz cron expression (`0 2 ? * * *`).
+  2. Kubelet variable evaluation interpolates `$(date)` into an empty string at container start.
+  3. Splitting command arguments across YAML array elements after `-c` causes the shell to ignore trailing commands.
+* **Fix:** Standardize to 5-field cron (`0 2 * * *`) and wrap script commands in a single multiline block (`|`).
+
+---
+
+### Full Remediation & Verification Command
+Apply all corrected manifests at once:
+```bash
+kubectl apply -f solution/01-fixed-storage-and-config.yaml
+kubectl apply -f solution/02-fixed-cache-and-backend.yaml
+kubectl apply -f solution/03-fixed-frontend-and-security.yaml
+kubectl apply -f solution/04-fixed-ops-and-batch.yaml
+
+# Verify all objects
+kubectl get all,pvc,hpa,cronjob -n ecom-prod
+```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # ShopSphere Incident Triage — Kıdemli SRE Çözüm ve Kök Neden Analizi (RCA)
 
 Bu doküman, `k8-troubleshoot-1` laboratuvarında karşılaşılan **11 adet gerçek dünya arıza senaryosunun (Production Incident Tickets)** derinlemesine kök neden analizini (Root Cause Analysis - RCA), teşhis komutlarını ve kesin çözümlerini içerir.

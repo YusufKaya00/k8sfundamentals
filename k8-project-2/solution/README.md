@@ -1,3 +1,313 @@
+# 💡 Lab 2 Solutions: Multi-Tier Microservices & Platform Hardening (Minikube 5-Node)
+
+Step-by-step solutions and verification commands for Lab 2.
+
+> Commands are executed from within the `k8-project-2/` directory (manifests are located under `./yaml/`).
+>
+> In Minikube, node names are: `minikube` (control-plane), `minikube-m02`, `minikube-m03`, `minikube-m04`, `minikube-m05` (workers).
+
+---
+
+## 🇬🇧 English Solutions
+
+### Step 1: Provision 5-Node Minikube Cluster with Calico CNI
+<details>
+  <summary>Click to view solution!</summary>
+
+Calico CNI is required to enforce NetworkPolicies (Step 4), as Minikube's default multi-node CNI (kindnet) does not enforce NetworkPolicy rules.
+
+```bash
+minikube start --nodes=5 --cni=calico --cpus=2 --memory=2048 --driver=docker
+
+minikube addons enable metrics-server
+minikube addons enable ingress
+
+kubectl label node minikube-m02 minikube-m03 minikube-m04 minikube-m05 node-role.kubernetes.io/worker=
+
+kubectl get nodes -o wide
+kubectl get pods -n ingress-nginx
+kubectl get pods -n kube-system -l k8s-app=metrics-server
+kubectl top nodes
+```
+> Note: `kubectl top nodes` may take ~1 minute after metrics-server starts to report metrics.
+</details>
+
+---
+
+### Step 2: Provision Staging and Production Namespaces
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl create namespace staging
+kubectl create namespace production
+kubectl get namespaces
+```
+</details>
+
+---
+
+### Step 3: Dedicate 2 Worker Nodes for Production (Taints & Labels)
+<details>
+  <summary>Click to view solution!</summary>
+
+Taints prevent untolerated pods from scheduling on these nodes; labels allow production pods to explicitly select them via `nodeAffinity`.
+
+```bash
+kubectl taint nodes minikube-m04 minikube-m05 dedicated=production:NoSchedule
+kubectl label nodes minikube-m04 minikube-m05 environment=production
+
+kubectl get nodes -L environment
+kubectl describe node minikube-m04 | grep -i taints
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+```
+</details>
+
+---
+
+### Step 4: Zero-Trust Network Security (NetworkPolicy)
+<details>
+  <summary>Click to view solution!</summary>
+
+Selects `app=postgres` pods and allows inbound 5432/TCP traffic strictly from `app=web, db-access=true` pods within the same namespace. All other ingress traffic is dropped.
+
+```bash
+kubectl apply -f ./yaml/network-policy.yaml
+kubectl describe networkpolicy postgres-allow-web-only -n staging
+```
+
+**Verification (after deploying stack in Step 6):**
+```bash
+# ALLOWED: Labeled web pod -> PostgreSQL ("db_reachable": true)
+kubectl exec -n staging deploy/web -c web -- wget -qO- http://localhost:8080/db
+
+# BLOCKED: Unlabeled pod in same namespace ("no response / timeout")
+kubectl run np-test -n staging --rm -it --restart=Never --image=postgres:16-alpine -- pg_isready -h postgres -p 5432 -t 5
+
+# BLOCKED: Cross-namespace traffic from default namespace
+kubectl run np-test -n default --rm -it --restart=Never --image=postgres:16-alpine -- pg_isready -h postgres.staging.svc.cluster.local -p 5432 -t 5
+```
+</details>
+
+---
+
+### Step 5: Decouple Configuration & Secrets
+<details>
+  <summary>Click to view solution!</summary>
+
+Generate Secrets from env-file (avoiding plain credentials in source control) and apply ConfigMaps:
+
+```bash
+kubectl create secret generic postgres-creds --from-env-file=./yaml/postgres-secrets.txt -n staging
+kubectl create secret generic postgres-creds --from-env-file=./yaml/postgres-secrets.txt -n production
+
+kubectl apply -f ./yaml/app-configmap.yaml
+
+kubectl get secret postgres-creds -n production
+kubectl get secret postgres-creds -n production -o jsonpath='{.data.POSTGRES_USER}' | base64 -d; echo
+kubectl describe configmap app-config -n staging
+kubectl describe configmap app-config -n production
+```
+</details>
+
+---
+
+### Step 6: Deploy Web + PostgreSQL Stack with InitContainer
+<details>
+  <summary>Click to view solution!</summary>
+
+The web app is a lightweight REST API mounted from a ConfigMap. The `wait-for-postgres` init container blocks the main app until PostgreSQL accepts TCP connections. Production pods contain the `dedicated=production:NoSchedule` toleration and `environment=production` nodeAffinity.
+
+```bash
+kubectl apply -f ./yaml/staging-stack.yaml
+kubectl apply -f ./yaml/prod-stack.yaml
+
+kubectl get pods -n production -w
+kubectl get pods -n staging -o wide
+kubectl get pods -n production -o wide
+kubectl get pvc -n staging
+kubectl get pvc -n production
+
+kubectl logs -n production deploy/web -c wait-for-postgres
+kubectl exec -n production deploy/web -c web -- wget -qO- http://localhost:8080/
+```
+
+Insert seed data into production database for backup testing:
+```bash
+kubectl exec -n production deploy/postgres -- psql -U labadmin -d appdb -c "CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, item TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now());"
+kubectl exec -n production deploy/postgres -- psql -U labadmin -d appdb -c "INSERT INTO orders (item) VALUES ('kubernetes-book'), ('minikube-mug');"
+kubectl exec -n production deploy/postgres -- psql -U labadmin -d appdb -c "SELECT * FROM orders;"
+```
+</details>
+
+---
+
+### Step 7: L7 Ingress Routing (Host & Path Based)
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/app-ingress.yaml
+kubectl get ingress -A
+kubectl describe ingress api-ingress -n production
+
+# Test with DNS resolution override
+curl --resolve "api.lab.internal:80:$(minikube ip)" http://api.lab.internal/
+curl -s --resolve "api.lab.internal:80:$(minikube ip)" http://api.lab.internal/metrics | grep -E "^pg_up"
+curl --resolve "staging.lab.internal:80:$(minikube ip)" http://staging.lab.internal/
+```
+</details>
+
+---
+
+### Step 8: Database Backup CronJob (Batch Processing)
+<details>
+  <summary>Click to view solution!</summary>
+
+Runs nightly at 02:00, executes `pg_dump`, compresses with gzip, validates integrity with `gzip -t`, and prunes backups older than 7 days on shared PVC.
+
+```bash
+kubectl apply -f ./yaml/db-backup-cronjob.yaml
+kubectl get cronjob db-backup-job -n production
+kubectl get pvc db-backup-pvc -n production
+
+# Manually trigger a backup run
+kubectl create job db-backup-manual-1 --from=cronjob/db-backup-job -n production
+kubectl wait --for=condition=complete job/db-backup-manual-1 -n production --timeout=180s
+kubectl logs -n production job/db-backup-manual-1
+kubectl get jobs -n production
+```
+</details>
+
+---
+
+### Step 9: Autoscaling (HPA) & Pod Disruption Budget (PDB)
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/autoscale-hpa.yaml
+kubectl apply -f ./yaml/app-pdb.yaml
+
+kubectl get hpa web-hpa -n production
+kubectl get pdb web-pdb -n production
+kubectl top pods -n production
+
+# Run load test to trigger autoscale
+kubectl run load-generator -n production --image=busybox:1.36 --restart=Never -- /bin/sh -c "while true; do wget -q -O- http://web/burn > /dev/null; done"
+kubectl get hpa web-hpa -n production -w
+kubectl get pods -n production -l app=web -o wide
+
+# Stop load test
+kubectl delete pod load-generator -n production
+```
+</details>
+
+---
+
+### Step 10: Cluster-Wide Logging DaemonSet
+<details>
+  <summary>Click to view solution!</summary>
+
+Deploys `fluent-bit` with `dedicated=production:NoSchedule` toleration and control-plane exclusion to run on all 4 worker nodes.
+
+```bash
+kubectl apply -f ./yaml/daemonset.yaml
+kubectl get daemonset fluent-bit -n logging
+kubectl get pods -n logging -o wide
+kubectl logs -n logging -l app=fluent-bit --tail=5
+kubectl exec -n logging ds/fluent-bit -- ls /var/log/containers
+```
+</details>
+
+---
+
+### Step 11: Redis StatefulSet with Sentinel & Headless Service
+<details>
+  <summary>Click to view solution!</summary>
+
+Deploys `redis-0` (master) and `redis-1` (replica) with stable DNS and dedicated PVCs:
+
+```bash
+kubectl apply -f ./yaml/redis-sentinel-statefulset.yaml
+kubectl get statefulset redis -n staging
+kubectl get pods -n staging -l app=redis -o wide
+kubectl get pvc -n staging -l app=redis
+
+# Verify replication
+kubectl exec -n staging redis-0 -c redis -- redis-cli info replication
+kubectl exec -n staging redis-0 -c redis -- redis-cli set lab:msg "hello-k8s"
+kubectl exec -n staging redis-1 -c redis -- redis-cli get lab:msg
+
+# Verify replica is read-only
+kubectl exec -n staging redis-1 -c redis -- redis-cli set lab:write "test"
+
+# Verify failover & PVC persistence
+kubectl delete pod redis-1 -n staging
+kubectl get pods -n staging -l app=redis -w
+kubectl exec -n staging redis-1 -c redis -- redis-cli get lab:msg
+```
+</details>
+
+---
+
+### Step 12: In-Cluster API Client with Granular ServiceAccount
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/k8s-api-debug.yaml
+kubectl get serviceaccount,role,rolebinding -n production -l app=api-client
+
+# Test permissions via auth can-i
+kubectl auth can-i list pods -n production --as=system:serviceaccount:production:api-reader
+kubectl auth can-i get jobs.batch -n production --as=system:serviceaccount:production:api-reader
+kubectl auth can-i delete pods -n production --as=system:serviceaccount:production:api-reader
+kubectl auth can-i list pods -n staging --as=system:serviceaccount:production:api-reader
+
+# Query API from within pod
+kubectl exec -n production api-client -- sh -c 'SA=/var/run/secrets/kubernetes.io/serviceaccount; curl -sS --cacert $SA/ca.crt -H "Authorization: Bearer $(cat $SA/token)" https://kubernetes.default.svc/api/v1/namespaces/production/pods'
+```
+</details>
+
+---
+
+### Step 13: Planned Maintenance & Graceful Node Drain
+<details>
+  <summary>Click to view solution!</summary>
+
+Drain worker node `minikube-m04` respecting PDB:
+
+```bash
+kubectl cordon minikube-m04
+kubectl get nodes
+
+kubectl drain minikube-m04 --ignore-daemonsets --delete-emptydir-data --timeout=300s
+kubectl get pods -n production -o wide
+kubectl get pdb web-pdb -n production
+
+# Uncordon after maintenance
+kubectl uncordon minikube-m04
+kubectl rollout restart deployment web -n production
+kubectl get pods -n production -l app=web -o wide
+```
+</details>
+
+---
+
+### Cleanup
+<details>
+  <summary>Click to view cleanup!</summary>
+
+```bash
+minikube delete
+```
+</details>
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 **Çözümler — Modern Kubernetes Platform Laboratuvarı (Minikube)**
 
 > Tüm komutlar `k8-project-2/` dizini içerisinden çalıştırılır (manifestolar `./yaml/` altındadır).

@@ -1,3 +1,72 @@
+# 🚀 Lab 5: Enterprise GitOps, Progressive Delivery & Automated Rollbacks (ArgoCD & Argo Rollouts)
+
+This lab guides you through the transition from manual YAML deployments (*ClickOps*) to modern **GitOps** workflows, covering **ArgoCD Self-Healing Drift Remediation**, **Declarative Helm Chart Orchestration (Zero-Fork Strategy)**, and **Progressive Delivery with Argo Rollouts and Prometheus Metric-Based Automated Rollbacks**.
+
+> **Solutions / Çözümler:** For step-by-step commands, architectural rationale, and outputs:  
+> **👉 [Explore Solution Guide (solution/README.md)](./solution/README.md)**
+
+---
+
+## 📋 Infrastructure & Environment Constraints
+
+- **3 Worker Node Topology:**
+  - 1 x Dedicated Database Node (`workload=database:NoSchedule`, `tier=database`)
+  - 2 x Web / Worker Nodes (`tier=web`)
+- **Enterprise Container Runtimes (Oracle Linux 9 / OCI OKE):** All images specify fully qualified domain names (`docker.io/...`, `quay.io/...`).
+- **Resource Footprint Optimization:** ArgoCD and Argo Rollouts controllers are tuned with minimal resource configurations (disabling heavy Dex and notification sidecars) to operate seamlessly within quota boundaries.
+
+---
+
+## 📋 Curriculum Steps (10 Steps)
+
+### Phase 1: GitOps Core & ArgoCD Architecture
+
+* **Step 1: Resource-Optimized ArgoCD Deployment via Helm**  
+  Deploy the official `argo/argo-cd` chart to the `argocd` namespace using `solution/01-argocd-values.yaml`. Ensure Redis runs in standalone single-replica mode, disable unused Dex/notification daemons, and schedule controllers strictly on `tier=web` worker nodes.
+
+* **Step 2: Secure ArgoCD Authentication & Access Verification**  
+  Extract the initial admin secret (`argocd-initial-admin-secret`), forward port `8080:443`, and authenticate into the ArgoCD Web UI.
+
+* **Step 3: Declarative GitOps Application (`Application` CRD)**  
+  Rather than using ClickOps, define a declarative `Application` resource binding a microservice (e.g., `guestbook`) to the `production` namespace with `automated.prune` and `automated.selfHeal` enabled.
+
+* **Step 4: Configuration Drift Detection & Self-Healing Remediation**  
+  SRE Scenario: Simulate an unauthorized manual drift via `kubectl scale --replicas=5`. Observe how ArgoCD detects the divergence and automatically rolls back the replica count to match Git within seconds.
+
+---
+
+### Phase 2: Declarative Helm Orchestration
+
+* **Step 5: Upstream Helm Management with Zero-Fork Strategy**  
+  Deploy an external upstream Helm chart (e.g., `podinfo`) declaratively via ArgoCD with custom parameter values and security policies, eliminating the need to fork or mirror the source chart repository.
+
+---
+
+### Phase 3: Progressive Delivery with Argo Rollouts
+
+* **Step 6: Argo Rollouts Controller & Live Visual Dashboard**  
+  Install `argo/argo-rollouts` via Helm. Enable the built-in web dashboard on port 3100 to visualize real-time canary traffic steps and pod states.
+
+* **Step 7: Migration from Deployment to Rollout Primitive**  
+  Transition from `kind: Deployment` to `kind: Rollout`. Attach dedicated `payment-service-stable` and `payment-service-canary` Services, and launch the stable blue baseline (`rollouts-demo:blue`) with 4 replicas.
+
+---
+
+### Phase 4: Metric Analysis & Automated Rollback
+
+* **Step 8: Prometheus SLO AnalysisTemplate Design**  
+  Construct an `AnalysisTemplate` querying Prometheus HTTP metrics. Enforce an error rate ceiling (requiring $\ge 95\%$ success rate) as an automated gate between canary promotion phases.
+
+* **Step 9: Successful Canary Rollout (Happy Path)**  
+  Promote healthy v2 green version (`rollouts-demo:green`). Monitor automated progression: 25% traffic -> Analysis -> 50% traffic -> Analysis -> 100% full promotion with zero downtime.
+
+* **Step 10: Synthetic Failure Injection & Zero-Touch Automated Rollback**  
+  Production disaster test: Deploy a faulty v3 build (`rollouts-demo:bad-red`) intentionally emitting 80% HTTP 500 errors. Watch the `AnalysisTemplate` fail, aborting the rollout and instantly reverting traffic back to the healthy v2 pods without human intervention (*Zero-Touch Automated Rollback*).
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # Enterprise GitOps, Progressive Delivery & Automated Rollbacks (ArgoCD & Argo Rollouts)
 
 Bu laboratuvar; ham YAML yazımı ve manuel CLI işlemlerinden modern **GitOps** felsefesine geçişi, **ArgoCD ile sürüklenme engelleme (Self-Healing)**, **Helm chart'larının GitOps ile orkestrasyonu** ve **Argo Rollouts ile Prometheus metrik tabanlı otomatik geri alma (Automated Rollback)** süreçlerini uçtan uca simüle eder.

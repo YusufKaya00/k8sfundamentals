@@ -1,0 +1,101 @@
+# 🚀 Cloud-Native Kubernetes & DevOps Engineering Workspace
+
+Welcome to the comprehensive **Kubernetes, Cloud Infrastructure, and Site Reliability Engineering (SRE)** repository. This repository represents an end-to-end journey from foundational container orchestration to enterprise-grade DevSecOps, GitOps, observability, and real-world production incident response simulations.
+
+All projects and troubleshooting scenarios are fully reproducible on local clusters (**Minikube**) and production cloud environments (**Oracle Cloud Infrastructure Container Engine for Kubernetes - OKE**).
+
+---
+
+## 🧭 Repository Structure & Curriculum Index
+
+```text
+k8sfundamentals/
+├── k8-project-1/       # Kubernetes Foundations (Deployments, StatefulSets, DaemonSets, Storage, Ingress)
+├── k8-project-2/       # Multi-Tier Microservices & Platform Hardening (Minikube 5-Node Cluster)
+├── k8-project-3/       # Production Enterprise Platform on OKE (3-Node Dedicated Cloud Cluster)
+├── k8-project-4/       # Observability & Batch Processing (Helm, Prometheus-Stack, Grafana, CronJobs)
+├── k8-project-5/       # GitOps & Progressive Delivery (ArgoCD, Argo Rollouts, Automated Canary Rollbacks)
+├── k8-project-6/       # Cloud-Native CI/CD & DevSecOps (GitLab Runner, Rootless Buildah, Trivy, SBOM)
+├── k8-troubleshoot-1/  # SRE Incident Lab 1: ShopSphere E-Commerce (11 Cascading Multi-Object Failures)
+├── k8-troubleshoot-2/  # SRE Incident Lab 2: NovaMarket Platform (7 Deep Topology & Stateful Failures)
+├── k8-troubleshoot-3/  # SRE Incident Lab 3: ApexPay Gateway (7 Linux Security, VFS & Socket Failures)
+└── k8-troubleshoot-4/  # SRE Incident Lab 4: PulseMed Telemetry (7 Service, Port & EndpointSlice Failures)
+```
+
+---
+
+## 🛠️ Technology Stack & Tooling
+
+| Domain | Tools & Technologies |
+| :--- | :--- |
+| **Compute & Orchestration** | Kubernetes (v1.30 – v1.37), OCI OKE, Minikube, CRI-O |
+| **Package & Config Management** | Helm 3, Kustomize, ConfigMaps, Secrets |
+| **Storage & Persistence** | OCI Block Volume (`oci-bv` CSI), Dynamic PVCs, `subPath`, `fsGroup` |
+| **Networking & Discovery** | OCI VCN-Native CNI, ClusterIP, NodePort, Headless Services, Ingress, CoreDNS |
+| **GitOps & Delivery** | ArgoCD, Argo Rollouts (Canary Releases, AnalysisTemplates, Rollbacks) |
+| **CI/CD & DevSecOps** | GitLab CI (Kubernetes Executor), Rootless Buildah, Trivy Security Scanner, CycloneDX SBOM |
+| **Observability & SRE** | Prometheus, Grafana, Alertmanager, Prometheus Operator, PromQL, Kube-State-Metrics |
+| **Application Runtimes** | Python (HTTP / REST APIs), Nginx (L7 Reverse Proxy), PostgreSQL 16, Redis 7.2 |
+
+---
+
+## 🌐 Production Cluster Topologies
+
+### Topology A: OCI Container Engine for Kubernetes (OKE)
+* **Control Plane:** Fully Managed Oracle Kubernetes Engine (Kubernetes v1.37.0)
+* **Worker Nodes (3 Nodes, `VM.Standard.E3.Flex`, Oracle Linux 8.10 UEK):**
+  * `10.0.10.122`: Web / Application Tier (`tier=web`, Untainted)
+  * `10.0.10.208`: Web / Application Tier (`tier=web`, Untainted)
+  * `10.0.10.78`: Dedicated Database Tier (`tier=database`, Taint: `workload=database:NoSchedule`)
+* **Default StorageClass:** `oci-bv` (`blockvolume.csi.oraclecloud.com`, ext4, WaitForFirstConsumer)
+
+### Topology B: Local Minikube Platform
+* **Architecture:** 5 Nodes (1 Control-Plane + 4 Workers)
+* **Features:** Ingress Controller (`nginx`), Metrics Server, Calico CNI, Local Storage Provisioner
+
+---
+
+## 📚 Project Summary & Deep-Dive Links
+
+### 1. Hands-On Platform Projects (Build & Deploy)
+* [**k8-project-1:** Core Kubernetes Primitives](./k8-project-1/README.md) — Comprehensive hands-on coverage of Deployments, StatefulSets (MongoDB), DaemonSets, PersistentVolumes, PersistentVolumeClaims, Services, and Ingress routing.
+* [**k8-project-2:** Platform Hardening on Minikube](./k8-project-2/README.md) — 5-node multi-tenant architecture with `staging`/`production` namespaces, dedicated worker taints, NetworkPolicies, InitContainers, HPA, PDB, and RBAC client pods.
+* [**k8-project-3:** Production Enterprise Platform on OCI OKE](./k8-project-3/README.md) — Enterprise multi-tier deployment on cloud infrastructure with OCI Block Volume CSI, TopologySpreadConstraints, OCI Flexible Load Balancers, Redis StatefulSet, and node drain operations.
+* [**k8-project-4:** SRE Observability & Batch Processing](./k8-project-4/README.md) — Custom microservice Helm chart, production-tuned `kube-prometheus-stack`, Grafana dashboards, batch Jobs/CronJobs, ServiceMonitors, Alertmanager rules, and synthetic crash testing.
+* [**k8-project-5:** GitOps & Progressive Delivery](./k8-project-5/README.md) — Declarative ArgoCD GitOps pipelines, self-healing drift remediation, Argo Rollouts automated canary deployments, and Prometheus metric-based automated rollbacks.
+* [**k8-project-6:** Cloud-Native CI/CD & DevSecOps Platform](./k8-project-6/README.md) — Dynamic Kubernetes-executor GitLab Runner, rootless container image builds (Buildah), automated vulnerability scanning (Trivy), CycloneDX SBOM generation, and automated GitOps promotion.
+
+### 2. On-Call SRE Incident Triage Labs (Troubleshooting)
+* [**k8-troubleshoot-1:** ShopSphere E-Commerce Incident Triage](./k8-troubleshoot-1/README.md) — 11 cascading tickets covering StorageClass mismatches, Secret key typos, Headless DNS failures, Service selector drift, Liveness Probe cyclic crashes, HPA metric starvation, DaemonSet taints, and RBAC core API group errors.
+* [**k8-troubleshoot-2:** NovaMarket Platform Outage Triage](./k8-troubleshoot-2/README.md) — 7 cascading production tickets: `NoExecute` vs `NoSchedule` toleration, ext4 `lost+found` initdb rejection, startupProbe budget starvation, `optional: true` silent failures, Service selector drift, and required anti-affinity deadlocks.
+* [**k8-troubleshoot-3:** ApexPay Financial Gateway Outage Triage](./k8-troubleshoot-3/README.md) — 7 system-level tickets: NodeAffinity label mismatch, non-root storage permissions (`fsGroup: 999`), excessive CPU requests (`Insufficient cpu`), VFS volume mount code overlay, probe timeout storms, named port resolution, and `127.0.0.1` localhost socket binding.
+* [**k8-troubleshoot-4:** PulseMed Telemetry & Clinic Gateway Triage](./k8-troubleshoot-4/README.md) — 7 network and service tickets: Taint key mismatch, Headless Service DNS NXDOMAIN, Service `targetPort` (6380 vs 6379), Probe port mismatch (8000 vs 8080), ConfigMap upstream port mismatch (5433 vs 5432), and Nginx `proxy_pass` port conflict (8080 vs 80).
+
+---
+
+<br>
+
+---
+
+## 🇹🇷 Türkçe Versiyon / Turkish Version
+
+# 🚀 Bulut-Yerel Kubernetes ve DevOps Mühendisliği Çalışma Alanı
+
+Bu depo; temel konteyner orkestrasyonundan kurumsal DevSecOps, GitOps, gözlemlenebilirlik (observability) ve gerçek zamanlı SRE olay müdahale (incident triage) simülasyonlarına kadar uzanan kapsamlı bir **Kubernetes ve Platform Mühendisliği** çalışma alanıdır.
+
+Tüm projeler ve sorun giderme laboratuvarları hem yerel kümelerde (**Minikube**) hem de gerçek bulut ortamında (**Oracle Cloud Infrastructure Container Engine for Kubernetes - OKE**) birebir çalıştırılabilir ve doğrulanabilir şekilde tasarlanmıştır.
+
+---
+
+### 📂 Proje ve Laboratuvar Haritası
+
+* [**k8-project-1:** Temel Kubernetes Nesneleri](./k8-project-1/README.md) — Deployment, StatefulSet (MongoDB), DaemonSet, PV/PVC, StorageClass, Service ve Ingress temelleri.
+* [**k8-project-2:** Çok Katmanlı Platform Güçlendirme (Minikube)](./k8-project-2/README.md) — 5 node'lu kümede staging/production ayrımı, dedicated taint/toleration, NetworkPolicy, InitContainer, HPA, PDB ve RBAC.
+* [**k8-project-3:** OCI OKE Üretim Ortamı Mimarisi](./k8-project-3/README.md) — OCI Block Volume (oci-bv CSI), TopologySpread, OCI Flexible Load Balancer, Redis StatefulSet ve kontrollü node drain operasyonları.
+* [**k8-project-4:** SRE Gözlemlenebilirlik ve Batch Süreçler](./k8-project-4/README.md) — Custom Helm chart, optimize `kube-prometheus-stack`, Grafana panelleri, CronJob yedekleme, ServiceMonitor ve Alertmanager alarm kuralları.
+* [**k8-project-5:** GitOps ve İlerici Dağıtım (ArgoCD & Argo Rollouts)](./k8-project-5/README.md) — Deklaratif ArgoCD yönetimi, self-healing sürüklenme engelleme, Canary dağıtımları ve Prometheus metrik tabanlı otomatik rollback.
+* [**k8-project-6:** Bulut-Yerel CI/CD ve DevSecOps Hattı](./k8-project-6/README.md) — Dinamik GitLab Runner, rootless Buildah ile imaj derleme, Trivy güvenlik kapısı (vulnerability gating), SBOM üretimi ve GitOps köprüsü.
+* [**k8-troubleshoot-1:** ShopSphere E-Ticaret Arıza Kurtarma Labı](./k8-troubleshoot-1/README.md) — 11 zincirleme bilet: StorageClass, Headless DNS, Service selector, Liveness probe, HPA, DaemonSet taint ve RBAC core apiGroups.
+* [**k8-troubleshoot-2:** NovaMarket Canlı Kesinti Müdahale Labı](./k8-troubleshoot-2/README.md) — 7 üretim arızası: Toleration NoExecute vs NoSchedule, ext4 lost+found initdb engeli, startupProbe bütçesi, `optional: true` sessiz hatası ve katı anti-affinity kilitlenmesi.
+* [**k8-troubleshoot-3:** ApexPay Finansal Gateway Arıza Kurtarma Labı](./k8-troubleshoot-3/README.md) — 7 sistem seviyesi arıza: NodeAffinity, non-root `fsGroup: 999`, gerçek dışı CPU isteği, VFS mount kod ezmesi, probe timeout ve `127.0.0.1` socket binding.
+* [**k8-troubleshoot-4:** PulseMed Telemetri Servis & Port Arıza Labı](./k8-troubleshoot-4/README.md) — 7 ağ ve port arızası: Taint key uyuşmazlığı, Headless DNS NXDOMAIN, `port` vs `targetPort`, Probe port uyuşmazlığı, ConfigMap port hatası ve Nginx `proxy_pass` port çatışması.

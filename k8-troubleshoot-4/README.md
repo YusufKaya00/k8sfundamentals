@@ -1,3 +1,171 @@
+# 🚨 SRE Incident Lab 4: PulseMed Telemetry & Clinic Gateway Triage
+
+This workspace serves as the active Incident Triage War Room during the production go-live failure of PulseMed, a mission-critical hospital telemetry and clinic monitoring platform.
+
+All manifests deployed to the cluster were **schema-compliant** and accepted without syntax errors by the Kubernetes API server. However, severe service discovery failures, port mapping mismatches (`port` vs `targetPort`), probe misconfigurations, and scheduling constraints caused a cascading outage across all microservices.
+
+> 📖 **Post-Mortem & Deep Root Cause Analyses (RCA):**  
+> 👉 **[Explore Senior SRE Post-Mortem Guide (SOLUTION.md)](./SOLUTION.md)**
+
+---
+
+## 🗺️ Cluster Topology & Infrastructure Constraints
+
+The incident scenario is grounded strictly in the following 3-node cluster topology:
+
+| Node Name | IP | Label | Constraint / Taint | Allocated Tier Role |
+| :--- | :--- | :--- | :--- | :--- |
+| **Node-1** | `10.0.10.122` | `tier=web` | *None* | Web / API / Cache Workloads |
+| **Node-2** | `10.0.10.208` | `tier=web` | *None* | Web / API / Cache Workloads |
+| **Node-3** | `10.0.10.78` | `tier=database` | `workload=database:NoSchedule` | Database Workloads Only (Isolated) |
+
+* **StorageClass:** Default cluster storage class is `oci-bv` (Oracle Cloud Block Volume - `WaitForFirstConsumer`).
+
+---
+
+## 🚀 Environment Initialization (Deploying the Broken Platform)
+
+Apply all broken manifests to the cluster:
+
+```bash
+kubectl apply -f manifests/
+```
+
+Watch initial status:
+```bash
+kubectl get pods,svc,endpointslices -n pulse-prod -o wide
+```
+
+---
+
+## 📋 On-Call SRE Incident Board
+
+Triage and remediate the tickets sequentially:
+
+---
+
+### [INC-401] Telemetry Database Fails to Schedule — Pod Pending
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] StatefulSet pulse-prod/vitals-db pod vitals-db-0 is stuck in Pending. Storage volume unbound.`
+* **Symptoms:**
+  The `vitals-db-0` StatefulSet pod cannot be scheduled on any node and remains `Pending`. Its associated PVC (`vitals-storage-vitals-db-0`) cannot bind.
+* **Verification:**
+  * `kubectl get pod vitals-db-0 -n pulse-prod -o wide` shows the pod scheduled on `10.0.10.78` (`tier=database`) and reaching `1/1 Running`.
+  * Database accepts connections on port 5432:
+    ```bash
+    kubectl exec -n pulse-prod vitals-db-0 -- pg_isready -U pulse_user -d pulse_vitals
+    ```
+
+---
+
+### [INC-402] Database Running but Unreachable via Service — DNS NXDOMAIN & Empty Endpoints
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Service pulse-prod/vitals-db has 0 active endpoints. Internal DNS queries for vitals-db return NXDOMAIN.`
+* **Symptoms:**
+  `vitals-db-0` is `1/1 Running`. However, other pods cannot resolve `vitals-db.pulse-prod.svc.cluster.local`, and the service has no endpoints (`Endpoints: <none>`).
+* **Verification:**
+  * `kubectl get endpointslices -l kubernetes.io/service-name=vitals-db -n pulse-prod` shows the pod IP and port `5432`.
+  * Port check from another pod succeeds:
+    ```bash
+    kubectl exec -n pulse-prod deploy/session-store -- nc -zv vitals-db 5432
+    ```
+
+---
+
+### [INC-403] Cache Service Refuses Connections — Connection Refused
+* **Priority:** `P2 - High`
+* **Alert:**
+  > `[WARNING] Service pulse-prod/session-store refuses TCP connections on port 6379 despite Redis pod running.`
+* **Symptoms:**
+  `session-store` (Redis) pod is `1/1 Running` and listening on port 6379. The EndpointSlice exists. However, TCP connections to `session-store:6379` are rejected with `Connection refused`.
+* **Verification:**
+  * `kubectl describe svc session-store -n pulse-prod` shows `Port` and `TargetPort` matching the container port.
+  * Internal TCP ping succeeds:
+    ```bash
+    kubectl exec -n pulse-prod vitals-db-0 -- nc -zv session-store 6379
+    ```
+
+---
+
+### [INC-404] Telemetry API Containers CrashLoopBackOff — Probe Connection Refused
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Deployment pulse-prod/telemetry-api containers are restarting continuously. Liveness/Readiness probes failing with connection refused.`
+* **Symptoms:**
+  `telemetry-api` starts and logs `Listening for traffic on 0.0.0.0:8080`. Yet Kubelet reports healthcheck probe failures (`connection refused`), keeps the pod `0/1 NotReady`, and kills the container repeatedly.
+* **Verification:**
+  * `kubectl get pods -l app.kubernetes.io/name=telemetry-api -n pulse-prod` shows restart count stabilized with zero container terminations.
+
+---
+
+### [INC-405] Telemetry API Stable but NotReady (0/1) — Upstream Database Port Mismatch
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Deployment pulse-prod/telemetry-api pods running but 0/1 Ready. /ready endpoint returns HTTP 503.`
+* **Symptoms:**
+  API pods stop crashing and remain `Running`, but report `0/1 NotReady`. The `/ready` check returns 503 indicating that while Redis is connected, attempts to reach `vitals-db` fail because the application attempts port 5433 instead of 5432.
+* **Verification:**
+  * `/ready` returns HTTP 200 with both `"vitals_db": "connected"` and `"session_store": "connected"`.
+  * API pods reach `1/1 Ready`.
+
+---
+
+### [INC-406] Portal Proxy Returns 502 Bad Gateway — Service Port & Proxy Mismatch
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Portal proxy returns HTTP 502 Bad Gateway on /api/vitals. Upstream telemetry-api unreachable.`
+* **Symptoms:**
+  `telemetry-api` pods are `1/1 Ready`. But accessing `/api/vitals` through `portal-proxy` (Nginx) returns `502 Bad Gateway`. Nginx error logs report `Connection refused` connecting to upstream `http://telemetry-api:8080/`. The Service only exposes port 80.
+* **Verification:**
+  * Requests through `portal-proxy` return HTTP 200 with telemetry JSON.
+
+---
+
+### [INC-407] Portal Proxy High Availability Warning — 3rd Replica Pending
+* **Priority:** `P3 - Medium`
+* **Alert:**
+  > `[WARNING] Deployment pulse-prod/portal-proxy desired replicas: 3, available: 2. One pod stuck in Pending.`
+* **Symptoms:**
+  Two `portal-proxy` replicas run on web nodes, but the 3rd replica remains `Pending` due to strict anti-affinity on a 2-web-node cluster.
+* **Verification:**
+  * `kubectl get deployment portal-proxy -n pulse-prod` reports `READY 3/3`, `AVAILABLE 3`, with zero pending pods.
+
+---
+
+## 🏁 Full Telemetry Platform Verification Methodology
+
+```bash
+# 1. Database & Storage Health
+kubectl get pvc,pod -l app.kubernetes.io/name=vitals-db -n pulse-prod -o wide
+kubectl exec -n pulse-prod vitals-db-0 -- pg_isready -U pulse_user -d pulse_vitals
+
+# 2. Services, Ports, and EndpointSlices
+kubectl get svc,endpointslices -n pulse-prod
+
+# 3. Inter-Service Port Verification (nc -zv)
+kubectl exec -n pulse-prod deploy/telemetry-api -- nc -zv vitals-db 5432
+kubectl exec -n pulse-prod deploy/telemetry-api -- nc -zv session-store 6379
+
+# 4. API Readiness and Telemetry Data
+kubectl exec -n pulse-prod deploy/telemetry-api -- wget -qO- http://localhost:8080/ready
+kubectl exec -n pulse-prod deploy/telemetry-api -- wget -qO- http://localhost:8080/api/vitals
+
+# 5. Reverse Proxy & End-to-End User Simulation
+kubectl exec -n pulse-prod deploy/portal-proxy -- wget -qO- http://localhost:8080/api/vitals
+kubectl port-forward svc/portal-proxy -n pulse-prod 8090:80 &
+curl -I http://localhost:8090/
+curl -s http://localhost:8090/api/vitals
+
+# 6. Cluster Topology & Node Distribution
+kubectl get pods -n pulse-prod -o wide
+```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # PulseMed (k8-troubleshoot-4) — SRE Incident Management & Triage Runbook
 
 Bu çalışma alanı, PulseMed gerçek zamanlı hasta telemetri ve klinik izleme platformunun canlıya geçişi sırasında yaşanan servis, port, sağlık kontrolü ve topoloji kaynaklı zincirleme kesintilerin olay müdahale (Incident Triage) masasıdır.

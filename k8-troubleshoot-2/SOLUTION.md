@@ -1,3 +1,198 @@
+# 💡 SRE Incident Lab 2 Solutions: NovaMarket Post-Mortem & Deep Root Cause Analysis (RCA)
+
+This document provides deep-dive Root Cause Analyses (RCA), scheduler and kubelet internal mechanics, minimal diff fixes, and enterprise SRE best practices for the 7 production incidents in `k8-troubleshoot-2`.
+
+---
+
+## 🇬🇧 English Solutions & Post-Mortem
+
+### [INC-201] Database Pod Fails to Schedule — Pod Pending & Storage Unbound
+
+#### 1. Root Cause Analysis (RCA)
+During the filtering / predicate phase, `kube-scheduler` evaluates all 3 nodes:
+1. **Node-1 & Node-2:** Disqualified by `nodeSelector: tier: database` (both carry `tier=web`).
+2. **Node-3:** Matches `tier=database` but carries the taint `workload=database:NoSchedule`.
+   The manifest defines:
+   ```yaml
+   tolerations:
+     - key: "workload"
+       operator: "Equal"
+       value: "database"
+       effect: "NoExecute"
+   ```
+   Kubernetes defines three distinct taint effects:
+   * `NoSchedule`: Blocks scheduling of untolerated new pods.
+   * `PreferNoSchedule`: Best-effort avoidance.
+   * `NoExecute`: Evicts running pods unless tolerated.
+   
+   The scheduler looks for a `NoSchedule` toleration. Finding only `NoExecute`, it rejects Node-3 (`1 node(s) had untolerated taint {workload: database}`).
+3. Result: `0/3 nodes are available`.
+4. Because the `postgres-storage` PVC uses `oci-bv` (`WaitForFirstConsumer`), storage volume creation is blocked until the pod is bound to a specific node's Availability Domain.
+
+#### 2. Fix
+Change `effect` to `NoSchedule` in `manifests/20-database.yaml`:
+```diff
+--- a/manifests/20-database.yaml
++++ b/manifests/20-database.yaml
+@@ -40,3 +40,3 @@
+-          effect: "NoExecute"
++          effect: "NoSchedule"
+```
+
+```bash
+kubectl apply -f manifests/20-database.yaml
+kubectl delete pod postgres-0 -n nova-prod
+```
+
+#### 3. SRE Takeaway
+* When defining tolerations without specific intent, omitting `effect` allows tolerating all effects (`NoSchedule`, `NoExecute`), preventing operational mismatches.
+
+---
+
+### [INC-202] Database Pod CrashLoopBackOff — Filesystem Mount Root Conflict
+
+#### 1. Root Cause Analysis (RCA)
+1. Once scheduled, the CSI driver formats the Block Volume with `mkfs.ext4` and mounts it to `/var/lib/postgresql/data`.
+2. Standard Linux `ext4` filesystems automatically create a `lost+found` directory at the partition root for `fsck`.
+3. The official PostgreSQL image entrypoint runs `initdb` when initializing an empty database directory.
+4. `initdb` strictly requires the target directory to be completely empty. Detecting `lost+found`, it aborts:
+   ```text
+   initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
+   detail: It contains a lost+found directory...
+   ```
+5. Container exits with code 1, triggering `CrashLoopBackOff`.
+
+#### 2. Fix
+Isolate PostgreSQL data into a sub-folder using `subPath` in `manifests/20-database.yaml`:
+```diff
+--- a/manifests/20-database.yaml
++++ b/manifests/20-database.yaml
+@@ -83,2 +83,3 @@
+               mountPath: /var/lib/postgresql/data
++              subPath: postgres-data
+```
+
+```bash
+kubectl apply -f manifests/20-database.yaml
+kubectl delete pod postgres-0 -n nova-prod
+```
+
+#### 3. SRE Takeaway
+* Never mount raw block volumes directly at the database data root. Always use `subPath` or specify `PGDATA=/var/lib/postgresql/data/pgdata`.
+
+---
+
+### [INC-203] API Containers Killed in Startup Warmup — Probe Budget Starvation
+
+#### 1. Root Cause Analysis (RCA)
+1. Kubelet evaluates `startupProbe` first, keeping `livenessProbe` and `readinessProbe` suppressed until startup succeeds.
+2. In `manifests/40-api.yaml`:
+   ```yaml
+   startupProbe:
+     periodSeconds: 2
+     failureThreshold: 3
+   ```
+   Total startup window granted: $2 \times 3 = 6$ seconds.
+3. The application performs a 10-second initialization warmup.
+4. At second 6, Kubelet reaches the 3rd failed probe, declares the container dead, and issues `SIGKILL` (Exit Code 137).
+
+#### 2. Fix
+Increase `failureThreshold` to 15 ($15 \times 2 = 30$ seconds budget):
+```diff
+--- a/manifests/40-api.yaml
++++ b/manifests/40-api.yaml
+@@ -128,1 +128,1 @@
+-            failureThreshold: 3
++            failureThreshold: 15
+```
+
+---
+
+### [INC-204] API Pod Crashes Post-Warmup — Missing DB Configuration
+
+#### 1. Root Cause Analysis (RCA)
+1. In `manifests/40-api.yaml`, the key reference specifies `optional: true`:
+   ```yaml
+   - name: DB_HOST
+     valueFrom:
+       configMapKeyRef:
+         name: api-config
+         key: DATABASE_HOST
+         optional: true
+   ```
+2. In `manifests/10-config.yaml`, the actual key is `DB_HOST`.
+3. Due to `optional: true`, Kubelet did not block container startup with `CreateContainerConfigError`. Instead, it silently launched the container with `DB_HOST` unset.
+4. Upon completing warmup, the application failed with `[FATAL] DB_HOST environment variable is missing` and exited with code 1.
+
+#### 2. Fix
+Align key to `key: DB_HOST` in `manifests/40-api.yaml`.
+
+---
+
+### [INC-205] API Service NotReady (0/1) — Redis Selector Mismatch
+
+#### 1. Root Cause Analysis (RCA)
+1. The Redis Service selector specifies both `app.kubernetes.io/name: redis` and `app.kubernetes.io/component: cache`.
+2. The Redis Deployment pods only carry `app.kubernetes.io/name: redis`.
+3. Because Service selectors enforce a logical AND, the EndpointSlice controller finds no matching pods, leaving Endpoints empty (`<none>`).
+4. `kube-proxy` rejects traffic to unbacked ClusterIP services with TCP RST (`Connection refused`).
+5. API `/ready` check fails connecting to Redis and returns 503, leaving API pods `0/1 NotReady`.
+
+#### 2. Fix
+Remove `app.kubernetes.io/component: cache` from `manifests/30-cache.yaml`.
+
+---
+
+### [INC-206] Storefront 503 — Frontend Probe 404
+
+#### 1. Root Cause Analysis (RCA)
+1. `manifests/50-frontend.yaml` configures `readinessProbe` path `/health`.
+2. The Nginx server block in `manifests/10-config.yaml` explicitly defines `location = /healthz`.
+3. Nginx returns HTTP 404 for `/health`. Kubelet treats 404 as probe failure, removing pods from endpoints.
+
+#### 2. Fix
+Change probe path to `/healthz` in `manifests/50-frontend.yaml`.
+
+---
+
+### [INC-207] Frontend 3rd Replica Pending — Anti-Affinity Scheduling Deadlock
+
+#### 1. Root Cause Analysis (RCA)
+1. The deployment defines 3 replicas with `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity on `kubernetes.io/hostname`.
+2. The cluster only has 2 web worker nodes eligible for frontend pods (Node-3 is database-tainted).
+3. The scheduler cannot place more than 1 pod per node, leaving the 3rd pod permanently `Pending`.
+
+#### 2. Fix
+Change anti-affinity from `required` to `preferredDuringSchedulingIgnoredDuringExecution`:
+```diff
+--- a/manifests/50-frontend.yaml
++++ b/manifests/50-frontend.yaml
+@@ -21,6 +21,7 @@
+         affinity:
+           podAntiAffinity:
+-            requiredDuringSchedulingIgnoredDuringExecution:
++            preferredDuringSchedulingIgnoredDuringExecution:
++              - weight: 100
++                podAffinityTerm:
+```
+
+---
+
+## 🌐 End-to-End Microservice Verification Methodology
+
+```mermaid
+flowchart TD
+    L1["1. Storage & Stateful\n(PVC Bound, pg_isready)"] --> L2["2. Endpoints & DNS\n(EndpointSlices, redis)"]
+    L2 --> L3["3. Backend Readiness\n(/healthz & /ready)"]
+    L3 --> L4["4. Reverse Proxy L7\n(Nginx /api/ Proxy)"]
+    L4 --> L5["5. User Simulation\n(Port-Forward & Curl)"]
+    L5 --> L6["6. Cluster Topology\n(Anti-Affinity & Taints)"]
+```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # NovaMarket (k8-troubleshoot-2) — Post-Mortem & Kök Neden Analizi (RCA) Kılavuzu
 
 Bu belge, NovaMarket olay müdahale (incident response) sürecinde karşılaşılan 7 kritik problemin teorik kök nedenlerini, Kubernetes bileşenlerinin (`kube-scheduler`, `kubelet`, `kube-proxy`, `controller-manager`) arka plan kararlarını, minimal düzeltme (diff) kodlarını ve kurumsal sektör tecrübelerini içermektedir.

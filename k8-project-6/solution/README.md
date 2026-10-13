@@ -1,3 +1,137 @@
+# 💡 Lab 6 Solutions: Kubernetes-Native DevSecOps Platform (GitLab Runner, Rootless Buildah & Trivy)
+
+This solution guide details the implementation of an enterprise-grade cloud-native DevSecOps platform on a 3-worker node OKE cluster: **GitLab Runner (Kubernetes Executor), Unprivileged Buildah (Rootless OCI compilation), Trivy Vulnerability Gating, CycloneDX SBOM Generation, and GitOps Promotion to ArgoCD**.
+
+---
+
+## 🇬🇧 English Solutions
+
+### Directory Structure & File Roles
+
+| File | Purpose & Architecture |
+|---|---|
+| `01-gitlab-runner-values.yaml` | Production-tuned GitLab Runner Helm configuration enforcing `privileged: false`, ephemeral resource limits, and web node affinities. |
+| `02-gitlab-agent-values.yaml` | GitLab Agent for Kubernetes (`agentk`) Helm values establishing an outbound mTLS gRPC tunnel without requiring inbound firewall openings. |
+| `03-runner-rbac-and-namespace.yaml` | Least-privilege RBAC role restricting runner pod lifecycle management exclusively to the `gitlab-runner` namespace. |
+| `05-buildah-build.gitlab-ci.yml` | Rootless Buildah task compiling OCI images in an unprivileged container without Docker-in-Docker or host socket mounts. |
+| `06-trivy-scan.gitlab-ci.yml` | Security gate scanning compiled images for CRITICAL vulnerabilities (`--exit-code 1`) and exporting CycloneDX SBOMs. |
+| `08-gitops-bridge.gitlab-ci.yml` | Automated GitOps promotion bridge updating image tags in the Lab 5 GitOps repository to trigger live canary deployments. |
+| `09-complete-pipeline.gitlab-ci.yml` | Unified, end-to-end enterprise CI/CD pipeline combining Test, Build, Scan, SBOM, and Deploy stages. |
+| `10-vulnerable-simulation.gitlab-ci.yml` | Controlled chaos simulation verifying that known vulnerable images are blocked from deployment by the security gate. |
+
+---
+
+### Step-by-Step Execution & Verification
+
+#### Step 1: Runner Namespace & Least-Privilege RBAC
+```bash
+kubectl apply -f solution/03-runner-rbac-and-namespace.yaml
+
+# Verify ServiceAccount and RoleBinding
+kubectl get sa,role,rolebinding -n gitlab-runner
+```
+
+---
+
+#### Step 2: Deploy GitLab Runner via Helm (Kubernetes Executor)
+```bash
+# 1. Add GitLab Helm repository
+helm repo add gitlab https://charts.gitlab.io
+helm repo update
+
+# 2. Install Runner with registration token from GitLab project
+# (GitLab UI -> Settings -> CI/CD -> Runners -> New Project Runner)
+helm install gitlab-runner gitlab/gitlab-runner \
+  --namespace gitlab-runner \
+  -f solution/01-gitlab-runner-values.yaml \
+  --set runnerRegistrationToken="YOUR_RUNNER_TOKEN_HERE" \
+  --set gitlabUrl="https://gitlab.com/"
+
+# 3. Verify Runner Manager pod is Running
+kubectl get pods -n gitlab-runner -o wide
+```
+
+---
+
+#### Step 3: Verify Dynamic Ephemeral Pod Lifecycle
+Trigger a pipeline job in GitLab and monitor the `gitlab-runner` namespace in real time:
+```bash
+kubectl get pods -n gitlab-runner -w
+```
+*Observe the worker pod spin up (`Pending -> Running`), execute the task, and terminate immediately upon job completion.*
+
+---
+
+#### Step 4: The Security Paradigm (Why DinD & Kaniko Were Deprecated)
+- **Docker-in-Docker (DinD):** Mandates `privileged: true`, granting the container root capabilities over the host Linux kernel (severe container breakout risk).
+- **Kaniko:** Officially archived and deprecated by Google Container Tools in June 2025.
+- **Rootless Buildah:** Compiles images inside unprivileged Linux user namespaces without requiring root daemon permissions.
+
+---
+
+#### Step 5: Rootless OCI Image Builds with Buildah
+Add `solution/05-buildah-build.gitlab-ci.yml` to your pipeline. Verify:
+- Build pod executes with `securityContext.privileged: false`.
+- Image compiles via `buildah bud` and pushes to the container registry.
+
+---
+
+#### Step 6: Automated Vulnerability Scanning & Security Gating
+```bash
+# Trivy command syntax executed in pipeline:
+trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed <IMAGENAME>
+```
+*Passes cleanly (`exit code 0`) if no unfixed CRITICAL CVEs exist; breaks the pipeline (`exit code 1`) if critical flaws are present.*
+
+---
+
+#### Step 7: CycloneDX SBOM Generation
+```bash
+trivy image --format cyclonedx --output sbom-cyclonedx.json <IMAGENAME>
+```
+*The resulting `sbom-cyclonedx.json` is preserved as a downloadable CI pipeline artifact.*
+
+---
+
+#### Step 8: Automated GitOps Promotion Bridge (Lab 5 ArgoCD Integration)
+Successful images automatically trigger a commit to the GitOps repository:
+```bash
+sed -i "s|image: .*|image: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA|g" k8-project-5/solution/07-payment-rollout.yaml
+git commit -m "chore(release): promote to $CI_COMMIT_SHA [skip ci]"
+git push origin main
+```
+*ArgoCD detects the Git commit and initiates a Canary Rollout on the Kubernetes cluster!*
+
+---
+
+#### Step 9: End-to-End "Commit-to-Production" Lifecycle
+Deploy `solution/09-complete-pipeline.gitlab-ci.yml`. Push a code change to verify:
+1. **Test stage:** Unit tests succeed.
+2. **Build stage:** Buildah compiles rootless container image.
+3. **Security stage:** Trivy validates vulnerabilities and generates SBOM.
+4. **Deploy stage:** GitOps repository is updated with new container digest.
+5. **OKE Cluster:** `kubectl get rollout -n production -w` confirms ArgoCD canary progression.
+
+---
+
+#### Step 10: Security Gate Failure Simulation
+Run `solution/10-vulnerable-simulation.gitlab-ci.yml` against an insecure legacy base image:
+- Trivy flags multiple CRITICAL CVEs.
+- Trivy returns `exit code 1`, failing the job immediately.
+- **Outcome:** The vulnerable container image is strictly prohibited from reaching production.
+
+---
+
+#### Cleanup
+```bash
+helm uninstall gitlab-runner -n gitlab-runner
+kubectl delete -f solution/03-runner-rbac-and-namespace.yaml
+```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # Kubernetes-Native DevSecOps Platform — Çözüm Kılavuzu
 
 Bu çözüm kılavuzu; **Oracle Cloud Infrastructure (OCI) Container Engine for Kubernetes (OKE)** üzerinde çalışan 3 worker node'lu kümede (v1.37.0) **GitLab Runner (Kubernetes Executor), Unprivileged Buildah (Rootless OCI Derleme), Trivy Güvenlik Kapısı (Vulnerability Gating), CycloneDX SBOM Üretimi ve Lab 5 ArgoCD GitOps Köprüsü** süreçlerini uçtan uca uygulamak için hazırlanmıştır.

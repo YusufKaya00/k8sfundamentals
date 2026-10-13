@@ -1,3 +1,168 @@
+# 🚨 SRE Incident Lab 2: NovaMarket Platform Outage Triage & Runbook
+
+This workspace represents the active Incident Triage War Room during the production go-live failure of the NovaMarket e-commerce platform.
+
+All manifests deployed to the cluster were **schema-compliant** and accepted without syntax errors by the Kubernetes API server. However, severe architectural mismatches, volume mount behaviors, probe budget starvation, and scheduling deadlocks caused cascading microservice outages across the cluster.
+
+> 📖 **Post-Mortem & Deep Root Cause Analyses (RCA):**  
+> 👉 **[Explore Senior SRE Post-Mortem Guide (SOLUTION.md)](./SOLUTION.md)**
+
+---
+
+## 🗺️ Cluster Topology & Infrastructure Constraints
+
+The incident scenario is grounded strictly in the following 3-node cluster topology:
+
+| Node Name | IP | Label | Constraint / Taint | Allocated Tier Role |
+| :--- | :--- | :--- | :--- | :--- |
+| **Node-1** | `10.0.10.122` | `tier=web` | *None* | Web / API / Cache Workloads |
+| **Node-2** | `10.0.10.208` | `tier=web` | *None* | Web / API / Cache Workloads |
+| **Node-3** | `10.0.10.78` | `tier=database` | `workload=database:NoSchedule` | Database Workloads Only (Isolated) |
+
+* **StorageClass:** Default cluster storage class is `oci-bv` (Oracle Cloud Block Volume - `WaitForFirstConsumer`).
+
+---
+
+## 🚀 Environment Initialization (Deploying the Broken Platform)
+
+Apply all broken production manifests to the cluster:
+
+```bash
+kubectl apply -f manifests/
+```
+
+Watch initial pod status:
+```bash
+kubectl get pods -n nova-prod -o wide -w
+```
+
+---
+
+## 📋 On-Call SRE Incident Board
+
+Triage and remediate the tickets sequentially:
+
+---
+
+### [INC-201] Database Pod Fails to Schedule — Pod Pending & Storage Unbound
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Service nova-prod/postgres-0 has been in Pending state for > 5m. Database cluster unreachable. Customer orders blocked.`
+* **Symptoms:**
+  The `postgres-0` StatefulSet pod cannot be scheduled on any node and remains `Pending`. Its associated PVC (`postgres-storage-postgres-0`) remains `WaitingForFirstConsumer` and cannot bind.
+* **Verification:**
+  * `kubectl get pod postgres-0 -n nova-prod -o wide` must show `postgres-0` scheduled on `10.0.10.78` (database node).
+  * Storage volume transitions to `Bound`.
+
+> [!NOTE]
+> *StatefulSet Operational Rule:* In Kubernetes, the StatefulSet controller follows `OrderedReady`. A stuck pod might not automatically re-evaluate until explicitly deleted (`kubectl delete pod postgres-0 -n nova-prod`) after applying the corrected manifest.
+
+---
+
+### [INC-202] Database Pod CrashLoopBackOff — Filesystem Mount Initialization Error
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Pod nova-prod/postgres-0 is in CrashLoopBackOff. Exit Code: 1. Container terminating immediately after start.`
+* **Symptoms:**
+  Disk binds and the pod starts, but PostgreSQL crashes 1-2 seconds after startup (`CrashLoopBackOff`, Exit Code 1). Container logs show an `initdb` directory non-empty conflict caused by the ext4 filesystem `lost+found` directory at the mount root.
+* **Verification:**
+  * `postgres-0` must reach `1/1 Running` with stable restart count.
+  * Verify database connectivity:
+    ```bash
+    kubectl exec -n nova-prod postgres-0 -- pg_isready -U novauser -d novadb
+    ```
+    *(Output must report: `/var/run/postgresql:5432 - accepting connections`).*
+
+---
+
+### [INC-203] API Containers Killed in Startup Warmup — Probe Budget Starvation
+* **Priority:** `P2 - High`
+* **Alert:**
+  > `[WARNING] Deployment nova-prod/api containers are frequently killed and restarted by Kubelet. Exit code: 137. Service flapping.`
+* **Symptoms:**
+  The backend API takes 10 seconds to warm up internal caches and dependencies. However, the Kubelet intervenes at second 5-6, killing the container (`Exit Code: 137`).
+* **Verification:**
+  * API pods must not be killed during startup and must complete warmup uninterrupted.
+
+---
+
+### [INC-204] API Pod Crashes Post-Warmup — Fatal DB Configuration Missing
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Deployment nova-prod/api pod exit code 1. Application initialization aborted: DB_HOST environment variable missing.`
+* **Symptoms:**
+  After extending the probe budget, the pod warms up, but immediately terminates with `exit code 1`: `[FATAL] DB_HOST environment variable is missing...`. A silent failure in `envFrom.configMapRef` caused by `optional: true` masked missing configuration.
+* **Verification:**
+  * Pods must stay in `Running` state without crashing.
+  * Container logs must confirm: `[API] Listening for connections on port 8080...`.
+
+---
+
+### [INC-205] API Service NotReady (0/1) — Redis Connection Refused
+* **Priority:** `P2 - High`
+* **Alert:**
+  > `[WARNING] Service nova-prod/api readiness probe failing with HTTP 503. Traffic not routed to backend.`
+* **Symptoms:**
+  API pods report `Running` but `0/1 NotReady`. The readiness check returns HTTP 503 with logs indicating `Connection refused` attempting to reach Redis. Meanwhile, the `redis` pod is running healthy (`1/1 Running`).
+* **Verification:**
+  * `kubectl get endpointslices -l kubernetes.io/service-name=redis -n nova-prod` must show healthy pod IPs.
+  * API pods must transition to `1/1 Ready`.
+  * `/ready` returns HTTP 200 with both `"database": "connected"` and `"redis": "connected"`.
+
+---
+
+### [INC-206] Storefront 503 Service Unavailable — Frontend Pods NotReady (0/1)
+* **Priority:** `P1 - Blocker`
+* **Alert:**
+  > `[CRITICAL] Storefront ingress returns HTTP 503 Service Temporarily Unavailable. Frontend service has no endpoints.`
+* **Symptoms:**
+  Storefront returns 503. `frontend` pods are `Running` but `0/1 Ready`. Kubelet events report HTTP 404 healthcheck probe failures on an invalid endpoint.
+* **Verification:**
+  * Frontend pods reach `1/1 Ready`.
+  * `kubectl describe svc frontend -n nova-prod` lists active pod endpoints.
+
+---
+
+### [INC-207] Frontend High Availability Warning — 3rd Replica Pending
+* **Priority:** `P3 - Medium`
+* **Alert:**
+  > `[WARNING] Deployment nova-prod/frontend desired replicas: 3, available replicas: 2. High Availability policy violated.`
+* **Symptoms:**
+  Two frontend pods run normally, but the 3rd replica remains permanently `Pending`. Kube-scheduler cannot find an eligible node due to strict `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity on a cluster with only 2 web nodes.
+* **Verification:**
+  * `kubectl get deployment frontend -n nova-prod` shows `READY 3/3`, `AVAILABLE 3`, with no pods in `Pending`.
+
+---
+
+## 🏁 Full Platform Health Verification Methodology
+
+```bash
+# 1. Stateful & Storage Health
+kubectl get pvc,pv -n nova-prod
+kubectl exec -n nova-prod postgres-0 -- pg_isready -U novauser -d novadb
+
+# 2. Service Discovery & Endpoints
+kubectl get endpoints,endpointslices -n nova-prod
+
+# 3. Backend Readiness (DB + Redis connectivity)
+kubectl exec -n nova-prod deploy/api -- wget -qO- http://localhost:8080/ready
+
+# 4. Reverse Proxy & L7 Routing
+kubectl exec -n nova-prod deploy/frontend -- wget -qO- http://localhost:8080/api/products
+
+# 5. External End-to-End Simulation
+kubectl port-forward svc/frontend -n nova-prod 8088:80 &
+curl -I http://localhost:8088/
+curl -s http://localhost:8088/api/products
+
+# 6. Topology & Anti-Affinity Inspection
+kubectl get pods -n nova-prod -o wide
+```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # NovaMarket (k8-troubleshoot-2) — SRE Incident Management & Triage Runbook
 
 Bu çalışma alanı, NovaMarket e-ticaret platformunun canlıya geçişi sırasında yaşanan çok katmanlı operasyonel krizin olay yönetim (Incident Triage) masasıdır.

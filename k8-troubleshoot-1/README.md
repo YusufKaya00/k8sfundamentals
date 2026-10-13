@@ -1,3 +1,150 @@
+# 🚨 SRE Incident Lab 1: ShopSphere E-Commerce Platform Outage Triage
+
+> 📟 **URGENT PAGERDUTY INCIDENT ALERT:**  
+> The ShopSphere production e-commerce platform has suffered a cascading multi-tier outage! Customers are unable to access the frontend, databases are unmounted, backend services are crashing in cyclic restart loops, and automated backups are failing silently.  
+>  
+> You are the On-Call Senior SRE (Site Reliability Engineer). Bring the platform back to full operational health and resolve all 11 incident tickets!
+
+---
+
+## 🎯 Lab Objectives & Architecture
+
+This lab develops deep production troubleshooting skills across logs, events, internal DNS networking, storage classes, probes, and kernel constraints.
+The environment exercises **over 17 integrated Kubernetes object types**:
+* **Workloads:** Deployment, StatefulSet, DaemonSet
+* **Networking & Traffic:** ClusterIP, NodePort, Headless Service, NetworkPolicy
+* **Storage & Config:** PersistentVolumeClaim, ConfigMap, Secret
+* **Autoscaling & Batch:** HorizontalPodAutoscaler (HPA), CronJob
+* **Security & Authorization:** ServiceAccount, ClusterRole, ClusterRoleBinding
+
+> 📖 **Root Cause Analyses (RCA), diagnostic runbooks, and fixed YAMLs:**  
+> 👉 **[Explore Senior SRE Solution Guide (solution/README.md)](./solution/README.md)**
+
+---
+
+## 🚀 Environment Initialization (Deploying the Broken Cluster)
+
+Spin up the broken environment on your cluster (Minikube, Kind, or OKE) with a single command:
+
+```bash
+kubectl apply -f manifests/
+```
+
+Inspect initial cluster health:
+```bash
+kubectl get all,pvc,hpa,cronjob,netpol -n ecom-prod
+```
+*Multiple pods are stuck in `Pending`, `CrashLoopBackOff`, `CreateContainerConfigError`, Service Endpoints report `<none>`, and HPA shows `<unknown>/50%`!*
+
+---
+
+## 🎫 On-Call SRE Incident Tickets
+
+Resolve the tickets sequentially. Fixing one blocker will uncover downstream dependencies:
+
+---
+
+### 🎫 Ticket #1 (Frontend): "Web users receive connection failures; frontend pods fail to schedule!"
+* **Reported by:** L1 Operations / Web Team
+* **Symptom:** `frontend-web` pods remain indefinitely in `Pending`, unable to be assigned to any worker node.
+* **Hint:** Inspect events with `kubectl describe pod -n ecom-prod -l app=frontend-web`. Check `nodeSelector`. Does the target label exist on any cluster node?
+
+---
+
+### 🎫 Ticket #2 (Gateway): "Frontend started, but requests to Catalog return 503 Service Unavailable!"
+* **Reported by:** Frontend Engineers
+* **Symptom:** `catalog-service` ClusterIP is unreachable. Even though pods are running, no traffic routes to them.
+* **Hint:** Run `kubectl get endpoints catalog-service -n ecom-prod`. Why does it report `<none>`? Compare the Service `spec.selector` against the Pod `metadata.labels`!
+
+---
+
+### 🎫 Ticket #3 (Catalog): "Catalog pods crash repeatedly; restart count increases every minute!"
+* **Reported by:** Backend Engineering
+* **Symptom:** Pods initially encounter `CreateContainerConfigError`. Even after Secret keys are aligned, pods crash into `CrashLoopBackOff` after a few seconds.
+* **Hint:** 
+  1. Does the Secret key referenced in `env` match the actual key defined in `ecom-secret`?
+  2. If the container startup takes 10 seconds, why is the `livenessProbe` checking at second 2? Is there a `startupProbe` buffer?
+
+---
+
+### 🎫 Ticket #4 (Orders): "Placing an order returns 'Connection Refused' immediately!"
+* **Reported by:** Mobile App Team
+* **Symptom:** `order-service` Endpoints are populated and the pod is `Running`. However, HTTP requests to port 80 are rejected with TCP RST (Connection Refused).
+* **Hint:** Does the port listened to inside the container (`containerPort`) match the `targetPort` configured on `order-service`?
+
+---
+
+### 🎫 Ticket #5 (Database): "PostgreSQL pod will not start; PersistentVolumeClaim fails to bind!"
+* **Reported by:** Database Administrator (DBA)
+* **Symptom:** `postgres-pvc` remains stuck in `Pending`, blocking PostgreSQL pod startup.
+* **Hint:** Run `kubectl describe pvc postgres-pvc -n ecom-prod`. Does the requested `storageClassName` exist on your cluster?
+
+---
+
+### 🎫 Ticket #6 (Cache): "Order service cannot resolve Redis: 'Hostname not found (NXDOMAIN)'!"
+* **Reported by:** Platform Engineering
+* **Symptom:** Redis StatefulSet pod is `Running` (`redis-0`), but `redis-0.redis-service` fails DNS resolution.
+* **Hint:** Does the StatefulSet `spec.serviceName` match the exact `metadata.name` of the Headless Service?
+
+---
+
+### 🎫 Ticket #7 (Network Security): "DNS hostnames exist, but inter-service requests hang and timeout after 30 seconds!"
+* **Reported by:** SecOps
+* **Symptom:** `catalog-api` cannot connect to `postgres-service`; all DNS queries hang.
+* **Hint:** In `ecom-network-policy`, does the egress rule explicitly allow UDP traffic to CoreDNS on port 53 in `kube-system`?
+
+---
+
+### 🎫 Ticket #8 (Autoscaling): "Load test running, but Catalog pods fail to scale up!"
+* **Reported by:** Performance Engineering
+* **Symptom:** `kubectl get hpa catalog-hpa -n ecom-prod` reports CPU target as `<unknown>/50%`.
+* **Hint:** What resource specification (`resources.requests.cpu`) is mandatory on the Deployment container for HPA to compute utilization percentages?
+
+---
+
+### 🎫 Ticket #9 (Monitoring): "Node log collector DaemonSet fails to run on control-plane nodes!"
+* **Reported by:** SRE Observability Team
+* **Symptom:** `node-log-collector` runs on worker nodes but fails to schedule on control-plane / master nodes.
+* **Hint:** Does the DaemonSet pod template contain a toleration for the control-plane `NoSchedule` taint?
+
+---
+
+### 🎫 Ticket #10 (Security): "Cluster auditor pod receives '403 Forbidden' querying Kubernetes API!"
+* **Reported by:** Compliance & Security Audit
+* **Symptom:** `ecom-auditor-pod` logs: `User cannot list resource pods in API group ""`.
+* **Hint:** 
+  1. For core Kubernetes resources (Pods, Services), what must `apiGroups` be in the `ClusterRole`? (`"core"` or `""`?)
+  2. Does the `subjects` block in the `ClusterRoleBinding` specify the `namespace` of the ServiceAccount?
+
+---
+
+### 🎫 Ticket #11 (Backup): "Database backups fail; CronJob does not trigger or produces empty 0-byte dumps!"
+* **Reported by:** Disaster Recovery Team
+* **Symptom:** `db-backup-cronjob` fails to run on schedule, or manual executions output empty `.sql` files.
+* **Hint:** 
+  1. How many fields are in `spec.schedule`? Does Kubernetes expect standard 5-field cron syntax?
+  2. How does the kubelet parse `$(date)` in command strings, and how do you escape shell variables?
+  3. What happens if multiple arguments are passed following `/bin/sh -c`?
+
+---
+
+## 🏆 Definition of Done (Platform Recovery Verification)
+
+Once all tickets are resolved, the following command must report a completely healthy platform:
+
+```bash
+kubectl get all,pvc,hpa,cronjob -n ecom-prod
+```
+* ✅ All Pods: `Running 1/1` or `Running 2/2`
+* ✅ `catalog-service` and `order-service`: Endpoints populated with healthy pod IPs
+* ✅ `postgres-pvc`: `Bound`
+* ✅ `catalog-hpa`: Reading live CPU metrics (e.g., `1%/50%`)
+* ✅ `ecom-auditor-pod`: Successfully listing cluster pods instead of 403 Forbidden errors
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # ShopSphere E-Ticaret Platformu — SRE Troubleshooting & Arıza Kurtarma Laboratuvarı
 
 > 🚨 **ACİL DURUM ÇAĞRISI (PAGERDUTY ALERT):**  

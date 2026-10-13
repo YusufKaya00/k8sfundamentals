@@ -1,3 +1,255 @@
+# 💡 Lab 1 Solutions: Core Kubernetes Primitives & Microservice Deployment
+
+This document contains step-by-step solutions and commands for Lab 1.
+
+> Commands are executed from within the `k8-project-1/` directory.
+
+---
+
+## 🇬🇧 English Solutions
+
+### Step 1: Provision a 5-Node Kubernetes Cluster
+<details>
+  <summary>Click to view solution!</summary>
+
+**Minikube:**
+```bash
+minikube start --nodes=5
+```
+
+**Azure Kubernetes Service (AKS):**
+```bash
+az group create --name rg-k8sproje --location northeurope
+az aks create --name aks-k8sproje --resource-group rg-k8sproje --node-vm-size Standard_B2ms --node-count 4 --location northeurope
+az aks get-credentials --name aks-k8sproje --resource-group rg-k8sproje
+```
+</details>
+
+---
+
+### Step 2: Create Test and Production Namespaces
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl create namespace test
+kubectl create namespace production
+```
+</details>
+
+---
+
+### Step 3: Configure Role-Based Access Control (RBAC)
+<details>
+  <summary>Click to view solution!</summary>
+
+Apply the RBAC definitions for junior and senior developer groups:
+```bash
+kubectl apply -f ./yaml/jr-production-rb.yaml
+kubectl apply -f ./yaml/jr-test-rb.yaml
+kubectl apply -f ./yaml/sr-cluster-crb.yaml
+kubectl apply -f ./yaml/sr-production-rb.yaml
+kubectl apply -f ./yaml/sr-test-rb.yaml
+```
+</details>
+
+---
+
+### Step 4: Install Ingress Controller
+<details>
+  <summary>Click to view solution!</summary>
+
+**Minikube:**
+```bash
+minikube addons enable ingress
+```
+
+**Cloud / AKS:**
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.47.0/deploy/static/provider/cloud/deploy.yaml
+```
+</details>
+
+---
+
+### Step 5: Dedicate Worker Nodes to Production (Taints & Labels)
+<details>
+  <summary>Click to view solution!</summary>
+
+Extract worker node names and apply taints and labels:
+```bash
+node1=$(kubectl get no -o jsonpath="{.items[1].metadata.name}")
+node2=$(kubectl get no -o jsonpath="{.items[2].metadata.name}")
+node3=$(kubectl get no -o jsonpath="{.items[3].metadata.name}")
+
+kubectl taint node $node1 tier=production:NoSchedule
+kubectl taint node $node2 tier=production:NoSchedule
+kubectl taint node $node3 tier=production:NoSchedule
+
+kubectl label node $node1 tier=production
+kubectl label node $node2 tier=production
+kubectl label node $node3 tier=production
+```
+</details>
+
+---
+
+### Step 6: Deploy WordPress and MySQL with Secrets & PVCs
+<details>
+  <summary>Click to view solution!</summary>
+
+Create credentials in both namespaces and deploy manifests:
+```bash
+kubectl create secret generic mysql-test-secret -n test \
+  --from-file=MYSQL_ROOT_PASSWORD=./yaml/mysql_root_password.txt \
+  --from-file=MYSQL_USER=./yaml/mysql_user.txt \
+  --from-file=MYSQL_PASSWORD=./yaml/mysql_password.txt \
+  --from-file=MYSQL_DATABASE=./yaml/mysql_database.txt
+
+kubectl create secret generic mysql-prod-secret -n production \
+  --from-file=MYSQL_ROOT_PASSWORD=./yaml/mysql_root_password.txt \
+  --from-file=MYSQL_USER=./yaml/mysql_user.txt \
+  --from-file=MYSQL_PASSWORD=./yaml/mysql_password.txt \
+  --from-file=MYSQL_DATABASE=./yaml/mysql_database.txt
+
+kubectl apply -f ./yaml/wptest.yaml
+kubectl apply -f ./yaml/wpprod.yaml
+```
+</details>
+
+---
+
+### Step 7: Configure Ingress Routing
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/wpingress.yaml
+```
+</details>
+
+---
+
+### Step 8: Deploy Microservice with Probes & Rolling Update
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/deployment.yaml
+```
+</details>
+
+---
+
+### Step 9: Expose Microservice via LoadBalancer Service
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl expose deployment k8s-deployment --type=LoadBalancer -n production
+```
+</details>
+
+---
+
+### Step 10: Scale and Rolling Update
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# Scale down to 3 replicas
+kubectl scale deployment k8s-deployment --replicas=3 -n production
+
+# Scale up to 10 replicas
+kubectl scale deployment k8s-deployment --replicas=10 -n production
+
+# Rolling update image to v2
+kubectl set image deployment/k8s-deployment k8s=ozgurozturknet/k8s:v2 -n production
+```
+</details>
+
+---
+
+### Step 11: Deploy Fluentd Logging DaemonSet
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/daemonset.yaml
+```
+</details>
+
+---
+
+### Step 12: Deploy MongoDB StatefulSet and Initialize Replica Set
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/statefulset.yaml
+
+# Exec into primary pod and initialize replica set
+kubectl exec -it mongostatefulset-0 -- bash
+
+# Inside container:
+mongo
+> rs.initiate({ _id: "MainRepSet", version: 1, 
+    members: [ 
+      { _id: 0, host: "mongostatefulset-0.mongo-svc.default.svc.cluster.local:27017" }, 
+      { _id: 1, host: "mongostatefulset-1.mongo-svc.default.svc.cluster.local:27017" } 
+    ]
+  });
+
+MainRepSet:PRIMARY> db.getSiblingDB("admin").createUser({
+      user : "mongoadmin",
+      pwd  : "P@ssw0rd!1",
+      roles: [ { role: "root", db: "admin" } ]
+ });
+
+MainRepSet:PRIMARY> rs.status();
+```
+</details>
+
+---
+
+### Step 13: In-Cluster API Client with ServiceAccount
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+kubectl apply -f ./yaml/serviceaccount.yaml
+
+# Exec into the pod and verify authentication
+kubectl exec -it pod-proje -- bash
+
+# Inside container:
+CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+curl --cacert $CERT https://kubernetes/api/v1/pods --header "Authorization:Bearer $TOKEN" | jq '.items[].metadata.name'
+```
+</details>
+
+---
+
+### Step 14: Graceful Node Maintenance (Drain & Cordon)
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+nodedrain=$(kubectl get no -o jsonpath="{.items[3].metadata.name}")
+
+# Evict all pods
+kubectl drain $nodedrain --ignore-daemonsets --delete-local-data
+
+# Mark node unschedulable
+kubectl cordon $nodedrain
+```
+</details>
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 **1:** 5 node'lu "1 Master + 4 Worker Node" bir Kubernetes cluster kurun. 
 <details>
   <summary>Çözümü görmek için tıklayınız!</summary>

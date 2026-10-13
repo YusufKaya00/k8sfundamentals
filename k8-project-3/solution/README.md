@@ -1,3 +1,322 @@
+# 💡 Lab 3 Solutions: Production Enterprise Platform on Oracle Cloud Infrastructure (OCI OKE)
+
+This document contains end-to-end execution commands, architectural justifications, verification steps, and an OCI production troubleshooting runbook for the 13-step OKE platform curriculum.
+
+> All manifests are located in this directory (`solution/`). Commands can be run directly from `solution/` or the repository root.
+
+---
+
+## 🇬🇧 English Solutions
+
+### Step 1: OKE Worker Node Discovery, Labeling, and Dedicated Taints
+
+#### Architectural Rationale
+In production environments, I/O-intensive, critical stateful workloads (such as PostgreSQL) must not compete for physical compute or I/O queues with stateless web frontend pods.
+- **Taint (`workload=database:NoSchedule`):** Strictly repels any pod that does not carry an explicit toleration.
+- **Labels (`tier=database` and `tier=web`):** Enable positive placement via `nodeSelector` or `nodeAffinity`.
+
+#### Commands & Verification
+```bash
+# 1. Discover worker nodes
+kubectl get nodes -o wide
+
+# 2. Extract node names into shell variables
+NODE1=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+NODE2=$(kubectl get nodes -o jsonpath='{.items[1].metadata.name}')
+NODE3=$(kubectl get nodes -o jsonpath='{.items[2].metadata.name}')
+
+echo "Web Node 1 : $NODE1"
+echo "Web Node 2 : $NODE2"
+echo "DB Node    : $NODE3"
+
+# 3. Apply taint and label to 3rd node (Database tier)
+kubectl taint nodes "$NODE3" workload=database:NoSchedule --overwrite
+kubectl label nodes "$NODE3" tier=database --overwrite
+
+# 4. Label web worker nodes
+kubectl label nodes "$NODE1" "$NODE2" tier=web --overwrite
+
+# Verify node labels and taints
+kubectl get nodes -L tier,workload
+kubectl describe node "$NODE3" | grep -i taints
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TIER:.metadata.labels.tier,TAINTS:.spec.taints
+```
+
+---
+
+### Step 2: Multi-Tenancy, Namespace Isolation, and Resource Quotas
+
+#### Architectural Rationale
+Prevents noisy-neighbor compute exhaustion in shared clusters:
+- **ResourceQuota:** Sets compute and storage ceilings for `production` (CPU: 4 req / 8 lim, RAM: 8Gi req / 16Gi lim, Pods: 20, Storage: 200Gi).
+- **LimitRange:** Injects default request and limit constraints if omitted by developers.
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./02-namespaces-and-quotas.yaml
+
+kubectl get ns production
+kubectl describe resourcequota production-quota -n production
+kubectl describe limitrange production-limit-range -n production
+```
+
+---
+
+### Step 3: Dedicated Node Scheduling & Workload Separation
+
+#### Architectural Rationale
+- **Repel:** The taint on Node 3 repels all untolerated workloads.
+- **Attract:** PostgreSQL specifies the toleration plus `nodeSelector: { tier: database }`, pinning it to Node 3. Web API pods specify `nodeSelector: { tier: web }`.
+
+#### Negative Verification Test
+```bash
+# Attempt to schedule an untolerated pod on the database node:
+kubectl run test-fail -n production --image=busybox:1.36 --overrides='{"spec": {"nodeSelector": {"tier": "database"}}}' --restart=Never -- sleep 60
+
+# Check scheduling status (remains Pending due to untolerated taint):
+kubectl get pod test-fail -n production
+kubectl describe pod test-fail -n production | grep -E "(FailedScheduling|untolerated taint)"
+
+# Clean up
+kubectl delete pod test-fail -n production --force --grace-period=0
+```
+
+---
+
+### Step 4: Secure Configuration and Secret Management
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./04-config-and-secret.yaml
+
+kubectl get secret,configmap -n production
+kubectl get secret postgres-secret -n production -o jsonpath='{.data.POSTGRES_USER}' | base64 -d; echo
+kubectl describe configmap app-config -n production
+```
+
+---
+
+### Step 5: Persistent PostgreSQL Deployment via OCI Block Volume CSI
+
+#### Architectural Rationale
+- Uses `storageClassName: oci-bv` to invoke the **Oracle Cloud Native Block Volume CSI Driver** (`blockvolume.csi.oraclecloud.com`).
+- OCI Block Volume minimum provisioned volume size is 50 GiB (`storage: 50Gi`).
+- Deployment strategy is set to `Recreate` to prevent `Multi-Attach error for volume` since OCI Block Volumes are ReadWriteOnce (RWO) block devices.
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./05-postgres-pvc-deployment.yaml
+
+# Monitor PVC transition to Bound
+kubectl get pvc -n production -w
+kubectl get pv
+
+# Verify PostgreSQL is running on the database node
+kubectl get pods -n production -l app=postgres -o wide
+
+# Verify database accepts connections
+kubectl exec -n production deploy/postgres -c postgres -- pg_isready -U okeadmin -d productiondb
+
+# Seed test data
+kubectl exec -n production deploy/postgres -c postgres -- psql -U okeadmin -d productiondb -c "
+CREATE TABLE IF NOT EXISTS system_metrics (id SERIAL PRIMARY KEY, metric_name VARCHAR(50), recorded_at TIMESTAMPTZ DEFAULT NOW());
+INSERT INTO system_metrics (metric_name) VALUES ('oke_cluster_ready'), ('block_volume_mounted');
+SELECT * FROM system_metrics;
+"
+```
+
+---
+
+### Steps 6 & 7: Resilient Web API Deployment (InitContainer, Probes, Topology Spread, preStop)
+
+#### Architectural Rationale
+1. **InitContainer (`wait-for-postgres`):** Blocks web container startup until PostgreSQL port 5432 is healthy (`pg_isready`).
+2. **Health Probes:** `startupProbe` buffers slow boot times; `readinessProbe` gates OCI Load Balancer traffic; `livenessProbe` recovers stalled processes.
+3. **High Availability:** `podAntiAffinity` and `topologySpreadConstraints` (`maxSkew: 1`, `topologyKey: kubernetes.io/hostname`) distribute the 2 replicas evenly across web nodes.
+4. **Graceful Shutdown (`preStop: sleep 10`):** Provides a 10-second drain window so the OCI Load Balancer deregisters the endpoint before SIGTERM kills active connections.
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./06-07-web-deployment.yaml
+
+# Verify pods are balanced across both web nodes
+kubectl get pods -n production -l app=web-api -o wide
+
+# Check initContainer logs
+kubectl logs -n production -l app=web-api -c wait-for-postgres --tail=10
+
+# Test probes and connectivity
+kubectl exec -n production deploy/web-api -c web-api -- wget -qO- http://localhost:8080/healthz
+kubectl exec -n production deploy/web-api -c web-api -- wget -qO- http://localhost:8080/db
+```
+
+---
+
+### Step 8: Microsegmentation & Network Security (NetworkPolicy)
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./08-network-policy.yaml
+kubectl describe networkpolicy postgres-allow-web-api-only -n production
+
+# ALLOWED: Authenticated web API pod -> PostgreSQL
+kubectl exec -n production deploy/web-api -c web-api -- wget -qO- http://localhost:8080/db
+
+# BLOCKED: Unauthorized client -> PostgreSQL (drops packets / timeout)
+kubectl run unauthorized-client -n production --rm -it --restart=Never --image=postgres:16-alpine -- pg_isready -h postgres -p 5432 -t 3
+```
+
+---
+
+### Step 9: Ingress via OCI Native Flexible Load Balancer
+
+#### Architectural Rationale
+- Annotations request an OCI Flexible Load Balancer shaped between 10 Mbps and 40 Mbps.
+- Automatically programs OCI VCN Security List rules for port 80.
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./09-web-loadbalancer-service.yaml
+
+# Wait for public IP assignment
+kubectl get svc web-api-lb -n production -w
+kubectl describe svc web-api-lb -n production
+
+LB_IP=$(kubectl get svc web-api-lb -n production -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "OCI Load Balancer IP: $LB_IP"
+
+# Test external connectivity
+curl -i "http://${LB_IP}/"
+curl -s "http://${LB_IP}/db" | jq .
+```
+
+---
+
+### Step 10: Redis StatefulSet with OCI Block Volume CSI
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./10-redis-statefulset.yaml
+
+kubectl get statefulset,pods -n production -l app=redis -o wide
+kubectl get pvc -n production -l app=redis
+
+# Write test key to redis-0
+kubectl exec -n production redis-0 -c redis -- redis-cli set oke:cluster "production-active"
+kubectl exec -n production redis-0 -c redis -- redis-cli get oke:cluster
+
+# Verify persistence across pod restart
+kubectl delete pod redis-0 -n production
+kubectl wait --for=condition=Ready pod/redis-0 -n production --timeout=120s
+kubectl exec -n production redis-0 -c redis -- redis-cli get oke:cluster
+```
+
+---
+
+### Step 11: Autoscaling (HPA) and Pod Disruption Budget (PDB)
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./11-hpa-and-pdb.yaml
+kubectl get hpa,pdb -n production
+
+# Generate CPU load via /burn endpoint
+kubectl run load-generator -n production --image=busybox:1.36 --restart=Never -- /bin/sh -c "while true; do wget -q -O- http://web-api:8080/burn > /dev/null; done"
+
+# Watch autoscaling in real time
+kubectl get hpa web-api-hpa -n production -w
+
+# Cleanup load generator
+kubectl delete pod load-generator -n production
+```
+
+---
+
+### Step 12: In-Cluster API Client with Least-Privilege RBAC
+
+#### Commands & Verification
+```bash
+kubectl apply -f ./12-rbac-and-client-pod.yaml
+
+kubectl auth can-i list pods -n production --as=system:serviceaccount:production:api-client-sa
+kubectl auth can-i list events -n production --as=system:serviceaccount:production:api-client-sa
+kubectl auth can-i get secrets -n production --as=system:serviceaccount:production:api-client-sa
+kubectl auth can-i list pods -n default --as=system:serviceaccount:production:api-client-sa
+
+# View API client query output
+kubectl logs -n production api-client-pod -c curl | head -n 40
+```
+
+---
+
+### Step 13: Planned Maintenance & Graceful Node Drain
+
+#### Commands & Verification
+```bash
+kubectl get pods -n production -l app=web-api -o wide
+
+TARGET_NODE=$(kubectl get pods -n production -l app=web-api -o jsonpath='{.items[0].spec.nodeName}')
+echo "Draining node: $TARGET_NODE"
+
+# Cordon node
+kubectl cordon "$TARGET_NODE"
+kubectl get nodes
+
+# Drain node respecting PDB
+kubectl drain "$TARGET_NODE" --ignore-daemonsets --delete-emptydir-data --timeout=300s
+
+# Verify pods rescheduled to the other web node
+kubectl get pods -n production -l app=web-api -o wide
+kubectl get pdb web-api-pdb -n production
+
+# Test external availability during maintenance
+curl -s "http://${LB_IP}/healthz"
+
+# Uncordon after maintenance
+kubectl uncordon "$TARGET_NODE"
+kubectl get nodes
+
+# Re-balance replicas across nodes
+kubectl rollout restart deployment web-api -n production
+kubectl rollout status deployment web-api -n production
+kubectl get pods -n production -l app=web-api -o wide
+```
+
+---
+
+### OCI Production Troubleshooting Runbook
+
+#### 1. OCI Block Volume (`oci-bv`) Errors & Quota Exhaustion
+- **Error:** `FailedAttachVolume: Multi-Attach error for volume ... volume is already exclusively attached to one node`
+  - **Cause:** OCI Block Volumes operate in `ReadWriteOnce` mode. During a rolling update, a new pod attempts to attach the volume before the old pod releases it.
+  - **Remedy:** Always use `strategy.type: Recreate` for single-instance StatefulSets or Deployments backed by RWO Block Volumes.
+- **Error:** `The volume size must be at least 50 GB`
+  - **Cause:** OCI enforces a minimum allocation size of 50 GiB for Block Volumes.
+  - **Remedy:** Ensure `spec.resources.requests.storage` is set to `50Gi` or higher.
+- **Error:** `Service limit reached for Block Volume in Availability Domain`
+  - **Cause:** Tenancy service limits reached.
+  - **Remedy:** Inspect limits under OCI Console -> Governance & Administration -> Limits, Quotas and Usage. Delete obsolete PVCs or request a limit increase.
+
+#### 2. OCI IAM & Instance Principal Permissions
+Worker nodes require dynamic group policies to interact with OCI APIs (e.g., attaching volumes, creating load balancers):
+```text
+Allow dynamic-group <oke-node-pool-dynamic-group> to manage volume-family in compartment <compartment-name>
+Allow dynamic-group <oke-node-pool-dynamic-group> to manage load-balancers in compartment <compartment-name>
+Allow dynamic-group <oke-node-pool-dynamic-group> to use subnets in compartment <compartment-name>
+```
+
+#### 3. OCI Flexible Load Balancer Stuck in `<pending>`
+- Verify the subnet is a Public Subnet with a Route Table rule pointing `0.0.0.0/0` to an Internet Gateway.
+- Check Subnet Security Lists / NSGs for inbound port 80/TCP.
+- Inspect cloud-controller-manager logs:
+  ```bash
+  kubectl logs -n kube-system -l k8s-app=oci-cloud-controller-manager --tail=100
+  ```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # OCI OKE Production Laboratuvarı — Kapsamlı Çözüm Rehberi
 
 Bu doküman; **Oracle Cloud Infrastructure (OCI) Container Engine for Kubernetes (OKE)** üzerinde çalışan **3 worker node'lu (VM.Standard.E5.Flex, Oracle Linux 9, k8s v1.37.0)** gerçek bir üretim kümesinde uygulanmak üzere hazırlanan 13 adımlık müfredatın uçtan uca komutlarını, mimari gerekçelerini, doğrulama adımlarını ve OCI üretim ortamı hata giderme (Troubleshooting) rehberini içerir.

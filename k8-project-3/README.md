@@ -1,3 +1,61 @@
+# ☁️ Lab 3: Production Enterprise Platform on Oracle Cloud Infrastructure (OCI OKE)
+
+This lab guides you through the deployment and operational lifecycle of an enterprise-grade platform on a live 3-worker node **Oracle Cloud Infrastructure Container Engine for Kubernetes (OKE)** cluster (`VM.Standard.E5.Flex`, Oracle Linux 9 UEK, Kubernetes v1.37.0).
+
+Key production topics covered: **Dedicated Worker Taints & Labels, Multi-Tenancy Quotas (`ResourceQuota` / `LimitRange`), Workload Scheduling Architecture, OCI Native Block Volume (`oci-bv` CSI) Storage, InitContainers & Multi-Stage Probes, High Availability (`podAntiAffinity`, `topologySpreadConstraints`), Zero-Downtime Graceful Shutdown (`preStop`), Zero-Trust Microsegmentation (`NetworkPolicy`), OCI Flexible Load Balancers (10-40 Mbps dynamic shaping), Redis StatefulSet with Headless Services, HPA & PDB, In-Cluster RBAC Client Pods, and Planned Cloud Node Drain Operations.**
+
+> **Solutions / Çözümler:** For step-by-step commands, architectural rationale, verification outputs, and cloud troubleshooting:  
+> **👉 [Explore Solution Guide (solution/README.md)](./solution/README.md)**
+
+---
+
+## 📋 Curriculum Steps (13 Steps)
+
+### Step 1: OKE Worker Node Discovery, Labeling, and Dedicated Taints
+Inspect the 3-node OKE worker pool. Designate the 3rd worker node strictly for stateful database workloads by applying the `workload=database:NoSchedule` taint and `tier=database` label. Label the first two worker nodes with `tier=web` for frontend and application services.
+
+### Step 2: Enterprise Multi-Tenancy & Resource Governance
+Create the `production` namespace. Enforce strict resource governance against noisy-neighbor starvation using `ResourceQuota` (CPU, memory, pod count, PVC volume limits) and `LimitRange` (default request/limit injections) (`02-namespaces-and-quotas.yaml`).
+
+### Step 3: Dedicated Node Scheduling & Workload Separation Architecture
+Implement a bi-directional scheduling policy:
+- **Repel mechanism:** The `workload=database:NoSchedule` taint repels any workloads lacking explicit tolerations.
+- **Attract mechanism:** Database workloads use matching tolerations and `nodeSelector: { tier: database }`, while web services target `tier=web` nodes.
+
+### Step 4: Configuration & Secret Decoupling
+Decouple sensitive database credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) into a Kubernetes `Secret`. Externalize environment configuration parameters (`APP_ENV`, `PORT`, `LOG_LEVEL`, `DB_HOST`, `DB_PORT`) into a `ConfigMap` (`04-config-and-secret.yaml`).
+
+### Step 5: Persistent PostgreSQL Deployment via OCI Block Volume CSI
+Move beyond ephemeral local storage by utilizing the cloud-native `oci-bv` CSI driver (`blockvolume.csi.oraclecloud.com`). Provision a 50Gi PersistentVolumeClaim and deploy PostgreSQL 16 on the dedicated database node with a `Recreate` update strategy and `ClusterIP` Service (`05-postgres-pvc-deployment.yaml`).
+
+### Step 6: Dependency Management via InitContainer & Comprehensive Health Probes
+Deploy a 2-replica Web REST API. Embed an `initContainer` running `pg_isready` to block web container startup until PostgreSQL accepts connections on port 5432. Configure `startupProbe` (slow-start buffer), `readinessProbe` (traffic gating), and `livenessProbe` (crash detection) (`06-07-web-deployment.yaml`).
+
+### Step 7: High Availability (Anti-Affinity, Topology Spread) & Zero-Downtime Shutdown
+Evenly distribute web pods across the two web worker nodes using `podAntiAffinity` and `topologySpreadConstraints` (`maxSkew: 1`, `topologyKey: kubernetes.io/hostname`). Implement a `lifecycle.preStop` hook (`sleep 10`) to drain in-flight TCP connections during rolling updates and node evictions (`06-07-web-deployment.yaml`).
+
+### Step 8: Zero-Trust Microsegmentation (NetworkPolicy)
+Enforce a Default-Deny Ingress policy for PostgreSQL. Allow incoming 5432/TCP connections strictly from authenticated pods labeled `app: web-api` within the `production` namespace, blocking all other namespaces and external access (`08-network-policy.yaml`).
+
+### Step 9: Public Ingress via OCI Flexible Load Balancer
+Expose the Web API through an OCI Cloud Controller Manager (CCM) integrated `LoadBalancer` Service. Use OCI native annotations to provision a flexible load balancer dynamically shaped between 10 Mbps and 40 Mbps bandwidth (`09-web-loadbalancer-service.yaml`).
+
+### Step 10: Distributed Caching with Redis StatefulSet & Cloud Block Volumes
+Deploy a 2-replica Redis StatefulSet backed by a Headless Service (`clusterIP: None`) for deterministic DNS endpoints. Utilize `volumeClaimTemplates` to dynamically provision independent 10Gi `oci-bv` block volumes for each replica (`10-redis-statefulset.yaml`).
+
+### Step 11: Elastic Autoscaling (HPA) & Pod Disruption Budget (PDB)
+Configure a `HorizontalPodAutoscaler` (HPA) targeting 60% average CPU utilization (scaling between 2 and 8 replicas). Deploy a `PodDisruptionBudget` (`minAvailable: 1`) to ensure high availability during planned maintenance and node drains (`11-hpa-and-pdb.yaml`).
+
+### Step 12: Least-Privilege RBAC & Secure In-Cluster API Client
+Create a dedicated `ServiceAccount`, `Role`, and `RoleBinding` granting read-only permissions (`get`, `list`) restricted to pods and events in `production`. Verify access via `auth can-i` and by launching an authenticated curl container querying the Kubernetes API over HTTPS (`12-rbac-and-client-pod.yaml`).
+
+### Step 13: Planned Maintenance & Live Node Drain Operations
+Identify an active worker node hosting web pods and initiate node eviction using `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`. Validate that the PDB prevents service outages and forces graceful rescheduling to the remaining web node. Uncordon the node after maintenance (`kubectl uncordon`).
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # OCI OKE Production Kubernetes Laboratuvarı
 
 Bu laboratuvar projesi, **Oracle Cloud Infrastructure (OCI) Container Engine for Kubernetes (OKE)** üzerinde çalışan **3 worker node'lu (VM.Standard.E5.Flex, Oracle Linux 9, k8s v1.37.0)** gerçek bir üretim kümesinde uygulanmak üzere tasarlanmıştır.

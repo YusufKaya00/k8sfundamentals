@@ -1,3 +1,71 @@
+# 📊 Lab 4: Enterprise SRE & Observability (Helm 3, Prometheus-Stack, Grafana & Batch Workloads)
+
+This lab simulates real-world SRE operations across package management (**Helm 3**), full-stack observability (**kube-prometheus-stack**, **Prometheus Operator**, **Grafana**, **PromQL**, **ServiceMonitors**, **Alertmanager**), and resilient batch workloads (**Kubernetes Jobs & CronJobs** with OCI Block Volume persistence).
+
+> **Solutions / Çözümler:** Step-by-step SRE execution commands and verification steps:  
+> **👉 [Explore Solution Guide (solution/README.md)](./solution/README.md)**
+
+---
+
+## 📋 Infrastructure & Environment Constraints
+
+- **3 Worker Node Architecture:**
+  - 1 x Dedicated Database Node (`workload=database:NoSchedule`, `tier=database`)
+  - 2 x Web / Worker Nodes (`tier=web`)
+- **Enterprise Container Runtimes (Oracle Linux 9 / OCI OKE):** All images must specify fully qualified domain names (FQDN) (e.g., `docker.io/library/python:3.11-slim`).
+- **Resource Optimization:** Tuned configurations (`monitoring/prometheus-values.yaml`) to run Prometheus and Grafana smoothly within compute quotas.
+
+---
+
+## 📋 Curriculum Steps (10 Steps)
+
+### Step 1: Helm 3 Package Management & Repository Operations
+Verify the Helm 3 CLI environment. Add official chart repositories (`prometheus-community`, `bitnami`) and update repositories. Understand declarative templating vs. live cluster installations (`helm template` vs. `helm install --dry-run`).
+
+### Step 2: Custom Microservice Helm Chart Architecture
+- Develop a production-ready Helm Chart in `charts/web-api/` (`Chart.yaml`, `values.yaml`, `templates/deployment.yaml`, `templates/service.yaml`, `templates/_helpers.tpl`).
+- Parameterize `nodeSelector` and `podAntiAffinity` so pods target `tier=web` worker nodes.
+- Make graceful shutdown (`preStop: sleep 10`) and multi-stage health probes (`startupProbe`, `readinessProbe`, `livenessProbe`) fully customizable via `values.yaml`.
+- Deploy to the `production` namespace with 2 replicas, and validate lifecycle rollbacks (`helm upgrade` and `helm rollback`).
+
+### Step 3: Production-Tuned Kube-Prometheus-Stack Deployment
+- Install `kube-prometheus-stack` into the `monitoring` namespace using `monitoring/prometheus-values.yaml`.
+- Ensure the `node-exporter` DaemonSet carries tolerations for `workload=database:NoSchedule` to collect node metrics across all 3 nodes.
+- Configure 24-hour metric retention and lightweight resource boundaries for Prometheus and Grafana.
+
+### Step 4: Grafana Dashboards & PromQL Telemetry Inspection
+- Port-forward Grafana (`3000:80`) and authenticate with default credentials (`admin` / `prom-operator`).
+- Inspect Kubernetes cluster dashboards (Node Metrics, Workload Resources).
+- Execute PromQL queries in Prometheus / Grafana Explore to calculate container CPU usage (`rate(container_cpu_usage_seconds_total[5m])`) and memory saturation.
+
+### Step 5: One-Off Database Migration & Seeding Job (Kubernetes Job)
+- Deploy a Kubernetes `Job` (`batch/05-db-migrate-job.yaml`) that runs before the web application to provision the `customer_orders` schema and seed sample data in PostgreSQL.
+- Configure failure recovery: `restartPolicy: OnFailure`, `backoffLimit: 3`, and `activeDeadlineSeconds: 300` with tolerations for the database tier.
+
+### Step 6: Automated PostgreSQL Backup CronJob (Kubernetes CronJob)
+- Deploy a scheduled `CronJob` (`batch/06-db-backup-cronjob.yaml`) executing periodic `pg_dump` backups (`schedule: "*/30 * * * *"`).
+- Set `concurrencyPolicy: Forbid`, `successfulJobsHistoryLimit: 3`, and `failedJobsHistoryLimit: 2`. Manually trigger a one-off run for validation.
+
+### Step 7: Persistent Backup Archival on OCI Block Volume
+- Mount an independent PersistentVolumeClaim backed by OCI Block Volume (`storageClassName: oci-bv`) to preserve `.sql.gz` backup archives across pod lifecycles.
+- Validate persistent file integrity via a debug pod.
+
+### Step 8: Auto-Discovery with ServiceMonitor CRD
+- Deploy a Prometheus Operator `ServiceMonitor` (`monitoring/servicemonitor.yaml`) to enable Prometheus scraping for the `web-api` microservice.
+- Verify target status is `UP` in the Prometheus Targets dashboard.
+
+### Step 9: Alertmanager Rules for SRE Incident Detection
+- Create a `PrometheusRule` (`monitoring/custom-alerts.yaml`) defining alerts for `PodCrashLooping` (CrashLoopBackOff) and `HighPodCpuUsage` (>80% CPU request threshold).
+- Confirm rules are loaded and active in the Prometheus Alerts UI.
+
+### Step 10: Synthetic Failure Injection & Incident Triage
+- Deploy a deliberately failing pod (`synthetic-crash-pod`, exit 1) to generate a CrashLoopBackOff incident.
+- Observe metric spikes and watch the `PodCrashLooping` alert transition from `PENDING` to `FIRING` in Grafana and Prometheus. Clean up test workloads.
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 **Proje Talimatları — Enterprise SRE & Observability Laboratuvarı (Helm, Monitoring & Batch)**
 
 > Çözümler için: [solution/README.md](./solution/README.md)

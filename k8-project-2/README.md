@@ -1,3 +1,63 @@
+# 🛡️ Lab 2: Multi-Tier Microservices & Platform Hardening (Minikube 5-Node)
+
+This lab builds an enterprise-grade platform on a 5-node Minikube cluster (1 Control Plane + 4 Workers), implementing environment segmentation (`staging` vs. `production`), dedicated worker node taints & labels, zero-trust L4 NetworkPolicies (PostgreSQL isolation), InitContainers, Ingress L7 path/host routing, backup CronJobs, Horizontal Pod Autoscaling (HPA), Pod Disruption Budgets (PDB), cluster-wide logging DaemonSets, Redis StatefulSets, in-cluster RBAC API clients, and safe node drain operations.
+
+> **Solutions / Çözümler:** Step-by-step solutions and commands are documented in [solution/README.md](./solution/README.md).
+
+---
+
+## 📋 English Instructions
+
+**1:** Provision a 5-node Minikube cluster (1 Control Plane + 4 Workers) with the Calico CNI (to enforce NetworkPolicies), and enable `metrics-server` and `ingress` addons.
+
+**2:** Create two distinct environments: `staging` and `production` namespaces.
+
+**3:** Dedicate 2 worker nodes exclusively for mission-critical `production` workloads:
+- Apply taint: `dedicated=production:NoSchedule`.
+- Apply label: `environment=production`.
+
+**4:** Zero-Trust Network Security:
+- In the `staging` namespace, enforce a `NetworkPolicy` allowing inbound traffic to the PostgreSQL pod **only** from the labeled web application pod within the same namespace. Deny all other inter-pod and external ingress traffic.
+
+**5:** Configuration & Secret Decoupling:
+- Create a `Secret` (`postgres-creds`) containing sensitive database credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`).
+- Create a `ConfigMap` (`app-config`) storing application configuration (`LOG_LEVEL`, `PORT`, `CACHE_ENABLED`).
+
+**6:** Resilient Microservice Stack with InitContainer:
+- Deploy PostgreSQL 16 backed by PersistentVolumeClaims in both `staging` and `production`.
+- In the web application pod (e.g., Python/Node.js REST API), configure an `initContainer` that polls database readiness on port 5432 using `pg_isready` or `nc` before the primary web container starts.
+- Ensure `production` pods schedule strictly onto dedicated nodes using appropriate `tolerations` and `nodeAffinity`.
+
+**7:** L7 Ingress Routing (Host & Path Based):
+- Configure an `ingress` resource routing:
+  - `staging.lab.internal` to the staging web service.
+  - `api.lab.internal` to the production web service.
+  - `api.lab.internal/metrics` to an internal metrics backend.
+
+**8:** Scheduled Database Backups (CronJob):
+- Deploy a nightly backup `CronJob` (`db-backup-job`) scheduled at 02:00 UTC (manually triggerable for validation) that dumps database tables and logs backup status.
+
+**9:** Elastic Autoscaling & High Availability:
+- Implement a `HorizontalPodAutoscaler` (HPA) for the production web deployment targeting 60% CPU utilization (min 2, max 8 replicas).
+- Implement a `PodDisruptionBudget` (PDB) guaranteeing `minAvailable: 1` during node maintenance and voluntary disruptions.
+
+**10:** Cluster-Wide Logging DaemonSet:
+- Deploy a `fluent-bit` DaemonSet mounting host `/var/log` paths via `hostPath`, tolerating production taints to run on every worker node.
+
+**11:** Distributed In-Memory Cache (Redis StatefulSet):
+- Deploy a 2-replica Redis StatefulSet using `volumeClaimTemplates` and a Headless Service (`redis-headless`) for stable network identities and predictable storage bindings.
+
+**12:** In-Cluster RBAC Client & API Querying:
+- Create a dedicated `ServiceAccount`, `Role`, and `RoleBinding` granting read-only permissions (`get`, `list`) restricted to Jobs and Pods in the local namespace.
+- Deploy an ephemeral curl container using this ServiceAccount to securely query the cluster API endpoint (`/api/v1/namespaces/{ns}/pods`) using the projected JWT bearer token.
+
+**13:** Graceful Node Maintenance & Drain:
+- Drain an active worker node hosting application pods (`kubectl drain`), verifying that pods are safely rescheduled onto alternate nodes respecting PDB guarantees. Cordon and uncordon the node.
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 **Proje Talimatları — Modern Kubernetes Platform Laboratuvarı (Minikube)**
 
 > Çözümler için: [solution/README.md](./solution/README.md)

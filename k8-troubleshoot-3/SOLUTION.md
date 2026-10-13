@@ -1,3 +1,242 @@
+# 💡 SRE Incident Lab 3 Solutions: ApexPay Post-Mortem & Deep Root Cause Analysis (RCA)
+
+This document provides deep-dive Root Cause Analyses (RCA), kernel permission internals, VFS mount behaviors, network namespace mechanics, minimal diff fixes, and enterprise SRE takeaways for the 7 production incidents in `k8-troubleshoot-3`.
+
+---
+
+## 🇬🇧 English Solutions & Post-Mortem
+
+### [INC-301] Ledger Database Pod Fails to Schedule — Pod Pending
+
+#### 1. Root Cause Analysis (RCA)
+1. `kube-scheduler` evaluates the 3 cluster nodes during the filtering phase:
+   * **Node-1 & Node-2:** Carry label `tier=web`.
+   * **Node-3:** Carries label `tier=database` and taint `workload=database:NoSchedule`.
+2. The `ledger-db` StatefulSet tolerates the database taint properly (`key: workload, value: database, effect: NoSchedule`).
+3. However, the `nodeAffinity` rule specifies:
+   ```yaml
+   nodeAffinity:
+     requiredDuringSchedulingIgnoredDuringExecution:
+       nodeSelectorTerms:
+         - matchExpressions:
+             - key: tier
+               operator: In
+               values:
+                 - db
+   ```
+   The scheduler looks for `tier=db`. But Node-3 is labeled `tier=database`!
+4. Consequently, all 3 nodes are rejected:
+   ```text
+   0/3 nodes are available: 1 node(s) had untolerated taint, 2 node(s) didn't match Pod's node affinity/selector.
+   ```
+5. Pod remains `Pending`, blocking storage provisioning on `oci-bv` (`WaitForFirstConsumer`).
+
+#### 2. Fix
+Update `values` in `manifests/20-database.yaml` to match the actual node label (`database`):
+```diff
+--- a/manifests/20-database.yaml
++++ b/manifests/20-database.yaml
+@@ -42,3 +42,3 @@
+-                      - db
++                      - database
+```
+
+```bash
+kubectl apply -f manifests/20-database.yaml
+kubectl delete pod ledger-db-0 -n apex-prod
+```
+
+#### 3. SRE Takeaway
+* Label abbreviation drift (`tier=db` vs `tier=database`) is a common cross-team antipattern. Standardize node labeling schemas via admission policies (Kyverno or OPA Gatekeeper).
+
+---
+
+### [INC-302] Ledger Database Fails on Boot — Non-Root Disk Permission Denied
+
+#### 1. Root Cause Analysis (RCA)
+1. PostgreSQL runs as non-root UID 999:
+   ```yaml
+   securityContext:
+     runAsUser: 999
+     runAsGroup: 999
+   ```
+2. The OCI Block Volume CSI formats the volume with `ext4` and attaches it.
+3. In Linux VFS filesystem mounts without `fsGroup`, block volumes default to `root:root (0755)`.
+4. Running as UID 999, PostgreSQL cannot create directories or execute `initdb` on root-owned directories:
+   ```text
+   mkdir: can't create directory '/var/lib/postgresql/data/data': Permission denied
+   initdb: could not access directory... Permission denied
+   ```
+5. Container exits with code 1 into `CrashLoopBackOff`.
+
+#### 2. Fix
+Add `fsGroup: 999` to `pod.spec.securityContext` in `manifests/20-database.yaml`:
+```diff
+--- a/manifests/20-database.yaml
++++ b/manifests/20-database.yaml
+@@ -40,2 +40,3 @@
+       securityContext:
+         runAsUser: 999
+         runAsGroup: 999
++        fsGroup: 999
+```
+
+```bash
+kubectl apply -f manifests/20-database.yaml
+kubectl delete pod ledger-db-0 -n apex-prod
+```
+
+#### 3. SRE Takeaway
+* `fsGroup` ensures Kubelet recursively sets group ownership to GID 999 and applies `g+rwx` permissions without needing privileged `root` access or an `initContainer (chown)` hack.
+
+---
+
+### [INC-303] Payment API Pods Unschedulable — Insufficient CPU Capacity
+
+#### 1. Root Cause Analysis (RCA)
+1. `manifests/40-api.yaml` requests 4 full CPU cores: `requests.cpu: "4"`.
+2. Worker nodes are 2-core VMs (`VM.Standard.E3.Flex`). Subtracting system daemon reservations leaves ~1830m Allocatable CPU per node.
+3. `kube-scheduler` finds that 4000m exceeds any node's allocatable capacity.
+4. Pods remain `Pending` with `Insufficient cpu`.
+
+#### 2. Fix
+Lower CPU requests and limits in `manifests/40-api.yaml` to realistic workload sizing:
+```diff
+--- a/manifests/40-api.yaml
++++ b/manifests/40-api.yaml
+@@ -32,4 +32,4 @@
+             requests:
+-              cpu: "4"
++              cpu: "100m"
+               memory: "128Mi"
+             limits:
+-              cpu: "4"
++              cpu: "500m"
+               memory: "256Mi"
+```
+
+---
+
+### [INC-304] Payment API Entrypoint Missing — VFS Mount Directory Overlay
+
+#### 1. Root Cause Analysis (RCA)
+1. The pod template contains two volume mounts:
+   ```yaml
+   volumeMounts:
+     - name: code-volume
+       mountPath: /app/server.py
+       subPath: server.py
+     - name: settings-volume
+       mountPath: /app
+   ```
+2. In Linux VFS filesystem semantics, mounting a volume directly to directory `/app` overlays and completely masks any existing files within `/app` (including `server.py`).
+3. Running `python3 /app/server.py` fails with `[Errno 2] No such file or directory`.
+
+#### 2. Fix
+Mount `settings-volume` using `subPath` to `/app/settings.json`:
+```diff
+--- a/manifests/40-api.yaml
++++ b/manifests/40-api.yaml
+@@ -52,2 +52,3 @@
+             - name: settings-volume
+-              mountPath: /app
++              mountPath: /app/settings.json
++              subPath: settings.json
+```
+
+---
+
+### [INC-305] Payment API Periodically Killed — Liveness Probe Timeout
+
+#### 1. Root Cause Analysis (RCA)
+1. `/healthz` simulates internal cryptographic checks by sleeping 1.2s.
+2. `livenessProbe` specifies `timeoutSeconds: 1` and `failureThreshold: 2`.
+3. The Kubelet client cancels each probe at 1.0s (`context deadline exceeded`).
+4. Two consecutive timeouts trigger container restarts every 20-30 seconds.
+
+#### 2. Fix
+Increase probe timeout to 3 seconds in `manifests/40-api.yaml`:
+```diff
+--- a/manifests/40-api.yaml
++++ b/manifests/40-api.yaml
+@@ -42,1 +42,1 @@
+-            timeoutSeconds: 1
++            timeoutSeconds: 3
+```
+
+---
+
+### [INC-306] Cache Service Unreachable — Named Port Resolution Mismatch
+
+#### 1. Root Cause Analysis (RCA)
+1. Service defines:
+   ```yaml
+   ports:
+     - port: 6379
+       targetPort: redis-port
+       name: redis
+   ```
+2. Container defines:
+   ```yaml
+   ports:
+     - containerPort: 6379
+       name: redis
+   ```
+3. The Service specifies string `targetPort: redis-port`, but the container port is named `redis`.
+4. EndpointSlice port mapping fails, breaking traffic forwarding to Redis.
+
+#### 2. Fix
+Update `targetPort` in `manifests/30-cache.yaml` to `6379` (or `redis`):
+```diff
+--- a/manifests/30-cache.yaml
++++ b/manifests/30-cache.yaml
+@@ -44,2 +44,2 @@
+-      targetPort: redis-port
++      targetPort: 6379
+```
+
+---
+
+### [INC-307] Gateway Returns 502 Bad Gateway — Localhost Socket Isolation
+
+#### 1. Root Cause Analysis (RCA)
+1. In `manifests/10-config.yaml`, `BIND_HOST` is set to `127.0.0.1`.
+2. The Python process binds its TCP socket strictly to loopback interface `127.0.0.1:8080`.
+3. Traffic from other pods arrives via virtual ethernet `eth0` (`10.0.10.x`).
+4. The Linux kernel finds no socket listening on `eth0:8080` and sends a TCP RST (`Connection refused`), causing Nginx to return HTTP 502 Bad Gateway.
+
+#### 2. Fix
+Change `BIND_HOST` to `0.0.0.0` (listen on all network interfaces) in `manifests/10-config.yaml`:
+```diff
+--- a/manifests/10-config.yaml
++++ b/manifests/10-config.yaml
+@@ -30,2 +30,2 @@
+-  BIND_HOST: "127.0.0.1"
++  BIND_HOST: "0.0.0.0"
+```
+
+```bash
+kubectl apply -f manifests/10-config.yaml
+kubectl rollout restart deploy/payment-api -n apex-prod
+```
+
+---
+
+## 🌐 End-to-End Financial Platform Verification Methodology
+
+```mermaid
+flowchart TD
+    D1["1. Ledger DB & Storage\n(Postgres PVC + pg_isready)"] --> D2["2. Idempotency Cache\n(Redis EndpointSlice + Port 6379)"]
+    D2 --> D3["3. Transaction API\n(TCP Bind 0.0.0.0 + /ready 200)"]
+    D3 --> D4["4. Webhook / Reverse Proxy\n(Nginx L7 /api/ proxy)"]
+    D4 --> D5["5. User Simulation\n(Port-Forward & User Curl)"]
+    D5 --> D6["6. Cluster Topology\n(Node Distribution & Taints)"]
+```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # ApexPay (k8-troubleshoot-3) — Post-Mortem & Kök Neden Analizi (RCA) Kılavuzu
 
 Bu belge, ApexPay finansal mutabakat ve işlem platformunda meydana gelen 7 kritik arızanın Kubernetes denetim düzlemi (`kube-scheduler`, `kubelet`, `kube-proxy`, Linux kernel izinleri, VFS mount mekanizması ve ağ isim alanları) perspektifinden derinlemesine kök neden analizini, minimal düzeltme kodlarını ve kurumsal sektör tecrübelerini içermektedir.

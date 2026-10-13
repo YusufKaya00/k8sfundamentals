@@ -1,3 +1,277 @@
+# 💡 Lab 4 Solutions: Enterprise SRE & Observability (Helm 3, Prometheus-Stack, Grafana & Batch Workloads)
+
+This lab simulates real-world SRE operations across package management (**Helm 3**), full-stack observability (**kube-prometheus-stack**, **Prometheus**, **Grafana**, **PromQL**), and resilient batch workloads (**Kubernetes Jobs & CronJobs** with OCI Block Volume persistence).
+
+> Commands are executed from within the `k8-project-4/solution/` directory.
+
+---
+
+## 🇬🇧 English Solutions
+
+### Phase 1: Package Management & Helm Architecture
+
+#### Step 1: Helm 3 Setup & Repository Operations
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Verify Helm version
+helm version
+
+# 2. Add community repositories
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+
+# 3. List repositories
+helm repo list
+
+# 4. Template vs. Dry-Run
+# Render templates locally without contacting the cluster:
+helm template my-test charts/web-api/
+
+# Dry-run against cluster API Server:
+helm install my-test charts/web-api/ --dry-run --namespace production
+```
+</details>
+
+---
+
+#### Step 2: Custom Microservice Helm Chart Deployment & Rollback Lifecycle
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Lint the chart
+helm lint charts/web-api/
+
+# 2. Ensure production namespace exists
+kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
+
+# 3. Install chart with 2 replicas
+helm install web-api charts/web-api/ \
+  --namespace production \
+  --set replicaCount=2
+
+# 4. Verify deployment and node placement
+helm list -n production
+kubectl get pods -n production -l app.kubernetes.io/name=web-api -o wide
+
+# 5. Upgrade deployment (scale to 3 replicas)
+helm upgrade web-api charts/web-api/ \
+  --namespace production \
+  --set replicaCount=3
+
+# 6. Check release history
+helm history web-api -n production
+
+# 7. Rollback to revision 1
+helm rollback web-api 1 -n production
+kubectl get pods -n production -l app.kubernetes.io/name=web-api
+```
+</details>
+
+---
+
+### Phase 2: Observability & Monitoring (Prometheus & Grafana)
+
+#### Step 3: Production-Tuned Kube-Prometheus-Stack Deployment
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Create monitoring namespace
+kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+# 2. Deploy kube-prometheus-stack with tuned values
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --values monitoring/prometheus-values.yaml \
+  --timeout 10m
+
+# 3. Verify pods and node-exporter DaemonSet
+kubectl get pods -n monitoring
+kubectl get ds -n monitoring
+
+# 4. Verify node-exporter runs on all 3 nodes (DESIRED = 3, READY = 3)
+kubectl get ds kube-prometheus-stack-prometheus-node-exporter -n monitoring -o wide
+```
+</details>
+
+---
+
+#### Step 4: Grafana Dashboards & PromQL Telemetry Inspection
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Port-forward Grafana
+kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80 &
+# Access via browser: http://localhost:3000
+# User: admin / Password: prom-operator
+
+# 2. Port-forward Prometheus (Optional)
+kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090 &
+# Access via browser: http://localhost:9090
+
+# 3. Key PromQL queries (Explore in Prometheus/Grafana):
+# Container CPU usage over 5 minutes:
+# rate(container_cpu_usage_seconds_total{namespace="production"}[5m])
+
+# Working set memory in MiB:
+# container_memory_working_set_bytes{namespace="production"} / 1024 / 1024
+
+# Total node CPU utilization (%):
+# 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+```
+</details>
+
+---
+
+### Phase 3: Batch Workloads & Data Operations (Job & CronJob)
+
+#### Step 5: One-Off Database Migration & Seeding Job
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Apply Job manifest
+kubectl apply -f batch/05-db-migrate-job.yaml
+
+# 2. Wait for completion
+kubectl wait --for=condition=complete job/db-migrate-job -n production --timeout=120s
+
+# 3. Inspect migration output logs
+kubectl logs -n production job/db-migrate-job
+
+# 4. Verify job status
+kubectl get job db-migrate-job -n production
+```
+</details>
+
+---
+
+#### Step 6: Automated PostgreSQL Backup CronJob
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Apply CronJob and PVC
+kubectl apply -f batch/06-db-backup-cronjob.yaml
+
+# 2. Inspect CronJob
+kubectl get cronjob -n production
+
+# 3. Trigger manual ad-hoc backup job
+kubectl create job manual-backup-test --from=cronjob/db-backup-cronjob -n production
+
+# 4. Wait for completion and read logs
+kubectl wait --for=condition=complete job/manual-backup-test -n production --timeout=180s
+kubectl logs -n production job/manual-backup-test
+```
+</details>
+
+---
+
+#### Step 7: Persistent Backup Archival on OCI Block Volume
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Verify PVC is Bound
+kubectl get pvc db-backup-pvc -n production
+
+# 2. Inspect backup files on persistent volume using ephemeral container
+kubectl run storage-inspector -n production --rm -it --restart=Never \
+  --image=docker.io/library/busybox:1.36 \
+  --overrides='{
+    "spec": {
+      "tolerations": [{"key": "workload", "operator": "Equal", "value": "database", "effect": "NoSchedule"}],
+      "nodeSelector": {"tier": "database"},
+      "volumes": [{"name": "bk", "persistentVolumeClaim": {"claimName": "db-backup-pvc"}}],
+      "containers": [{"name": "c", "image": "docker.io/library/busybox:1.36", "command": ["sh", "-c", "ls -lh /backup && zcat /backup/*.sql.gz | head -n 25"], "volumeMounts": [{"name": "bk", "mountPath": "/backup"}]}]
+    }
+  }'
+```
+</details>
+
+---
+
+### Phase 4: Advanced SRE, Metric Scraping & Alerting
+
+#### Step 8: Automatic Scrape Discovery with ServiceMonitor
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Apply ServiceMonitor
+kubectl apply -f monitoring/servicemonitor.yaml
+
+# 2. Verify ServiceMonitor resource
+kubectl get servicemonitor -n monitoring
+
+# 3. Verify Prometheus discovered web-api targets
+kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -c prometheus -- \
+  wget -qO- http://localhost:9090/api/v1/targets | grep -o '"job":"web-api[^"]*"' | head -n 5
+```
+</details>
+
+---
+
+#### Step 9: Prometheus Alertmanager Rule Definitions
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Apply custom alert rules
+kubectl apply -f monitoring/custom-alerts.yaml
+
+# 2. Inspect PrometheusRule resource
+kubectl get prometheusrule -n monitoring custom-sre-alerts
+
+# 3. Confirm rules are loaded in Prometheus
+kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -c prometheus -- \
+  wget -qO- http://localhost:9090/api/v1/rules | grep -o '"name":"PodCrashLooping"'
+```
+</details>
+
+---
+
+#### Step 10: Synthetic Failure Injection & Incident Triage
+<details>
+  <summary>Click to view solution!</summary>
+
+```bash
+# 1. Inject failure: Start a continuously crashing container
+kubectl run synthetic-crash-pod -n production \
+  --image=docker.io/library/busybox:1.36 \
+  --restart=Always \
+  -- /bin/sh -c "echo 'Error injected!'; exit 1"
+
+# 2. Watch pod transition into CrashLoopBackOff
+kubectl get pod synthetic-crash-pod -n production -w
+
+# 3. Query Alertmanager for firing alert (~1-2 minutes)
+kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -c prometheus -- \
+  wget -qO- http://localhost:9090/api/v1/alerts | grep -o '"alertname":"PodCrashLooping"[^}]*'
+
+# 4. Clean up synthetic workload
+kubectl delete pod synthetic-crash-pod -n production --force --grace-period=0
+```
+</details>
+
+---
+
+### Critical SRE Troubleshooting Runbook
+1. **Oracle Linux 9 Image FQDN Requirement:** Always specify fully qualified image references (`docker.io/library/python:3.11-slim`) to prevent CRI-O `ImagePullBackOff` errors.
+2. **Kube-Prometheus-Stack Memory Limits:** Setting memory limit to 512MiB, retention to `24h`, and using `emptyDir` keeps Prometheus operating comfortably within trial compute limits.
+3. **Node-Exporter Taints on Database Node:** Setting `nodeExporter.tolerations` with `workload=database:NoSchedule` in `prometheus-values.yaml` ensures hardware telemetry is gathered from all 3 cluster nodes.
+4. **ServiceMonitor Discovery:** Ensure `prometheusSpec.serviceMonitorSelectorNilUsesHelmValues: false` so Prometheus scrapes custom CRD ServiceMonitors without requiring specific Helm release labels.
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # Enterprise SRE & Observability Laboratuvarı: Helm, Monitoring ve Batch İş Yükleri
 
 Bu laboratuvar; ham Kubernetes manifestolarından modern paket yönetimine (**Helm 3**), kurumsal sistem görünürlüğünden (**kube-prometheus-stack**, **Prometheus**, **Grafana**, **PromQL**) ve veri operasyonlarından (**Job** & **CronJob**) oluşan 4 temel SRE ayağını uçtan uca simüle eder.

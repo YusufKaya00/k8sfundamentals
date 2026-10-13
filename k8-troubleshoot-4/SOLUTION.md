@@ -1,3 +1,217 @@
+# 💡 SRE Incident Lab 4 Solutions: PulseMed Post-Mortem & Deep Root Cause Analysis (RCA)
+
+This document provides deep-dive Root Cause Analyses (RCA), networking internals (`kube-scheduler`, `EndpointSlice controller`, `kube-proxy`, `CoreDNS`, `kubelet`), minimal diff fixes, and enterprise SRE takeaways for the 7 production incidents in `k8-troubleshoot-4`.
+
+---
+
+## 🇬🇧 English Solutions & Post-Mortem
+
+### [INC-401] Telemetry Database Fails to Schedule — Pod Pending
+
+#### 1. Root Cause Analysis (RCA)
+1. `vitals-db-0` specifies `nodeSelector: tier: database`, filtering out Node-1 and Node-2 (`tier=web`).
+2. The remaining candidate **Node-3 (`10.0.10.78`)** carries taint `workload=database:NoSchedule`.
+3. In the pod manifest:
+   ```yaml
+   tolerations:
+     - key: "role"
+       operator: "Equal"
+       value: "database"
+       effect: "NoSchedule"
+   ```
+   The taint key on Node-3 is `workload`, but the toleration specifies `key: "role"`.
+4. `kube-scheduler` requires `key`, `value`, and `effect` to match. Node-3 is rejected (`1 node(s) had untolerated taint {workload: database}`).
+5. Pod remains `Pending`, blocking storage provisioning on `oci-bv` (`WaitForFirstConsumer`).
+
+#### 2. Fix
+Update `key` in `manifests/20-database.yaml` to `workload`:
+```diff
+--- a/manifests/20-database.yaml
++++ b/manifests/20-database.yaml
+@@ -34,1 +34,1 @@
+-        - key: "role"
++        - key: "workload"
+```
+
+```bash
+kubectl apply -f manifests/20-database.yaml
+kubectl delete pod vitals-db-0 -n pulse-prod
+```
+
+#### 3. SRE Takeaway
+* When a pod is `Pending`, run `kubectl describe pod <pod>` and `kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints`. The scheduler error message `{workload: database}` directly indicates the missing key-value pair.
+
+---
+
+### [INC-402] Database Running but Unreachable via Service — DNS NXDOMAIN & Empty Endpoints
+
+#### 1. Root Cause Analysis (RCA)
+1. `vitals-db` Headless Service (`clusterIP: None`) selector specifies:
+   ```yaml
+   selector:
+     app.kubernetes.io/name: postgres-db
+   ```
+2. The actual StatefulSet pod label is:
+   ```yaml
+   labels:
+     app.kubernetes.io/name: vitals-db
+   ```
+3. The EndpointSlice Controller finds no matching pods, leaving Endpoints empty (`<none>`).
+4. For Headless Services (`clusterIP: None`), CoreDNS only synthesizes `A` records if ready endpoints exist. Without endpoints, DNS queries return `NXDOMAIN`.
+
+#### 2. Fix
+Align the Service selector in `manifests/20-database.yaml` to `app.kubernetes.io/name: vitals-db`:
+```diff
+--- a/manifests/20-database.yaml
++++ b/manifests/20-database.yaml
+@@ -78,1 +78,1 @@
+-    app.kubernetes.io/name: postgres-db
++    app.kubernetes.io/name: vitals-db
+```
+
+---
+
+### [INC-403] Cache Service Refuses Connections — Connection Refused
+
+#### 1. Root Cause Analysis (RCA)
+1. Redis listens on port 6379 (`containerPort: 6379`).
+2. Service definition specifies:
+   ```yaml
+   ports:
+     - port: 6379
+       targetPort: 6380
+   ```
+3. `kube-proxy` forwards port 6379 packets to pod port `6380` via DNAT.
+4. With no process listening on port 6380 inside the container, the Linux kernel returns `TCP RST` (`Connection refused`).
+
+#### 2. Fix
+Update `targetPort` in `manifests/30-cache.yaml` to `6379`:
+```diff
+--- a/manifests/30-cache.yaml
++++ b/manifests/30-cache.yaml
+@@ -45,1 +45,1 @@
+-      targetPort: 6380
++      targetPort: 6379
+```
+
+---
+
+### [INC-404] Telemetry API Containers CrashLoopBackOff — Probe Connection Refused
+
+#### 1. Root Cause Analysis (RCA)
+1. `telemetry-api` listens on port 8080 (`PORT=8080`, `0.0.0.0:8080`).
+2. `livenessProbe` and `readinessProbe` in `manifests/40-api.yaml` probe port `8000`:
+   ```yaml
+   livenessProbe:
+     httpGet:
+       path: /healthz
+       port: 8000
+   ```
+3. Kubelet receives `connection refused` connecting to port 8000.
+4. After 3 failures (`failureThreshold: 3`), Kubelet restarts the container into `CrashLoopBackOff`.
+
+#### 2. Fix
+Change probe ports to `8080` in `manifests/40-api.yaml`:
+```diff
+--- a/manifests/40-api.yaml
++++ b/manifests/40-api.yaml
+@@ -37,1 +37,1 @@
+-              port: 8000
++              port: 8080
+@@ -53,1 +53,1 @@
+-              port: 8000
++              port: 8080
+```
+
+---
+
+### [INC-405] Telemetry API Stable but NotReady (0/1) — Database Port Mismatch
+
+#### 1. Root Cause Analysis (RCA)
+1. Correcting probe ports stabilizes `livenessProbe` (`/healthz`).
+2. However, `readinessProbe` (`/ready`) returns 503 because the application connects to `vitals-db` on port 5433 instead of 5432.
+3. In `manifests/10-config.yaml`, `DB_PORT` is erroneously set to `"5433"`.
+
+#### 2. Fix
+Update `DB_PORT: "5432"` in `manifests/10-config.yaml` and restart the deployment:
+```diff
+--- a/manifests/10-config.yaml
++++ b/manifests/10-config.yaml
+@@ -23,1 +23,1 @@
+-  DB_PORT: "5433"
++  DB_PORT: "5432"
+```
+
+```bash
+kubectl apply -f manifests/10-config.yaml
+kubectl rollout restart deploy/telemetry-api -n pulse-prod
+```
+
+---
+
+### [INC-406] Portal Proxy Returns 502 Bad Gateway — Service Port & Proxy Mismatch
+
+#### 1. Root Cause Analysis (RCA)
+1. In `manifests/40-api.yaml`, the Service exposes port 80:
+   ```yaml
+   ports:
+     - port: 80
+       targetPort: 8080
+   ```
+2. In `manifests/10-config.yaml`, Nginx proxies to port 8080:
+   ```nginx
+   location /api/ {
+       proxy_pass http://telemetry-api:8080/;
+   }
+   ```
+3. Connecting to `telemetry-api:8080` fails with `Connection refused` because the ClusterIP only listens on port 80. Nginx returns HTTP 502 Bad Gateway.
+
+#### 2. Fix
+Change the Service `port` to `8080` in `manifests/40-api.yaml`:
+```diff
+--- a/manifests/40-api.yaml
++++ b/manifests/40-api.yaml
+@@ -69,1 +69,1 @@
+-    - port: 80
++    - port: 8080
+```
+
+---
+
+### [INC-407] Portal Proxy High Availability Warning — 3rd Replica Pending
+
+#### 1. Root Cause Analysis (RCA)
+1. `portal-proxy` specifies 3 replicas with `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity.
+2. Only 2 nodes carry `tier=web` (Node-3 is tainted).
+3. The scheduler cannot place more than 1 replica per node, leaving the 3rd replica permanently `Pending`.
+
+#### 2. Fix
+Convert anti-affinity from `required` to `preferredDuringSchedulingIgnoredDuringExecution` in `manifests/50-portal.yaml`:
+```diff
+--- a/manifests/50-portal.yaml
++++ b/manifests/50-portal.yaml
+@@ -23,2 +23,5 @@
+-          requiredDuringSchedulingIgnoredDuringExecution:
++          preferredDuringSchedulingIgnoredDuringExecution:
++            - weight: 100
++              podAffinityTerm:
+```
+
+---
+
+## 🌐 SRE Service, Port & Proxy Troubleshooting Standard
+
+```mermaid
+flowchart LR
+    P1["1. Pod Listening?\n(containerPort & 0.0.0.0)"] --> P2["2. Probes on Correct Port?\n(liveness / readiness)"]
+    P2 --> P3["3. Service & EndpointSlice Match?\n(selector & targetPort)"]
+    P3 --> P4["4. Client Targeting Service Port?\n(Service port & ConfigMap)"]
+```
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # PulseMed (k8-troubleshoot-4) — Post-Mortem & Kök Neden Analizi (RCA) Kılavuzu
 
 Bu belge, PulseMed hasta telemetri platformunda yaşanan 7 zincirleme arızanın Kubernetes denetim ve veri düzlemi (`kube-scheduler`, `EndpointSlice controller`, `kube-proxy`, `kubelet`, `CoreDNS`) perspektifinden derinlemesine kök neden analizini, minimal düzeltme (diff) kodlarını ve kurumsal sektör deneyimlerini içermektedir.

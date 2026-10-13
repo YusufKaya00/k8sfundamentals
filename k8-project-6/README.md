@@ -1,3 +1,72 @@
+# 🔒 Lab 6: Kubernetes-Native CI/CD & DevSecOps Platform (GitLab Runner, Rootless Buildah & Trivy)
+
+This lab transitions CI/CD workflows from traditional static VM runners to a cloud-native architecture: **dynamically autoscaling GitLab Runners on Kubernetes**, secure daemonless container compilation with **Rootless Buildah** (no Docker socket or privileged mode), **automated vulnerability scanning (Trivy)** and **CycloneDX Software Bill of Materials (SBOM)** generation, seamlessly integrating into the **ArgoCD GitOps deployment engine** built in Lab 5 for an end-to-end "Commit-to-Production" supply chain.
+
+> **Solutions / Çözümler:** For step-by-step commands, architectural rationale, and outputs:  
+> **👉 [Explore Solution Guide (solution/README.md)](./solution/README.md)**
+
+---
+
+## 📋 Infrastructure & Environment Constraints
+
+- **3 Worker Node Architecture:**
+  - 1 x Dedicated Database Node (`workload=database:NoSchedule`, `tier=database`)
+  - 2 x Web / Worker Nodes (`tier=web`)
+- **Enterprise Container Runtimes (Oracle Linux 9 / OCI OKE):** All container images specify fully qualified domain names (`docker.io/...`, `quay.io/...`).
+- **Resource Footprint Optimization:** The GitLab Runner Manager runs with lightweight resource requests, dynamically creating ephemeral worker pods constrained by CPU and memory limits defined in `01-gitlab-runner-values.yaml`.
+
+---
+
+## 📋 Curriculum Steps (10 Steps)
+
+### Phase 1: Dynamic CI/CD Infrastructure (Kubernetes Executor)
+
+* **Step 1: Least-Privilege RBAC Authorization**  
+  Eliminate cluster-admin security risks by creating a dedicated `ServiceAccount`, `Role`, and `RoleBinding` confined strictly to launching and terminating pods within the `gitlab-runner` namespace (`03-runner-rbac-and-namespace.yaml`).
+
+* **Step 2: Deploy GitLab Runner via Helm (Kubernetes Executor)**  
+  Install `gitlab/gitlab-runner` using tuned values. Ensure worker pods schedule onto `tier=web` nodes with `privileged: false` enforced (`01-gitlab-runner-values.yaml`).
+
+* **Step 3: Verification of Dynamic Pod Lifecycle**  
+  Trigger a CI job and watch the ephemeral pod lifecycle in the terminal (`Pending -> Running -> Completed -> Terminated`) via `kubectl get pods -n gitlab-runner -w`.
+
+---
+
+### Phase 2: In-Cluster Secure Container Builds (Rootless OCI)
+
+* **Step 4: Secure Image Compilation Architecture (Deprecating DinD & Kaniko)**  
+  Analyze why Docker-in-Docker (DinD) is a security anti-pattern (requiring host root/kernel privileges) and note that Google Container Tools officially archived Kaniko in June 2025. Adopt modern rootless Linux user namespaces.
+
+* **Step 5: OCI Image Compilation & Registry Push via Rootless Buildah**  
+  Build application images using `Buildah` inside an unprivileged container satisfying Pod Security Standards (Restricted) without requiring root permissions (`05-buildah-build.gitlab-ci.yml`).
+
+---
+
+### Phase 3: DevSecOps Vulnerability Gating & Supply Chain Security
+
+* **Step 6: Automated Security Gating with Trivy**  
+  Integrate an automated Trivy scanner into the CI pipeline. If any unfixed **CRITICAL** CVEs are detected, fail the pipeline with `exit code 1` to halt promotion (`06-trivy-scan.gitlab-ci.yml`).
+
+* **Step 7: CycloneDX SBOM (Software Bill of Materials) Generation**  
+  Generate an industry-standard CycloneDX SBOM (`sbom-cyclonedx.json`) documenting all open-source packages, runtime dependencies, and OS libraries as a downloadable CI pipeline artifact.
+
+---
+
+### Phase 4: End-to-End Delivery (CI to GitOps Promotion)
+
+* **Step 8: Automated GitOps Promotion Bridge**  
+  Upon successful vulnerability validation, automatically commit the new container digest (`$CI_COMMIT_SHA`) to the Lab 5 GitOps repository to trigger live ArgoCD reconciliation (`08-gitops-bridge.gitlab-ci.yml`).
+
+* **Step 9: Complete End-to-End "Commit-to-Production" Verification**  
+  Execute the complete unified pipeline: Source Code Commit -> Ephemeral K8s Build Pod -> Rootless Buildah Build -> Trivy Security Gate -> GitOps Promotion -> ArgoCD Progressive Canary Rollout (`09-complete-pipeline.gitlab-ci.yml`).
+
+* **Step 10: Vulnerability Simulation & Security Gate Enforcement**  
+  Simulate a supply-chain attack by introducing an image with known critical vulnerabilities. Demonstrate that Trivy fails the build (`exit code 1`), completely preventing the insecure build from reaching the Kubernetes cluster (`10-vulnerable-simulation.gitlab-ci.yml`).
+
+---
+
+## 🇹🇷 Türkçe Dokümantasyon / Turkish Version
+
 # Kubernetes-Native CI/CD & DevSecOps Platform (GitLab Runner, Rootless Buildah & Trivy)
 
 Bu laboratuvar; klasik statik CI sunucularından bulut-yerel mimariye geçişi, **Kubernetes üzerinde dinamik ölçeklenen GitLab Runner mimarisini**, unprivileged container içinde güvenli imaj derlemeyi (**Rootless Buildah**), **Trivy ile otomatik güvenlik kapısı (Vulnerability Gating) ve SBOM üretimini** ve tüm bu sürecin **Lab 5'teki ArgoCD GitOps motoruna bağlanarak** uçtan uca kurumsal bir "Commit-to-Production" hattına dönüşmesini simüle eder.
