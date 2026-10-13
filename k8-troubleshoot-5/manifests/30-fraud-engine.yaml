@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-engine-svc
+  namespace: apex-pay
+  labels:
+    app.kubernetes.io/name: fraud-engine
+    app.kubernetes.io/part-of: apex-pay
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fraud-engine
+    component: inspector
+    environment: production
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-engine
+  namespace: apex-pay
+  labels:
+    app.kubernetes.io/name: fraud-engine
+    app.kubernetes.io/part-of: apex-pay
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fraud-engine
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fraud-engine
+        app.kubernetes.io/part-of: apex-pay
+        component: inspector
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+      - name: inspector
+        image: docker.io/library/python:3.11-alpine
+        command: ["python", "/app/server.py"]
+        ports:
+        - name: http
+          containerPort: 8080
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        volumeMounts:
+        - name: script-vol
+          mountPath: /app
+      volumes:
+      - name: script-vol
+        configMap:
+          name: fraud-script-conf
