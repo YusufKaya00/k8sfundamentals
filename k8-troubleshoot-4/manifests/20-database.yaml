@@ -13,7 +13,7 @@ spec:
       targetPort: 5432
       name: postgresql
   selector:
-    app.kubernetes.io/name: postgres-db
+    app.kubernetes.io/name: vitals-db
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -38,7 +38,7 @@ spec:
       nodeSelector:
         tier: database
       tolerations:
-        - key: "role"
+        - key: "workload"
           operator: "Equal"
           value: "database"
           effect: "NoSchedule"

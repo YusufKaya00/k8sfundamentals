@@ -21,13 +21,7 @@ spec:
     spec:
       nodeSelector:
         tier: web
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: portal-proxy
-              topologyKey: "kubernetes.io/hostname"
+      
       containers:
         - name: portal
           image: docker.io/library/nginx:1.25-alpine
@@ -87,7 +81,7 @@ metadata:
 spec:
   type: ClusterIP
   ports:
-    - port: 80
+    - port: 8080
       targetPort: 8080
       name: http
   selector:

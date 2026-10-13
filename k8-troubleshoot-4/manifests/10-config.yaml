@@ -20,7 +20,7 @@ metadata:
     app.kubernetes.io/part-of: pulsemed
 data:
   DB_HOST: "vitals-db.pulse-prod.svc.cluster.local"
-  DB_PORT: "5433"
+  DB_PORT: "5432"
   DB_NAME: "pulse_vitals"
   DB_USER: "pulse_user"
   REDIS_HOST: "session-store.pulse-prod.svc.cluster.local"
