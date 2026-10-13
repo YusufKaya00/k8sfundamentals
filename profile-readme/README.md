@@ -10,12 +10,10 @@
 
 <table>
   <tr>
-    <td width="48%" align="center" valign="middle">
-      <img src="https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExMmxvaTNtMzFsaDkwNW94ODV5bXRxYnk4ODU3dHg5NDV6dnIwYXRyYiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/EpLtMyWfZKe8uiorn9/giphy.gif" width="100%" alt="Dark Fantasy Animation" />
-    </td>
-    <td width="52%" valign="top">
-      <h3>👨‍💻 About Me</h3>
-      <p>I am a <b>Cloud-Native & DevOps Engineer</b> passionate about automating, securing, and scaling production infrastructure and delivery pipelines.</p>
+    <td width="54%" valign="middle">
+      <p>
+        I am a <b>Cloud-Native & DevOps Engineer</b> passionate about automating, securing, and scaling production infrastructure and delivery pipelines.
+      </p>
       <ul>
         <li>🔭 Engineering and administering resilient <b>Kubernetes</b> clusters.</li>
         <li>⚙️ Automating declarative <b>GitOps</b> delivery & rollouts with <b>ArgoCD</b>.</li>
@@ -23,6 +21,9 @@
         <li>📊 Full-stack observability and alerting with <b>Prometheus</b> & <b>Grafana</b>.</li>
         <li>💻 Automation tooling and backend development with <b>Python</b>, <b>Bash</b>, <b>Java</b>, and <b>.NET</b>.</li>
       </ul>
+    </td>
+    <td width="46%" align="center" valign="middle">
+      <img src="https://raw.githubusercontent.com/YusufKaya00/YusufKaya00/main/assets/aatrox.gif" width="100%" alt="Terminal Animation" />
     </td>
   </tr>
 </table>
