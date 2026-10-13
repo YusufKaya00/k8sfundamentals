@@ -10,9 +10,7 @@
   <img src="https://media.giphy.com/media/LmNwrBhejkK9EFP504/giphy.gif" width="420" alt="Developer & DevOps Animation" />
 </p>
 
-<p align="center">
-  <em>(Replace the GIF above with your custom photo or banner anytime)</em>
-</p>
+
 
 ---
 
@@ -32,7 +30,7 @@ focus_areas:
 * ⚙️ Automating declarative **GitOps** workflows and progressive rollouts using **ArgoCD**.
 * ☁️ Provisioning and administering cloud workloads across **AWS**, **Microsoft Azure**, and **Oracle Cloud (OCI)**.
 * 📊 Implementing observability, alerting, and telemetry stacks with **Prometheus** and **Grafana**.
-* 💻 Writing automation scripts, tooling, and backend logic with **Python**, **Bash**, **Java**, and **.NET**.
+* 💻 Writing automation scripts, tooling, interace and backend logic with **Python**, **Bash**, **Java**, and **.NET**.
 
 ---
 
@@ -84,8 +82,13 @@ focus_areas:
 
 ---
 
-### 🟩 Contribution Grid Snake
+### ⚡ GitHub Analytics & Activity
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/YusufKaya00/YusufKaya00/output/github-contribution-grid-snake-dark.svg" width="100%" alt="Yusuf's Contribution Snake Animation" />
+  <img src="https://github-readme-stats.vercel.app/api?username=YusufKaya00&show_icons=true&bg_color=0D1117&title_color=38BDF8&icon_color=38BDF8&text_color=E2E8F0&border_color=38BDF8" alt="Yusuf's GitHub Stats" />
+  <img src="https://github-readme-streak-stats.herokuapp.com/?user=YusufKaya00&theme=dark&background=0D1117&ring=38BDF8&fire=38BDF8&currStreakNum=38BDF8&sideNums=38BDF8&currStreakLabel=38BDF8&sideLabels=94A3B8&dates=64748B&border=38BDF8" alt="GitHub Streak" />
+</p>
+
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:38bdf8,100:0284c7&height=100&section=footer" width="100%" alt="Footer Wave" />
 </p>
