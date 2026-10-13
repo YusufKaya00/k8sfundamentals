@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/part-of: aero-ops
 data:
   DB_HOST: "radar-db"
-  DB_PORT: "5433" # BUG: INC-605: Typo for 5432!
+  DB_PORT: "5432" # BUG: INC-605: Typo for 5432!
   DB_NAME: "aero_telemetry"
   DB_USER: "aero_admin"
   REDIS_HOST: "track-cache"
@@ -18,7 +18,7 @@ data:
     import os, socket, json, sys
 
     DB_HOST = os.environ.get("DB_HOST", "radar-db")
-    DB_PORT = int(os.environ.get("DB_PORT", "5433"))
+    DB_PORT = int(os.environ.get("DB_PORT", "5432"))
     REDIS_HOST = os.environ.get("REDIS_HOST", "track-cache")
     REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
 
@@ -116,7 +116,7 @@ data:
 
             location /api/radar {
                 # BUG: INC-607: telemetry-api exposes port 8080, but nginx proxies to port 80!
-                proxy_pass http://telemetry-api:80;
+                proxy_pass http://telemetry-api:8080;
                 proxy_connect_timeout 2s;
                 proxy_read_timeout 3s;
             }

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: radar-db-headless
+  name: radar-db
   namespace: aero-prod
   labels:
     app.kubernetes.io/name: radar-db
@@ -10,7 +10,7 @@ spec:
   clusterIP: None
   selector:
     app.kubernetes.io/name: radar-db
-    tier: backend
+    tier: database
   ports:
   - name: postgresql
     port: 5432
@@ -26,7 +26,7 @@ metadata:
     app.kubernetes.io/name: radar-db
     app.kubernetes.io/part-of: aero-ops
 spec:
-  serviceName: "radar-db"
+  serviceName: radar-db
   replicas: 1
   selector:
     matchLabels:
@@ -43,7 +43,7 @@ spec:
       tolerations:
       - key: "workload"
         operator: "Equal"
-        value: "db"
+        value: "database"
         effect: "NoSchedule"
       containers:
       - name: postgres

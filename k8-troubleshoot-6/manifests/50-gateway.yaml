@@ -12,7 +12,7 @@ spec:
     app.kubernetes.io/name: flight-gateway
   ports:
   - name: http
-    port: 80
+    port: 8080
     targetPort: 8080
     protocol: TCP
 ---
@@ -38,15 +38,7 @@ spec:
     spec:
       nodeSelector:
         tier: web
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: In
-                values: ["flight-gateway"]
-            topologyKey: kubernetes.io/hostname
+
       containers:
       - name: gateway
         image: docker.io/library/nginx:1.25-alpine
