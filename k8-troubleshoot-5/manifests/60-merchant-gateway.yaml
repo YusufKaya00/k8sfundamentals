@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/part-of: apex-pay
 spec:
   type: NodePort
-  externalTrafficPolicy: Local
+  externalTrafficPolicy: Cluster
   selector:
     app.kubernetes.io/name: merchant-gateway
   ports:
@@ -37,7 +37,7 @@ spec:
         app.kubernetes.io/part-of: apex-pay
     spec:
       nodeSelector:
-        kubernetes.io/hostname: "10.0.10.122"
+        tier: web
       containers:
       - name: gateway
         image: docker.io/library/nginx:1.25-alpine
