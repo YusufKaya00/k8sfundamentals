@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-worker
+  namespace: nexus-prod
+  labels:
+    app.kubernetes.io/name: order-worker
+    app.kubernetes.io/part-of: nexus-logistics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: order-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: order-worker
+        app.kubernetes.io/part-of: nexus-logistics
+    spec:
+      initContainers:
+      - name: wait-for-database
+        image: docker.io/library/python:3.11-alpine
+        command:
+        - sh
+        - -c
+        - |
+          echo "[INIT] Checking Dispatch Database connectivity..."
+          # BUG INC-704: Hostname typo 'dispatch-database' instead of 'dispatch-db'
+          until python3 -c "import socket; s = socket.create_connection(('dispatch-database', 5432), timeout=2); s.close()"; do
+            echo "[INIT] Database unreachable at dispatch-database:5432, retrying in 2s..."
+            sleep 2
+          done
+          echo "[INIT] Database is ready and reachable!"
+      containers:
+      - name: worker
+        image: docker.io/library/python:3.11-alpine
+        command:
+        - python3
+        - -c
+        - |
+          import os, sys, time, urllib.request, ssl
+
+          print("[WORKER] Booting Order Worker processor daemon...")
+
+          # Token validation from secret
+          queue_token = os.environ.get("QUEUE_TOKEN", "")
+          if not queue_token:
+              print("[FATAL] Missing QUEUE_TOKEN environment variable!", file=sys.stderr)
+              sys.exit(1)
+          print(f"[WORKER] Authenticated with Queue Token: {queue_token[:8]}***")
+
+          # Simulating in-memory batch processing buffer (allocates ~28MB of payload data)
+          print("[WORKER] Initializing 28MB dispatch queue in-memory buffer...")
+          # BUG INC-703: Container limit is 24Mi. Allocating 28MB will trigger immediate OOMKilled (Exit Code 137).
+          batch_buffer = bytearray(28 * 1024 * 1024)
+          print(f"[WORKER] Batch buffer initialized ({len(batch_buffer)} bytes allocated).")
+
+          # In-cluster Kubernetes API peer discovery loop
+          ctx = ssl.create_default_context()
+          ctx.check_hostname = False
+          ctx.verify_mode = ssl.CERT_NONE
+
+          token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+          while True:
+              time.sleep(4)
+              try:
+                  with open(token_path) as tf:
+                      sa_token = tf.read().strip()
+                  req = urllib.request.Request(
+                      "https://kubernetes.default.svc/api/v1/namespaces/nexus-prod/endpoints/dispatch-gateway",
+                      headers={"Authorization": f"Bearer {sa_token}"}
+                  )
+                  with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
+                      if resp.status == 200:
+                          print("[SYNC] In-cluster peer discovery succeeded: HTTP 200 OK (Endpoints verified)")
+              except urllib.error.HTTPError as he:
+                  # BUG INC-705: Default ServiceAccount has no RBAC permissions to read endpoints
+                  print(f"[SECURITY ALERT] In-cluster sync failed: HTTP {he.code} {he.reason} - Access Denied on /api/v1/namespaces/nexus-prod/endpoints/dispatch-gateway")
+              except Exception as ex:
+                  print(f"[SYNC WARNING] Discovery network error: {ex}")
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dispatch-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dispatch-config
+              key: DB_PORT
+        # BUG INC-702: Secret key is QUEUE_AUTH_TOKEN, but manifest references QUEUE_AUTH_KEY
+        - name: QUEUE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: nexus-secrets
+              key: QUEUE_AUTH_KEY
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "16Mi"
+          limits:
+            cpu: "200m"
+            # BUG INC-703: 24Mi limit triggers OOMKilled when 28MB buffer is allocated
+            memory: "24Mi"

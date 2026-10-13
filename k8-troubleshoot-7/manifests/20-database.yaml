@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dispatch-db
+  namespace: nexus-prod
+  labels:
+    app.kubernetes.io/name: dispatch-db
+    app.kubernetes.io/part-of: nexus-logistics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dispatch-db
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dispatch-db
+  namespace: nexus-prod
+  labels:
+    app.kubernetes.io/name: dispatch-db
+    app.kubernetes.io/part-of: nexus-logistics
+spec:
+  serviceName: "dispatch-db"
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dispatch-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dispatch-db
+        app.kubernetes.io/part-of: nexus-logistics
+    spec:
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "database"
+        effect: "NoSchedule"
+      nodeSelector:
+        tier: database
+      containers:
+      - name: postgres
+        image: docker.io/library/postgres:16-alpine
+        ports:
+        - name: postgresql
+          containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: dispatch-config
+              key: DB_NAME
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: nexus-secrets
+              key: DB_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: nexus-secrets
+              key: DB_PASSWORD
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -U nexus_admin -d nexus_dispatch
+          initialDelaySeconds: 5
+          periodSeconds: 5
