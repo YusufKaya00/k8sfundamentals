@@ -1,0 +1,167 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vitals-db-secret
+  namespace: pulse-prod
+  labels:
+    app.kubernetes.io/part-of: pulsemed
+type: Opaque
+stringData:
+  POSTGRES_DB: "pulse_vitals"
+  POSTGRES_USER: "pulse_user"
+  POSTGRES_PASSWORD: "PulseSecure2026!"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: pulse-prod
+  labels:
+    app.kubernetes.io/part-of: pulsemed
+data:
+  DB_HOST: "vitals-db.pulse-prod.svc.cluster.local"
+  DB_PORT: "5433"
+  DB_NAME: "pulse_vitals"
+  DB_USER: "pulse_user"
+  REDIS_HOST: "session-store.pulse-prod.svc.cluster.local"
+  REDIS_PORT: "6379"
+  PORT: "8080"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-code
+  namespace: pulse-prod
+  labels:
+    app.kubernetes.io/part-of: pulsemed
+data:
+  server.py: |
+    import http.server
+    import socketserver
+    import os
+    import sys
+    import json
+    import socket
+
+    port = int(os.environ.get("PORT", "8080"))
+    db_host = os.environ.get("DB_HOST", "vitals-db")
+    db_port = int(os.environ.get("DB_PORT", "5432"))
+    redis_host = os.environ.get("REDIS_HOST", "session-store")
+    redis_port = int(os.environ.get("REDIS_PORT", "6379"))
+
+    print(f"[Telemetry-API] Starting service on 0.0.0.0:{port}...", flush=True)
+    print(f"[Telemetry-API] Configured endpoints -> DB: {db_host}:{db_port}, Redis: {redis_host}:{redis_port}", flush=True)
+
+    def probe_tcp(host, port_num, timeout=1.2):
+        try:
+            s = socket.create_connection((host, port_num), timeout=timeout)
+            s.close()
+            return True
+        except Exception:
+            return False
+
+    class TelemetryHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            sys.stdout.write(f"[{self.log_date_time_string()}] {self.address_string()} - {format%args}\n")
+            sys.stdout.flush()
+
+        def do_GET(self):
+            if self.path == "/healthz":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "service": "telemetry-api"}).encode("utf-8"))
+            elif self.path == "/ready":
+                db_ok = probe_tcp(db_host, db_port)
+                redis_ok = probe_tcp(redis_host, redis_port)
+                if db_ok and redis_ok:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    resp = {
+                        "status": "ready",
+                        "vitals_db": f"connected ({db_host}:{db_port})",
+                        "session_store": f"connected ({redis_host}:{redis_port})"
+                    }
+                    self.wfile.write(json.dumps(resp).encode("utf-8"))
+                else:
+                    self.send_response(503)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    resp = {
+                        "status": "not_ready",
+                        "vitals_db": "connected" if db_ok else f"unreachable ({db_host}:{db_port})",
+                        "session_store": "connected" if redis_ok else f"unreachable ({redis_host}:{redis_port})"
+                    }
+                    self.wfile.write(json.dumps(resp).encode("utf-8"))
+            elif self.path in ["/api/vitals", "/vitals", "/"]:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                records = [
+                    {"patient_id": "PT-401", "heart_rate": 74, "spo2": 98, "status": "NORMAL"},
+                    {"patient_id": "PT-402", "heart_rate": 88, "spo2": 96, "status": "MONITORING"},
+                    {"patient_id": "PT-403", "heart_rate": 69, "spo2": 99, "status": "NORMAL"}
+                ]
+                self.wfile.write(json.dumps(records).encode("utf-8"))
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "not_found"}).encode("utf-8"))
+
+    with socketserver.TCPServer(("0.0.0.0", port), TelemetryHandler) as httpd:
+        print(f"[Telemetry-API] Listening for traffic on 0.0.0.0:{port}", flush=True)
+        httpd.serve_forever()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: portal-nginx
+  namespace: pulse-prod
+  labels:
+    app.kubernetes.io/part-of: pulsemed
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name localhost;
+
+        location = /healthz {
+            access_log off;
+            default_type application/json;
+            return 200 '{"status":"ok","portal":"healthy"}\n';
+        }
+
+        location /api/ {
+            proxy_pass http://telemetry-api:8080/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_connect_timeout 2s;
+            proxy_read_timeout 5s;
+        }
+
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+    }
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>PulseMed Telemetry Portal</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; background: #0f172a; color: #f8fafc; }
+            .box { background: #1e293b; padding: 24px; border-radius: 8px; border: 1px solid #334155; max-width: 600px; margin: auto; }
+            h1 { color: #38bdf8; font-size: 22px; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h1>PulseMed Real-Time Patient Telemetry</h1>
+            <p>Clinical monitoring dashboard active.</p>
+        </div>
+    </body>
+    </html>
