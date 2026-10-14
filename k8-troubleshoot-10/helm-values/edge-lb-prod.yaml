@@ -7,7 +7,7 @@ service:
   type: LoadBalancer
   port: 80
   targetPort: 8080
-  externalTrafficPolicy: Local
+  externalTrafficPolicy: Cluster
 
 proxy:
-  gatewayHeader: "disabled"
+  gatewayHeader: "verified"
