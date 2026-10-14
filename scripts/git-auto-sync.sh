@@ -95,15 +95,16 @@ start() {
   fi
 
   mkdir -p "$(dirname "${LOG_FILE}")"
-  nohup "${BASH_SOURCE[0]}" run >/dev/null 2>&1 &
+  nohup bash "${SCRIPT_DIR}/git-auto-sync.sh" run </dev/null >> "${LOG_FILE}" 2>&1 &
   local new_pid=$!
+  disown "${new_pid}" 2>/dev/null || true
   echo "${new_pid}" > "${PID_FILE}"
 
   sleep 1
   if is_running; then
     echo "✅ Git Auto-Sync arka planda başarıyla başlatıldı (PID: ${new_pid})."
-    echo "📋 Logları canlı izlemek için:  ${BASH_SOURCE[0]} logs"
-    echo "🛑 Durdurmak için:               ${BASH_SOURCE[0]} stop"
+    echo "📋 Logları canlı izlemek için:  ${SCRIPT_DIR}/git-auto-sync.sh logs"
+    echo "🛑 Durdurmak için:               ${SCRIPT_DIR}/git-auto-sync.sh stop"
   else
     echo "❌ Başlatılamadı. Hata detayları için '${LOG_FILE}' dosyasını inceleyin."
     return 1
@@ -134,8 +135,8 @@ stop() {
 is_running() {
   if [[ -f "${PID_FILE}" ]]; then
     local pid
-    pid="$(cat "${PID_FILE}")"
-    if kill -0 "${pid}" 2>/dev/null; then
+    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
       return 0
     fi
   fi
