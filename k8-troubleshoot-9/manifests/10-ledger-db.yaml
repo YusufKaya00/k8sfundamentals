@@ -53,6 +53,11 @@ spec:
     spec:
       nodeSelector:
         tier: database
+      tolerations:
+        - key: "workload"
+          operator: "Equal"
+          value: "database"
+          effect: "NoSchedule"
       containers:
         - name: postgres
           image: docker.io/library/postgres:16-alpine
@@ -93,6 +98,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+              subPath: postgres
   volumeClaimTemplates:
     - metadata:
         name: data

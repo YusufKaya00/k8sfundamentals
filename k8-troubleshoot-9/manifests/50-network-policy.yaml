@@ -16,7 +16,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: ingress-gateway
+              app.kubernetes.io/name: edge-gateway
       ports:
         - protocol: TCP
           port: 8000

@@ -10,7 +10,7 @@ data:
   DB_HOST: "ledger-db"
   DB_PORT: "5432"
   REDIS_HOST: "rate-limiter"
-  REDIS_PORT: "6380"
+  REDIS_PORT: "6379"
   PORT: "8000"
   server.py: |
     from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -142,8 +142,8 @@ spec:
             - sh
             - -c
             - |
-              until nc -zv ledger-db 5433; do
-                echo "Waiting for ledger-db on port 5433..."
+              until nc -zv ledger-db 5432; do
+                echo "Waiting for ledger-db on port 5432..."
                 sleep 2
               done
       containers:
@@ -172,7 +172,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:

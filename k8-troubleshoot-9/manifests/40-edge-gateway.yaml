@@ -29,7 +29,7 @@ data:
             }
 
             location /api/v1/settlements {
-                proxy_pass http://payment_api/;
+                proxy_pass http://payment_api;
                 proxy_connect_timeout 3s;
                 proxy_read_timeout 5s;
             }
