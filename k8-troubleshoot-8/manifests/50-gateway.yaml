@@ -38,7 +38,7 @@ spec:
         tier: web
     spec:
       nodeSelector:
-        tier: frontend
+        tier: web
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

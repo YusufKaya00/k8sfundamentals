@@ -43,7 +43,7 @@ spec:
         - key: workload
           operator: Equal
           value: database
-          effect: NoExecute
+          effect: NoSchedule
       securityContext:
         fsGroup: 70
       containers:
@@ -70,6 +70,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+              subPath: pgdata
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -95,10 +96,7 @@ spec:
     - Ingress
   ingress:
     - from:
-        - namespaceSelector:
-            matchLabels:
-              team: ledger
-          podSelector:
+       - podSelector:
             matchLabels:
               app.kubernetes.io/name: helix-api
       ports:

@@ -10,7 +10,6 @@ spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: helix-api
-    tier: api
   ports:
     - name: http
       port: 8080
@@ -35,7 +34,7 @@ spec:
       labels:
         app.kubernetes.io/name: helix-api
         app.kubernetes.io/part-of: helix
-        tier: backend
+        
     spec:
       serviceAccountName: helix-api
       nodeSelector:
@@ -60,14 +59,14 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: helix-db-credentials
-                  key: password
-                  optional: true
+                  key: POSTGRES_PASSWORD
+                
           startupProbe:
             httpGet:
               path: /healthz
               port: http
             periodSeconds: 5
-            failureThreshold: 4
+            failureThreshold: 12
           livenessProbe:
             httpGet:
               path: /healthz

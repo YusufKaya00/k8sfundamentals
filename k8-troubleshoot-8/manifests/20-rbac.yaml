@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: helix-api
     app.kubernetes.io/part-of: helix
-automountServiceAccountToken: false
+automountServiceAccountToken: true 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -16,7 +16,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: helix
 rules:
-  - apiGroups: ["apps"]
+  - apiGroups: [""]
     resources: ["endpoints"]
     verbs: ["get", "list", "watch"]
 ---
@@ -30,7 +30,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: helix-api
-    namespace: default
+    namespace: helix-prod
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
