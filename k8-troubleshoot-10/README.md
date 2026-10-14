@@ -471,3 +471,5 @@ Tüm biletleri tamamladıktan sonra terminalden sipariş servisini sorgulayın:
 ```bash
 kubectl exec -n chronos-prod deploy/edge-lb -- wget -qO- http://localhost:8080/api/v1/orders
 ```
+
+aaa
