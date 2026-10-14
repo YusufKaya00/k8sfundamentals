@@ -16,6 +16,4 @@ affinity:
                   - order-api
           topologyKey: "kubernetes.io/hostname"
 
-extraEnv:
-  - name: INVENTORY_HOST
-    value: "legacy-inventory-svc"
+extraEnv: []
