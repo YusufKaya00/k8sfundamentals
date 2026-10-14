@@ -1,0 +1,197 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-api-config
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: payment-api
+    app.kubernetes.io/part-of: paystream
+data:
+  DB_HOST: "ledger-db"
+  DB_PORT: "5432"
+  REDIS_HOST: "rate-limiter"
+  REDIS_PORT: "6380"
+  PORT: "8000"
+  server.py: |
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import json
+    import os
+    import socket
+    import sys
+
+    DB_HOST = os.environ.get("DB_HOST", "ledger-db")
+    DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+    REDIS_HOST = os.environ.get("REDIS_HOST", "rate-limiter")
+    REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
+    PORT = int(os.environ.get("PORT", "8000"))
+
+    def check_tcp(host, port, timeout=2.0):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect((host, port))
+            s.close()
+            return True, "connected"
+        except Exception as e:
+            return False, str(e)
+
+    class PaymentHandler(BaseHTTPRequestHandler):
+        def _send_json(self, code, payload):
+            data = json.dumps(payload, indent=2).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path == "/health":
+                self._send_json(200, {
+                    "status": "healthy",
+                    "service": "payment-api"
+                })
+                return
+
+            if self.path == "/ready":
+                db_ok, db_msg = check_tcp(DB_HOST, DB_PORT)
+                redis_ok, redis_msg = check_tcp(REDIS_HOST, REDIS_PORT)
+                ready = db_ok and redis_ok
+                status_code = 200 if ready else 503
+                self._send_json(status_code, {
+                    "ready": ready,
+                    "database": {"host": DB_HOST, "port": DB_PORT, "reachable": db_ok, "detail": db_msg},
+                    "cache": {"host": REDIS_HOST, "port": REDIS_PORT, "reachable": redis_ok, "detail": redis_msg}
+                })
+                return
+
+            if self.path.startswith("/api/v1/settlements") or self.path.startswith("/api/payments"):
+                db_ok, _ = check_tcp(DB_HOST, DB_PORT)
+                redis_ok, _ = check_tcp(REDIS_HOST, REDIS_PORT)
+                if not (db_ok and redis_ok):
+                    self._send_json(503, {
+                        "error": "upstream_unavailable",
+                        "database_connected": db_ok,
+                        "cache_connected": redis_ok
+                    })
+                    return
+
+                self._send_json(200, {
+                    "status": "success",
+                    "service": "payment-api",
+                    "settlement_engine": "active",
+                    "transactions_sample": [
+                        {"id": "tx_1001", "amount": 250.00, "currency": "USD", "state": "SETTLED"},
+                        {"id": "tx_1002", "amount": 149.99, "currency": "EUR", "state": "PROCESSING"},
+                        {"id": "tx_1003", "amount": 850.50, "currency": "USD", "state": "SETTLED"}
+                    ]
+                })
+                return
+
+            self._send_json(404, {"error": "not_found"})
+
+        def log_message(self, format, *args):
+            sys.stdout.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
+            sys.stdout.flush()
+
+    if __name__ == "__main__":
+        print(f"PayStream API server starting on 0.0.0.0:{PORT}...", flush=True)
+        server = HTTPServer(("0.0.0.0", PORT), PaymentHandler)
+        server.serve_forever()
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-api
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: payment-api
+    app.kubernetes.io/part-of: paystream
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: payment-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-api
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: payment-api
+    app.kubernetes.io/part-of: paystream
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payment-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: payment-api
+        app.kubernetes.io/part-of: paystream
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: docker.io/library/busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -zv ledger-db 5433; do
+                echo "Waiting for ledger-db on port 5433..."
+                sleep 2
+              done
+      containers:
+        - name: api
+          image: docker.io/library/python:3.11-alpine
+          command:
+            - python
+            - /app/server.py
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: payment-api-config
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-db-secret
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-db-secret
+                  key: POSTGRES_PASSWORD
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+      volumes:
+        - name: app-code
+          configMap:
+            name: payment-api-config

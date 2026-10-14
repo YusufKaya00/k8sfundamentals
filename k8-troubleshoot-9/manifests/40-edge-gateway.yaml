@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-gateway-conf
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: edge-gateway
+    app.kubernetes.io/part-of: paystream
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        access_log /var/log/nginx/access.log;
+        error_log /var/log/nginx/error.log warn;
+
+        upstream payment_api {
+            server payment-api:80;
+        }
+
+        server {
+            listen 8080;
+            server_name _;
+
+            location /health {
+                default_type application/json;
+                return 200 '{"status": "healthy", "service": "edge-gateway"}\n';
+            }
+
+            location /api/v1/settlements {
+                proxy_pass http://payment_api/;
+                proxy_connect_timeout 3s;
+                proxy_read_timeout 5s;
+            }
+
+            location / {
+                default_type application/json;
+                return 200 '{"platform": "PayStream Edge Gateway", "status": "online"}\n';
+            }
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-gateway
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: edge-gateway
+    app.kubernetes.io/part-of: paystream
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: edge-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-gateway
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: edge-gateway
+    app.kubernetes.io/part-of: paystream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: edge-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: edge-gateway
+        app.kubernetes.io/part-of: paystream
+    spec:
+      containers:
+        - name: gateway
+          image: docker.io/library/nginx:1.25-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: edge-gateway-conf
