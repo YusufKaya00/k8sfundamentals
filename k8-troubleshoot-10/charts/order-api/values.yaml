@@ -1,0 +1,32 @@
+replicaCount: 1
+
+image:
+  repository: docker.io/library/python
+  tag: 3.12-slim
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+config:
+  dbHost: "state-db"
+  dbPort: "5432"
+  inventoryHost: "inventory-worker"
+  inventoryPort: "9000"
+  port: "8000"
+
+extraEnv: []
+
+nodeSelector: {}
+
+affinity: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi

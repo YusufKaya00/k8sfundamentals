@@ -1,0 +1,13 @@
+replicaCount: 1
+
+nodeSelector:
+  tier: web
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8081
+  externalTrafficPolicy: Local
+
+proxy:
+  gatewayHeader: "disabled"
