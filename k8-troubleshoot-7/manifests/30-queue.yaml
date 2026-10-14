@@ -8,10 +8,10 @@ metadata:
     app.kubernetes.io/part-of: nexus-logistics
 spec:
   # BUG INC-701: StorageClass fast-nvme-storage does not exist on this cluster
-  storageClassName: "fast-nvme-storage"
+  storageClassName: "oci-bv"
   # BUG INC-701: Block volume CSI rejects ReadWriteMany (only ReadWriteOnce is supported)
   accessModes:
-  - ReadWriteMany
+  - ReadWriteOnce
   resources:
     requests:
       storage: 50Gi

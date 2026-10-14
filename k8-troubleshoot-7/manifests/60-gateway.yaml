@@ -14,10 +14,10 @@ spec:
   type: LoadBalancer
   # BUG INC-706: Selector label drift. Pods have app.kubernetes.io/name: dispatch-gateway
   selector:
-    app.kubernetes.io/name: dispatch-gw
+    app.kubernetes.io/name: dispatch-gateway
   ports:
   - name: http
-    port: 80
+    port: 8080
     targetPort: 8080
     protocol: TCP
 ---

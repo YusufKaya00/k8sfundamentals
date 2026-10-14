@@ -22,7 +22,8 @@ k8sfundamentals/
 ├── k8-troubleshoot-4/  # SRE Incident Lab 4: PulseMed Telemetry (7 Service, Port & EndpointSlice Failures)
 ├── k8-troubleshoot-5/  # SRE Incident Lab 5: ApexPay Core Banking (5 Deep Service, Port & Mesh Routing Failures)
 ├── k8-troubleshoot-6/  # SRE Incident Lab 6: AeroOps Flight Radar (8 Cascading Service, Probe & Anti-Affinity Failures)
-└── k8-troubleshoot-7/  # SRE Incident Lab 7: NexusLogistics Autonomous Dispatch (8 Storage, OOM, RBAC & Gateway Failures)
+├── k8-troubleshoot-7/  # SRE Incident Lab 7: NexusLogistics Autonomous Dispatch (8 Storage, OOM, RBAC & Gateway Failures)
+└── k8-troubleshoot-8/  # SRE Incident Lab 8: Helix Ledger Platform (10 Deep RBAC, NetworkPolicy, StartupProbe & Topology Failures)
 ```
 
 ---
@@ -76,6 +77,7 @@ k8sfundamentals/
 * [**k8-troubleshoot-5:** ApexPay Banking & Service Mesh Triage](./k8-troubleshoot-5/README.md) — 5 deep Kubernetes Service architectural tickets: Headless Service DNS naming contract, multi-label selector over-specification, port vs targetPort indirection, transport protocol mismatch (TCP vs UDP), and `externalTrafficPolicy: Local` packet blackholing.
 * [**k8-troubleshoot-6:** AeroOps Flight Radar & Mesh Dispatch Triage](./k8-troubleshoot-6/README.md) — 8 cascading production tickets: Taint toleration typo, Headless DNS NXDOMAIN, Redis targetPort mismatch, probe port failure CrashLoopBackOff, ConfigMap upstream port mismatch, Service selector label drift, Nginx 502 Bad Gateway upstream port conflict, and hard anti-affinity 2-node deadlock.
 * [**k8-troubleshoot-7:** NexusLogistics Autonomous Dispatch Grid Triage](./k8-troubleshoot-7/README.md) — 8 cascading production tickets: CSI StorageClass & AccessMode rejection (PVC Pending), Secret key typo (CreateContainerConfigError), InitContainer hostname typo, Memory limit starvation (OOMKilled 137), in-cluster RBAC 403 Forbidden, LoadBalancer selector drift, NGINX upstream 502 Bad Gateway, and 2-node hard anti-affinity deadlock.
+* [**k8-troubleshoot-8:** Helix Ledger Platform Outage Triage](./k8-troubleshoot-8/README.md) — 10 advanced production tickets: Taint NoExecute vs NoSchedule, ext4 lost+found initdb rejection, secretKeyRef optional silent failure, startupProbe budget starvation, NetworkPolicy AND vs OR selector trap, ServiceAccount token automount, RBAC subject namespace scoping, RBAC core apiGroups mismatches, NodeAffinity label mismatch, and Service selector tier drift.
 
 ---
 
@@ -108,3 +110,4 @@ Tüm projeler ve sorun giderme laboratuvarları hem yerel kümelerde (**Minikube
 * [**k8-troubleshoot-5:** ApexPay Çekirdek Bankacılık & Servis Ağı Arıza Labı](./k8-troubleshoot-5/README.md) — 5 derin Kubernetes Servis mimarisi arızası: Headless Service DNS sözleşmesi, selector etiket fazlalığı (empty endpoints), port / targetPort yönlendirme hatası, TCP vs UDP protokol çelişkisi ve externalTrafficPolicy Local paket kara delik (blackhole) arızası.
 * [**k8-troubleshoot-6:** AeroOps Uçuş Radar & Servis Ağı Arıza Labı](./k8-troubleshoot-6/README.md) — 8 zincirleme üretim arızası: Taint toleration yazım hatası, Headless DNS NXDOMAIN, Redis targetPort hatası, probe port çelişkisi CrashLoopBackOff, ConfigMap upstream port hatası, Service selector etiket sürüklenmesi, Nginx 502 Bad Gateway port çatışması ve katı anti-affinity 2-node kilitlenmesi.
 * [**k8-troubleshoot-7:** NexusLogistics Otonom Sevkiyat Ağı Arıza Labı](./k8-troubleshoot-7/README.md) — 8 zincirleme üretim arızası: CSI StorageClass & AccessMode reddi (PVC Pending), Secret key yazım hatası (CreateContainerConfigError), InitContainer hostname hatası, cgroup bellek sınırı (OOMKilled 137), küme içi RBAC 403 Forbidden, LoadBalancer seçici etiket sapması, NGINX upstream 502 Bad Gateway ve 2-node katı anti-affinity kilitlenmesi.
+* [**k8-troubleshoot-8:** Helix Ledger Canlı Kesinti & İleri Düzey RBAC/Ağ Müdahale Labı](./k8-troubleshoot-8/README.md) — 10 ileri düzey üretim arızası: Taint NoExecute vs NoSchedule uyuşmazlığı, ext4 lost+found initdb engeli, secretKeyRef optional sessiz hatası, startupProbe bütçesi tükenmesi, NetworkPolicy AND/OR seçici tuzağı, ServiceAccount token automount eksikliği, RoleBinding namespace kapsam hatası, RBAC core apiGroups uyuşmazlığı, NodeAffinity etiket hatası ve Service selector sürüklenmesi.

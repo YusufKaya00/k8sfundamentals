@@ -32,7 +32,7 @@ data:
 
         # Upstream backend definition for routing microservice
         upstream routing_backend {
-            server routing-api:8080;
+            server routing-engine:8080;
         }
 
         server {

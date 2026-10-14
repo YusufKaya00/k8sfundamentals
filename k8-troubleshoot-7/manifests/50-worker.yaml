@@ -26,8 +26,8 @@ spec:
         - |
           echo "[INIT] Checking Dispatch Database connectivity..."
           # BUG INC-704: Hostname typo 'dispatch-database' instead of 'dispatch-db'
-          until python3 -c "import socket; s = socket.create_connection(('dispatch-database', 5432), timeout=2); s.close()"; do
-            echo "[INIT] Database unreachable at dispatch-database:5432, retrying in 2s..."
+          until python3 -c "import socket; s = socket.create_connection(('dispatch-db', 5432), timeout=2); s.close()"; do
+            echo "[INIT] Database unreachable at dispatch-db:5432, retrying in 2s..."
             sleep 2
           done
           echo "[INIT] Database is ready and reachable!"
@@ -94,7 +94,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: nexus-secrets
-              key: QUEUE_AUTH_KEY
+              key: QUEUE_AUTH_TOKEN
         resources:
           requests:
             cpu: "50m"
@@ -102,4 +102,4 @@ spec:
           limits:
             cpu: "200m"
             # BUG INC-703: 24Mi limit triggers OOMKilled when 28MB buffer is allocated
-            memory: "24Mi"
+            memory: "50Mi"
