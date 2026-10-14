@@ -25,7 +25,7 @@ metadata:
     app.kubernetes.io/name: dispatch-db
     app.kubernetes.io/part-of: nexus-logistics
 spec:
-  serviceName: "dispatch-db"
+  serviceName: dispatch-db
   replicas: 1
   selector:
     matchLabels:
@@ -80,3 +80,4 @@ spec:
             - pg_isready -U nexus_admin -d nexus_dispatch
           initialDelaySeconds: 5
           periodSeconds: 5
+      
