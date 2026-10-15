@@ -10,7 +10,7 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: reporting-service
+    name: report-api
   minReplicas: 2
   maxReplicas: 6
   metrics:
