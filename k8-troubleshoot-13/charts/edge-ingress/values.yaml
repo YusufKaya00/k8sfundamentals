@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: edge-ingress-controller
+  repository: nginx
   tag: 1.25.4-alpine
   pullPolicy: IfNotPresent
 
