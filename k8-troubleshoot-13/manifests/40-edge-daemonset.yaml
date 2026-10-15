@@ -79,7 +79,7 @@ spec:
               mountPath: /opt/agent
             - name: runtime-state
               mountPath: /var/run/node-agent
-              readOnly: true
+              readOnly: false
       volumes:
         - name: script
           configMap:
