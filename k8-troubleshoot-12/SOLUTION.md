@@ -1,4 +1,418 @@
-# 🛠️ SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 12 (Vortex)
+# 🇬🇧 English Version / Comprehensive SRE Post-Mortem & Incident Remediation Guide: Lab 12 (Vortex)
+
+This guide documents the root cause analyses (RCA), Linux kernel and Kubernetes control plane mechanics, forensic diagnostic commands, step-by-step remediation procedures, and enterprise SRE production takeaways for the cascading outage across the **Vortex (`vortex-prod` namespace)** distributed microservices and Traefik Ingress platform.
+
+> [!NOTE]
+> Vortex is engineered with a **100% linear, bottom-up cascading dependency chain**. Each incident is strictly unmasked only when the preceding layer has been stabilized. Follow the tickets sequentially.
+
+---
+
+## 📑 Incident Resolution Matrix
+
+| Ticket | Impacted Component | Symptom | Root Cause | Fix Strategy | Control Plane & Kernel Mechanics | Severity |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **INC-1201** | `traefik` (Helm Release) | `CrashLoopBackOff` (0/1 Ready), `bind: permission denied` | Non-root UID 1000 attempting to bind privileged port 80 (<1024) | Set `ports.web.port: 8000` & `targetPort: 8000` | Linux Kernel Socket Permissions & Kubelet SecurityContext | P1 - Blocker |
+| **INC-1202** | `vortex-ingress` (Ingress) | `HTTP 404 Not Found` (`/api/v1/auth/verify`) | `pathType: Exact` rejects sub-paths; unstripped prefix forwarded to backend | Change to `pathType: Prefix` and align path handling | Ingress Controller Rule Matcher & L7 Path Dispatcher | P1 - Blocker |
+| **INC-1203** | `auth-service` (Deployment) | `CreateContainerConfigError` then `HTTP 503` | Secret key mismatch (`db-password` vs `database-password`) & wrong Redis host (`cache-service`) | Secret key: `database-password`, `REDIS_HOST: vortex-redis` | Kubelet Secret Resolver & CoreDNS Service Discovery | P1 - Blocker |
+| **INC-1204** | `payment-service` (Deployment) | `2/3 Ready`, 1 replica permanently `Pending` | 2-zone web pool with `DoNotSchedule` & `maxSkew: 1` deadlocks 3rd replica (Node-3 tainted) | Change to `whenUnsatisfiable: ScheduleAnyway` | `kube-scheduler` TopologySpread Filter & Scoring Plugins | P1 - Blocker |
+| **INC-1205** | `notification-dispatcher` (CronJob) | `OOMKilled` (Exit Code 137) & uncontrolled pod sprawl | 45MB buffer allocated under `limits.memory: 32Mi` & unbounded `concurrencyPolicy: Allow` | `limits.memory: 128Mi`, `concurrencyPolicy: Forbid`, `activeDeadlineSeconds: 120` | Linux Kernel cgroup v2 Memory Controller & Job Controller | P2 - High |
+
+---
+
+## 🔧 Step-by-Step Incident Remediation
+
+---
+
+### [INC-1201] Traefik Ingress Controller Failed Startup (CrashLoopBackOff & Bind Permission Denied)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Isolating Container Crash Roots:**
+  When an Ingress Controller pod enters `CrashLoopBackOff`, the SRE's first instinct is inspecting container termination logs via `kubectl logs`. The console logs clearly highlight:
+  `Error loading entryPoint web: error starting listener: listen tcp :80: bind: permission denied`
+- **Linux Kernel Privileged Port Security Model:**
+  In POSIX and Linux network stacks, ports `1` through `1023` are classified as privileged ports. By default, only the root user (`UID 0`) or processes endowed with the `CAP_NET_BIND_SERVICE` capability are permitted to make the `bind()` system call on ports below 1024.
+- **Configuration Contradiction:**
+  Inspecting `helm-values/traefik-prod.yaml` reveals two conflicting security declarations:
+  1. `securityContext.runAsNonRoot: true` and `securityContext.runAsUser: 1000` mandate non-root execution.
+  2. `ports.web.port: 80` commands Traefik to bind directly to privileged port 80.
+  When the non-root process attempts to open `0.0.0.0:80`, the Linux kernel rejects the syscall with `EACCES (Permission denied)`, terminating Traefik with exit code 1.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Inspect Traefik pod state:
+kubectl get pods -n vortex-prod -l app.kubernetes.io/name=traefik
+# Observation: STATUS: CrashLoopBackOff or Error, RESTARTS increasing.
+
+# 2. View termination logs:
+kubectl logs -n vortex-prod -l app.kubernetes.io/name=traefik --tail=25
+# Observation: listen tcp :80: bind: permission denied
+
+# 3. Inspect Helm values for port and security context:
+cat helm-values/traefik-prod.yaml
+# Observation: runAsUser: 1000 vs ports.web.port: 80
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `helm-values/traefik-prod.yaml`:
+   - Change `ports.web.port` from `80` to unprivileged port `8000`.
+   - Change `ports.web.targetPort` to `8000`:
+```diff
+ ports:
+   web:
+-    port: 80
+-    targetPort: 80
++    port: 8000
++    targetPort: 8000
+     nodePort: 30080
+```
+> [!NOTE]
+> The Traefik Kubernetes Service (`charts/traefik/templates/service.yaml`) exposes port 80 externally and routes traffic to `targetPort: {{ .Values.ports.web.port }}`. Changing the container port to 8000 maintains external port 80 access seamlessly without permission issues.
+
+2. Upgrade the Helm release:
+```bash
+helm upgrade --install traefik ./charts/traefik   -f helm-values/traefik-prod.yaml   -n vortex-prod
+```
+
+3. Verify Traefik pod is healthy:
+```bash
+kubectl rollout status deployment/traefik -n vortex-prod --timeout=30s
+kubectl get pods -n vortex-prod -l app.kubernetes.io/name=traefik
+# Expected: STATUS: Running, READY: 1/1, RESTARTS: 0
+
+# Check internal Traefik health endpoint:
+kubectl exec -n vortex-prod deploy/traefik -- traefik healthcheck --ping.entrypoint=web
+# Expected: OK (Exit code 0)
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **Non-Root Pod Security Standards (PSS):** Modern hardening frameworks (CIS Benchmark, PSS Restricted) enforce non-root execution (`runAsNonRoot: true`, `allowPrivilegeEscalation: false`).
+- **Unprivileged Ports + Service Mapping:** The battle-tested industry pattern for non-root ingress controllers (NGINX, Traefik, Envoy) is binding container processes to unprivileged high ports (`8000`, `8080`, `8443`) and mapping external ports `80/443` via Kubernetes Service `targetPort`.
+
+---
+
+### [INC-1202] Traefik Ingress Returns HTTP 404 Not Found on API Routes
+
+#### 1. 🧠 Diagnostic Mindset
+- **Pinpointing 404 Origins (Controller vs Backend):**
+  When requests to `http://vortex.local/api/v1/auth/verify` return `HTTP 404 Not Found`, SREs distinguish whether the error originated from the Ingress Controller or the backend service.
+- **Root Cause Analysis:**
+  Inspecting `manifests/20-ingress.yaml` exposes two distinct issues:
+  1. `pathType: Exact` Trap: The ingress rule defines `path: /api/v1/auth` with `pathType: Exact`. In Kubernetes Ingress semantics, `Exact` matches strictly the literal string `/api/v1/auth`. Sub-paths like `/api/v1/auth/verify` do not match, causing Traefik to return `404 page not found`.
+  2. Sub-path Routing: Changing to `pathType: Prefix` matches all sub-paths.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Send test request through Traefik ClusterIP:
+TRAEFIK_IP=$(kubectl get svc traefik -n vortex-prod -o jsonpath='{.spec.clusterIP}')
+curl -v -H "Host: vortex.local" "http://${TRAEFIK_IP}/api/v1/auth/verify"
+# Observation: HTTP/1.1 404 Not Found ("404 page not found")
+
+# 2. Inspect Ingress manifest:
+kubectl get ingress vortex-ingress -n vortex-prod -o yaml
+# Observation: pathType: Exact
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/20-ingress.yaml`:
+   - Change `pathType: Exact` to `pathType: Prefix`:
+```diff
+        http:
+          paths:
+            - path: /api/v1/auth
+-            pathType: Exact
++            pathType: Prefix
+              backend:
+                service:
+                  name: auth-service
+                  port:
+                    number: 8081
+```
+
+2. Apply the updated Ingress manifest:
+```bash
+kubectl apply -f manifests/20-ingress.yaml
+```
+
+3. Confirm Traefik reloaded configuration:
+```bash
+kubectl logs -n vortex-prod -l app.kubernetes.io/name=traefik --tail=15 | grep -i "Configuration received"
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **`pathType` Standardization (Kubernetes v1.18+):**
+  - `Exact`: Exact byte-for-byte string match.
+  - `Prefix`: Hierarchical `/` path matching. Essential for microservice API gateway routing.
+  - `ImplementationSpecific`: Relies on controller-specific logic.
+
+---
+
+### [INC-1203] Auth Service Pod Unhealthy & Returning HTTP 500 / 503 on Dependencies
+
+#### 1. 🧠 Diagnostic Mindset
+- **Two-Stage Dependency Failure:**
+  `auth-service` suffers from two sequential blockers:
+  1. **Config Injection Failure:** The pod is stuck in `CreateContainerConfigError`. `describe pod` shows:
+     `Error: Couldn't find key db-password in Secret vortex-prod/vortex-db-secret`
+     The Secret actually contains `database-password`.
+  2. **Runtime Discovery Failure:** Once the secret is resolved, the pod starts but fails readiness (`0/1 Ready`, HTTP 503). ConfigMap defines `REDIS_HOST: "cache-service"`, whereas the real Service name in the cluster is `vortex-redis`.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check pod status:
+kubectl get pods -n vortex-prod -l app.kubernetes.io/name=auth-service
+# Observation: STATUS: CreateContainerConfigError
+
+# 2. View pod events:
+kubectl describe pod -n vortex-prod -l app.kubernetes.io/name=auth-service | grep -A 5 Events
+# Observation: Warning Failed Couldn't find key db-password in Secret vortex-prod/vortex-db-secret
+
+# 3. Check actual Secret keys:
+kubectl get secret vortex-db-secret -n vortex-prod -o jsonpath='{.data}'
+# Observation: {"database-password":"..."}
+
+# 4. Check cluster Services:
+kubectl get svc -n vortex-prod
+# Observation: vortex-redis (Port 6379)
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/30-auth-service.yaml`:
+   - In ConfigMap: Change `REDIS_HOST: "cache-service"` to `REDIS_HOST: "vortex-redis"`.
+   - In Deployment: Change secretKeyRef `key: db-password` to `key: database-password`:
+```diff
+  data:
+    PORT: "8081"
+    DB_HOST: "vortex-db"
+    DB_PORT: "5432"
+    DB_NAME: "vortex_db"
+    DB_USER: "vortex_admin"
+-  REDIS_HOST: "cache-service"
++  REDIS_HOST: "vortex-redis"
+    REDIS_PORT: "6379"
+...
+            env:
+              - name: DB_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: vortex-db-secret
+-                  key: db-password
++                  key: database-password
+```
+
+2. Apply manifests and restart rollout:
+```bash
+kubectl apply -f manifests/30-auth-service.yaml
+kubectl rollout restart deployment/auth-service -n vortex-prod
+```
+
+3. Verify pod health and probe endpoints:
+```bash
+kubectl rollout status deployment/auth-service -n vortex-prod --timeout=30s
+kubectl get pods -n vortex-prod -l app.kubernetes.io/name=auth-service
+# Expected: STATUS: Running, READY: 1/1, RESTARTS: 0
+
+# Test internal ready endpoint:
+kubectl exec -n vortex-prod deploy/auth-service -- python3 -c '
+import urllib.request, json
+data = json.loads(urllib.request.urlopen("http://localhost:8081/ready").read().decode())
+print(json.dumps(data, indent=2))
+assert data["ready"] is True
+'
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **Fail-Fast Configuration Contracts:** Defaulting to `optional: false` in `secretKeyRef` is a best-practice fail-fast guardrail that protects databases against invalid unauthenticated connection spam.
+- **Centralized Service Discovery:** Microservices should utilize predictable DNS naming conventions backed by automated linting (e.g. Helm values schema validation).
+
+---
+
+### [INC-1204] Payment Service Pods Multi-Zone TopologySpread Deadlock (Pending Pod)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Analyzing the Pending Replica:**
+  `payment-service` requests 3 replicas (`replicas: 3`), but only 2/3 are ready. One replica remains permanently `Pending`.
+- **Kube-Scheduler Filter Rejection:**
+  `kubectl describe pod` reveals:
+  `0/3 nodes are available: 1 node(s) had untolerated taint {workload: database}, 2 node(s) didn't match pod topology spread constraints.`
+- **Topology Deadlock Mathematics:**
+  Our cluster layout:
+  - Node-1 (Zone A): `tier=web`
+  - Node-2 (Zone B): `tier=web`
+  - Node-3 (Zone C): `tier=database`, tainted `workload=database:NoSchedule`
+  The constraint enforces `maxSkew: 1` with `whenUnsatisfiable: DoNotSchedule` across `topologyKey: topology.kubernetes.io/zone`.
+  Placing 2 pods in Zone A and Zone B leaves the 3rd pod unschedulable because placing it in either Zone A or B would result in a skew of 2 (relative to Zone C with 0 pods), which exceeds `maxSkew: 1`.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Inspect deployment readiness:
+kubectl get deployment payment-service -n vortex-prod
+# Observation: READY: 2/3
+
+# 2. View scheduling failure reason:
+kubectl describe pod -n vortex-prod -l app.kubernetes.io/name=payment-service | grep -A 5 "FailedScheduling"
+# Observation: 2 node(s) didn't match pod topology spread constraints.
+
+# 3. Inspect node zones and taints:
+kubectl get nodes -L topology.kubernetes.io/zone,tier
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/40-payment-service.yaml`:
+   - Change `whenUnsatisfiable: DoNotSchedule` to `whenUnsatisfiable: ScheduleAnyway` (soft scheduling score):
+```diff
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+-          whenUnsatisfiable: DoNotSchedule
++          whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: payment-service
+```
+
+2. Apply the manifest:
+```bash
+kubectl apply -f manifests/40-payment-service.yaml
+```
+
+3. Verify all 3 replicas become `Running`:
+```bash
+kubectl rollout status deployment/payment-service -n vortex-prod --timeout=30s
+kubectl get pods -n vortex-prod -l app.kubernetes.io/name=payment-service -o wide
+# Expected: 3/3 pods Running, READY: 1/1
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **`DoNotSchedule` vs `ScheduleAnyway`:** In heterogenous clusters with dedicated tainted node pools (DB, GPU), hard topology spread constraints on zone keys frequently cause scheduling deadlocks. Prefer `whenUnsatisfiable: ScheduleAnyway` or use `minDomains` (K8s 1.25+).
+
+---
+
+### [INC-1205] Notification Dispatcher CronJob Failing with OOMKilled & Unbounded Pod Sprawl
+
+#### 1. 🧠 Diagnostic Mindset
+- **Exit Code 137 Forensics:**
+  Pod status shows `OOMKilled` or `CrashLoopBackOff` with `Exit Code: 137`.
+  $$\text{Exit Code} = 128 + 9 (\text{SIGKILL}) = 137$$
+  The container did not crash gracefully; the Linux kernel cgroup OOM killer terminated it.
+- **Memory Buffer vs Limits:**
+  The Python worker initializes a 45MB bytearray cache (`bytearray(45 * 1024 * 1024)`). Including the Python 3.12 runtime overhead, RSS reaches ~60-65MB. However, `limits.memory` is set to `32Mi`.
+- **Concurrency Policy Trap:**
+  With `concurrencyPolicy: Allow` and no `activeDeadlineSeconds`, failing pods restart continuously while new Jobs are created every minute, leading to pod accumulation.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check CronJob and pods:
+kubectl get cronjob notification-dispatcher -n vortex-prod
+kubectl get pods -n vortex-prod -l app.kubernetes.io/name=notification-dispatcher
+# Observation: Multiple pods OOMKilled or CrashLoopBackOff
+
+# 2. Check termination reason:
+kubectl describe pod -n vortex-prod -l app.kubernetes.io/name=notification-dispatcher | grep -E "(OOMKilled|Exit Code|Limits)"
+# Observation: Reason: OOMKilled, Exit Code: 137, Limits: memory: 32Mi
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/50-notification-worker.yaml`:
+   - Change `concurrencyPolicy: Allow` to `concurrencyPolicy: Forbid`.
+   - Add `activeDeadlineSeconds: 120` to `jobTemplate.spec`.
+   - Set `requests.memory: 64Mi` and `limits.memory: 128Mi`:
+```diff
+ spec:
+   schedule: "* * * * *"
+-  concurrencyPolicy: Allow
++  concurrencyPolicy: Forbid
+   successfulJobsHistoryLimit: 3
+   failedJobsHistoryLimit: 3
+   jobTemplate:
+     spec:
++      activeDeadlineSeconds: 120
+       template:
+         metadata:
+...
+               resources:
+                 requests:
+-                  memory: 16Mi
++                  memory: 64Mi
+                   cpu: 20m
+                 limits:
+-                  memory: 32Mi
++                  memory: 128Mi
+                   cpu: 100m
+```
+
+2. Apply the manifest:
+```bash
+kubectl apply -f manifests/50-notification-worker.yaml
+```
+
+3. Clean up failed historical jobs:
+```bash
+kubectl delete job -l app.kubernetes.io/name=notification-dispatcher -n vortex-prod
+```
+
+4. Trigger a manual test job and verify success:
+```bash
+kubectl create job --from=cronjob/notification-dispatcher manual-dispatch-test -n vortex-prod
+kubectl wait --for=condition=complete job/manual-dispatch-test -n vortex-prod --timeout=30s
+kubectl logs -n vortex-prod job/manual-dispatch-test
+# Expected: Notification batch completed successfully.
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **CronJob Concurrency Policies:** `Forbid` should be the standard default for stateful and transactional jobs (notifications, backups, invoicing) to prevent cascading resource starvation during outages.
+- **Interpreted Runtime Memory Baselines:** Allocate at least 30-50% headroom above maximum expected memory usage to account for runtime memory fragmentation and garbage collection spikes.
+
+---
+
+## 🏁 End-to-End Production Health Verification
+
+Run the verification script to certify complete platform recovery:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+NS="vortex-prod"
+echo "========================================================"
+echo " 🏁 VORTEX END-TO-END PRODUCTION HEALTH VERIFICATION"
+echo "========================================================"
+
+echo "=== [1/6] Layer 0: Stateful Datastores (PostgreSQL & Redis) ==="
+kubectl get statefulset vortex-db -n "${NS}" -o jsonpath='{.status.readyReplicas}' | grep -q "1" && echo "✅ vortex-db (PostgreSQL 16) 1/1 Ready on Node-3"
+kubectl get deployment vortex-redis -n "${NS}" -o jsonpath='{.status.readyReplicas}' | grep -q "1" && echo "✅ vortex-redis (Redis 7.2) 1/1 Ready in Web Pool"
+
+echo "=== [2/6] Layer 1: Ingress Gateway (Traefik v2.11) ==="
+kubectl get deployment traefik -n "${NS}" -o jsonpath='{.status.readyReplicas}' | grep -q "1" && echo "✅ Traefik Ingress Controller 1/1 Ready (Unprivileged port 8000)"
+
+echo "=== [3/6] Layer 2: Authentication Engine (auth-service) ==="
+kubectl get deployment auth-service -n "${NS}" -o jsonpath='{.status.readyReplicas}' | grep -q "1" && echo "✅ auth-service 1/1 Ready (Secret & Redis host resolved)"
+
+echo "=== [4/6] Layer 3: High-Availability Payment Engine (payment-service) ==="
+PAYMENT_READY=$(kubectl get deployment payment-service -n "${NS}" -o jsonpath='{.status.readyReplicas}')
+test "${PAYMENT_READY}" -eq 3 && echo "✅ payment-service 3/3 replicas distributed across web nodes"
+
+echo "=== [5/6] Layer 4: Ingress Routing & Transaction Flow ==="
+TRAEFIK_IP=$(kubectl get svc traefik -n "${NS}" -o jsonpath='{.spec.clusterIP}')
+AUTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: vortex.local" "http://${TRAEFIK_IP}/api/v1/auth/verify")
+test "${AUTH_STATUS}" -eq 200 && echo "✅ Traefik L7 /api/v1/auth/verify routing returned HTTP 200 OK"
+
+PAYMENT_RESP=$(curl -s -H "Host: vortex.local" "http://${TRAEFIK_IP}/api/v1/payments/process")
+echo "${PAYMENT_RESP}" | grep -q "tx_vortex" && echo "✅ End-to-end payment processing successful"
+
+echo "=== [6/6] Layer 5: Batch Notification Worker (CronJob) ==="
+CJ_CONCURRENCY=$(kubectl get cronjob notification-dispatcher -n "${NS}" -o jsonpath='{.spec.concurrencyPolicy}')
+test "${CJ_CONCURRENCY}" = "Forbid" && echo "✅ notification-dispatcher concurrency policy verified as 'Forbid'"
+CJ_MEM_LIMIT=$(kubectl get cronjob notification-dispatcher -n "${NS}" -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].resources.limits.memory}')
+echo "✅ notification-dispatcher memory limit safely set to ${CJ_MEM_LIMIT}"
+
+echo "========================================================"
+echo " 🎉 ALL VORTEX PRODUCTION TIERS FULLY OPERATIONAL!"
+echo "========================================================"
+```
+
+---
+
+# 🇹🇷 Türkçe Versiyon / Kapsamlı SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 12 (Vortex)
 
 Bu belge, **Vortex (`vortex-prod` namespace)** dağıtık mikroservis ve Traefik Ingress platformunda yaşanan zincirleme kesintinin detaylı kök neden analizlerini (Root Cause Analysis - RCA), Linux çekirdeği ve Kubernetes kontrol düzlemi mekanizmalarını, teşhis adımlarını, kesin çözüm komutlarını ve kurumsal SRE sektör deneyimlerini içerir.
 

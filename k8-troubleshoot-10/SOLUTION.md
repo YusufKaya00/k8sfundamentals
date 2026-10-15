@@ -1,4 +1,240 @@
-# 🛠️ SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 10 (Chronos)
+# 🇬🇧 English Version / Comprehensive SRE Post-Mortem & Incident Remediation Guide: Lab 10 (Chronos)
+
+This document provides detailed Root Cause Analyses (RCA), Linux kernel and Kubernetes control plane mechanics, diagnostic triage commands, linear step-by-step remediation procedures, and enterprise SRE production best practices for the cascading outage in **Lab 10 (Chronos — `chronos-prod` namespace)**.
+
+> [!NOTE]
+> Lab 10 is built on a strictly linear, bottom-up dependency model. Upstream gateways and routing layers cannot be validated until downstream worker sockets and API deployments are stabilized. Follow the tickets sequentially.
+
+---
+
+## 📑 Incident Resolution Matrix
+
+| Ticket | Component | Root Cause | Fix Strategy | Control Plane & Kernel Mechanics | Severity |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **INC-1001** | `inventory-worker` | Cgroup memory limit starvation (`40Mi`), triggering Linux OOM killer (`Exit Code 137`) | Memory limit: `40Mi` -> `192Mi` (request: `64Mi`) | Linux Kernel `oom-killer` & Kubelet cgroup manager | P1 - Blocker |
+| **INC-1002** | `order-api` | Hard PodAntiAffinity across a 2-node web pool deadlocks 3rd replica (`Pending`) | `requiredDuringScheduling...` -> `preferredDuringScheduling...` | `kube-scheduler` (PodAntiAffinity Filter vs Score Plugin) | P1 - Blocker |
+| **INC-1003** | `order-api` | `extraEnv` variable overrides ConfigMap value with invalid host, returning `503` | Remove conflicting `extraEnv` or point to `inventory-worker` | Kubelet Pod Lifecycle & Environment Precedence Engine | P1 - Blocker |
+| **INC-1004** | `edge-lb` | 4A: `externalTrafficPolicy: Local` asymmetry<br/>4B: Service `targetPort: 8081` mismatch (`502` / timeout) | Policy: `Cluster`<br/>targetPort: `8080` | `kube-proxy` (iptables / IPVS NAT) & Endpoints Controller | P1 - Blocker |
+| **INC-1005** | `edge-lb` | 5A: `X-Chronos-Gateway` header disabled (`403 Forbidden`)<br/>5B: ConfigMap changes require pod rollout restart | `gatewayHeader: "verified"` + `kubectl rollout restart deploy/edge-lb` | Application L7 Security Interceptor & Deployment Controller | P1 - Blocker |
+
+---
+
+## 🔧 Step-by-Step Incident Remediation
+
+---
+
+### [INC-1001] inventory-worker OOMKilled (Exit Code 137)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Linux Kernel Cgroup Memory Limits & OOM Killer:**
+  When `resources.limits.memory` is set, Kubelet configures a hard ceiling in the container's cgroup (`cgroup v2: memory.max`). When the process exceeds this ceiling, page allocation fails, and the Linux kernel's `oom_kill_process()` delivers `SIGKILL` (Signal 9) to the container.
+- **Exit Code 137 Formula:**
+  $$\text{Exit Code} = 128 + \text{Signal Number} = 128 + 9 = 137$$
+  The container logs contain no Python stack trace because the kernel abruptly killed the process. Inspecting `kubectl describe pod` reveals `Reason: OOMKilled` and `Exit Code: 137`. The application allocates an 80MB bytearray at startup; the `40Mi` limit is severely starved.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Inspect pod status and restart count:
+kubectl get pods -l app.kubernetes.io/name=inventory-worker -n chronos-prod -o wide
+# Observation: CrashLoopBackOff, RESTARTS increasing.
+
+# 2. Check termination state and memory limit:
+kubectl describe pod -l app.kubernetes.io/name=inventory-worker -n chronos-prod | grep -E "Last State|Reason|Exit Code|Limits" -A 2
+# Observation: Reason: OOMKilled, Exit Code: 137, Limits: memory: 40Mi
+
+# 3. Confirm kernel OOM event:
+kubectl get events -n chronos-prod --field-selector reason=OOMKilled
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/20-inventory-worker.yaml`:
+   - Increase memory request to `64Mi` and limit to `192Mi`:
+```diff
+           resources:
+             requests:
+               cpu: 50m
+-             memory: 32Mi
++             memory: 64Mi
+             limits:
+               cpu: 200m
+-             memory: 40Mi
++             memory: 192Mi
+```
+
+2. Apply manifest and verify recovery:
+```bash
+kubectl apply -f manifests/20-inventory-worker.yaml
+kubectl rollout status deployment/inventory-worker -n chronos-prod --timeout=45s
+kubectl get pods -l app.kubernetes.io/name=inventory-worker -n chronos-prod
+# Expected: STATUS: Running, READY: 1/1
+```
+
+---
+
+### [INC-1002] order-api Hard PodAntiAffinity Scheduling Deadlock (Pending Pod)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Kube-Scheduler AntiAffinity Filtering:**
+  `order-api` requests 3 replicas across 2 untainted web nodes. With `requiredDuringSchedulingIgnoredDuringExecution` on `kubernetes.io/hostname`, Kube-Scheduler places 1 pod on Node-1 and 1 pod on Node-2. When attempting to place the 3rd pod, all candidate nodes are filtered out, leaving the pod indefinitely `Pending`.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check pod scheduling:
+kubectl get pods -l app.kubernetes.io/name=order-api -n chronos-prod -o wide
+# Observation: 2 Running, 1 Pending
+
+# 2. Check scheduler failure event:
+kubectl describe pod -l app.kubernetes.io/name=order-api -n chronos-prod | grep -A 5 "FailedScheduling"
+# Observation: 0/3 nodes are available: 2 node(s) had pod anti-affinity rules, 1 node(s) had untolerated taint.
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. In `helm-values/order-api-prod.yaml`, relax anti-affinity from hard to soft:
+```diff
+ affinity:
+   podAntiAffinity:
+-    requiredDuringSchedulingIgnoredDuringExecution:
+-      - labelSelector:
+-          matchLabels:
+-            app.kubernetes.io/name: order-api
+-        topologyKey: "kubernetes.io/hostname"
++    preferredDuringSchedulingIgnoredDuringExecution:
++      - weight: 100
++        podAffinityTerm:
++          labelSelector:
++            matchLabels:
++              app.kubernetes.io/name: order-api
++          topologyKey: "kubernetes.io/hostname"
+```
+
+2. Upgrade Helm release:
+```bash
+helm upgrade order-api ./charts/order-api -f helm-values/order-api-prod.yaml -n chronos-prod
+kubectl rollout status deployment/order-api -n chronos-prod
+# Expected: All 3 replicas Running
+```
+
+---
+
+### [INC-1003] order-api Upstream Dependency Routing Failure (HTTP 503)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Environment Variable Precedence Trap:**
+  In Kubernetes Pod specifications, environment variables declared in `env` (or Helm `extraEnv`) take precedence over variables imported via `envFrom: configMapRef`.
+  A conflicting `INVENTORY_HOST: "invalid-worker"` in `extraEnv` overrides the valid ConfigMap hostname, causing backend calls to fail with HTTP 503.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Test ready endpoint:
+kubectl exec -n chronos-prod deploy/order-api -c order-api -- curl -s http://127.0.0.1:8080/ready
+# Observation: HTTP 503 ("inventory unreachable")
+
+# 2. Check injected env var:
+kubectl exec -n chronos-prod deploy/order-api -c order-api -- env | grep INVENTORY_HOST
+# Observation: INVENTORY_HOST=invalid-worker
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. In `helm-values/order-api-prod.yaml`, correct `extraEnv`:
+```diff
+ extraEnv:
+-  - name: INVENTORY_HOST
+-    value: "invalid-worker"
++  - name: INVENTORY_HOST
++    value: "inventory-worker"
+```
+
+2. Upgrade Helm release and verify:
+```bash
+helm upgrade order-api ./charts/order-api -f helm-values/order-api-prod.yaml -n chronos-prod
+kubectl rollout status deployment/order-api -n chronos-prod
+```
+
+---
+
+### [INC-1004] edge-lb Traffic Blackholing & TargetPort Mismatch
+
+#### 1. 🧠 Diagnostic Mindset
+- **Dual Network Misconfigurations:**
+  1. `externalTrafficPolicy: Local` causes traffic hitting nodes without backend pods to be dropped.
+  2. Service `targetPort: 8081` routes to an unused port, while `order-api` listens on port 8080.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check Service configuration:
+kubectl get svc order-api -n chronos-prod -o yaml | grep -E "targetPort|externalTrafficPolicy"
+# Observation: targetPort: 8081, externalTrafficPolicy: Local
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. In `charts/order-api/templates/service.yaml` or values:
+   - Change `externalTrafficPolicy` to `Cluster`.
+   - Update `targetPort` to `8080`:
+```diff
+   externalTrafficPolicy: Cluster
+   ports:
+     - port: 80
+-      targetPort: 8081
++      targetPort: 8080
+```
+
+2. Upgrade Helm release:
+```bash
+helm upgrade order-api ./charts/order-api -f helm-values/order-api-prod.yaml -n chronos-prod
+```
+
+---
+
+### [INC-1005] edge-lb Security Header & Silent ConfigMap Reload Failure
+
+#### 1. 🧠 Diagnostic Mindset
+- **L7 Header Interceptor & ConfigMap In-Memory Caching:**
+  `edge-lb` NGINX reverse proxy enforces security header `X-Chronos-Gateway: verified`. In `edge-lb` values, the header is configured as `disabled`, resulting in `HTTP 403 Forbidden`. Furthermore, ConfigMaps mounted as files are cached by NGINX workers until a process reload or pod rollout restart is triggered.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Test request through edge-lb:
+curl -v http://<EDGE_LB_IP>/api/orders
+# Observation: HTTP/1.1 403 Forbidden
+
+# 2. Check NGINX configuration:
+kubectl exec -n chronos-prod deploy/edge-lb -- cat /etc/nginx/nginx.conf | grep X-Chronos-Gateway
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. In `helm-values/edge-lb-prod.yaml`, set `gatewayHeader: "verified"`.
+2. Upgrade Helm release and restart deployment:
+```bash
+helm upgrade edge-lb ./charts/edge-lb -f helm-values/edge-lb-prod.yaml -n chronos-prod
+kubectl rollout restart deployment/edge-lb -n chronos-prod
+kubectl rollout status deployment/edge-lb -n chronos-prod
+```
+
+3. Confirm HTTP 200 OK:
+```bash
+curl -s http://<EDGE_LB_IP>/api/orders
+# Expected: HTTP 200 OK with order payload
+```
+
+---
+
+## 🏁 End-to-End Production Health Verification
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+NS="chronos-prod"
+echo "=== Validating Chronos End-to-End Platform Health ==="
+kubectl get pods -n "${NS}"
+LB_IP=$(kubectl get svc edge-lb -n "${NS}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+[ -z "$LB_IP" ] && LB_IP=$(kubectl get svc edge-lb -n "${NS}" -o jsonpath='{.spec.clusterIP}')
+curl -s "http://${LB_IP}/api/orders" | grep -q "order_id" && echo "✅ Chronos Gateway & Microservices Fully Healthy!"
+```
+
+---
+
+# 🇹🇷 Türkçe Versiyon / Kapsamlı SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 10 (Chronos)
 
 Bu belge **Lab 10 (Chronos — `chronos-prod` namespace)** platform kesintisinin ayrıntılı kök neden analizlerini (Root Cause Analysis - RCA), Linux çekirdeği ve Kubernetes kontrol düzlemi seviyesindeki mekanizmalarını, teşhis komutlarını, doğrusal çözüm adımlarını ve kıdemli SRE pratiklerini içerir.
 

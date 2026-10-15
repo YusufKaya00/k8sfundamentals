@@ -1,4 +1,363 @@
-# 🛠️ SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 11 (PulseStream)
+# 🇬🇧 English Version / Comprehensive SRE Post-Mortem & Incident Remediation Guide: Lab 11 (PulseStream)
+
+This guide documents the root cause analyses (RCA), Linux kernel and Kubernetes control plane mechanics, diagnostic commands, step-by-step remediation procedures, and enterprise SRE production takeaways for the cascading outage across the **PulseStream (`pulsestream-prod` namespace)** real-time analytics and reporting platform.
+
+> [!NOTE]
+> PulseStream is designed with a **100% linear, bottom-up cascading dependency chain**. Each ticket is unmasked only after the previous layer has been stabilized. Follow the tickets sequentially.
+
+---
+
+## 📑 Incident Resolution Matrix
+
+| Ticket | Impacted Component | Symptom | Root Cause | Fix Strategy | Control Plane & Kernel Mechanics | Severity |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **INC-1001** | `db-migrator` (Job) | `DeadlineExceeded` / `Error`, Pod 0/1 | Wrong DB host (`postgres-db`) & insufficient `activeDeadlineSeconds: 4` | Host: `pulse-db`, `activeDeadlineSeconds: 60`, `kubectl replace --force` | `kube-job-controller` & Pod Immutability | P1 - Blocker |
+| **INC-1002** | `analytics-worker` (Helm) | `CrashLoopBackOff` / 0/1 Ready, `Connection refused` | Helm values hierarchy scope mismatch (`redisHost` vs `backend.redis.host`) | Nested YAML hierarchy (`backend.redis.host: pulse-redis`) & `rollout restart` | Helm Template Render Engine & Values Scoping | P1 - Blocker |
+| **INC-1003** | `report-api` (Deployment) | Continuous Pod restarts (0/1), Rollout deadlocked | 2.5s probe response time vs strict `timeoutSeconds: 1` | Set `timeoutSeconds: 5` in liveness/readiness probes | Kubelet Prober (HTTP Client Timeout) & ReplicaSet Controller | P1 - Blocker |
+| **INC-1004** | `report-api-hpa` (HPA v2) | `TARGETS: <unknown>/70%`, `REPLICAS: 0` | Target name typo (`reporting-service`) & missing `requests.cpu` | Target: `report-api` & add `requests.cpu: 100m` | K8s Horizontal Pod Autoscaler Controller & Metrics Server API | P1 - Blocker |
+| **INC-1005** | `log-agent` (DS) & `pulse-gateway` | DaemonSet 2/3 nodes; Gateway returns `502 Bad Gateway` | 5A: Missing Node-3 database taint toleration<br/>5B: Named Port mismatch (`api-http` vs `http`) | Add toleration & change container port name to `api-http` | Kube-DaemonSet Controller & kube-proxy EndpointSlice Resolver | P1 - Blocker |
+
+---
+
+## 🔧 Step-by-Step Incident Remediation
+
+---
+
+### [INC-1001] Database Migration Job Failure (Job - DeadlineExceeded & Immutability)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Distinguishing Job Failure Modes:**
+  Kubernetes batch workloads fail primarily through two mechanisms:
+  1. `BackoffLimitExceeded`: Container exits non-zero, exhausts restart retries.
+  2. `DeadlineExceeded`: Total execution duration exceeds `spec.activeDeadlineSeconds`, triggering the `kube-job-controller` to force-kill all active pods.
+- **Root Cause Analysis:**
+  Inspecting `manifests/20-db-migration-job.yaml` reveals two faults:
+  1. Target database hostname is specified as `postgres-db`, while the real Service name in the cluster is `pulse-db`.
+  2. `activeDeadlineSeconds: 4` aborts the Job before its simulated schema migration (taking 8+ seconds) can complete.
+- **Pod Template Immutability:**
+  The Kubernetes API server rejects in-place updates to `spec.template` of an existing Job. Modifying the file and running `kubectl apply` returns `field is immutable`. The Job must be replaced using `--force` or deleted and re-created.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check Job status:
+kubectl get job db-migrator -n pulsestream-prod
+# Observation: COMPLETIONS: 0/1
+
+# 2. Check Job conditions:
+kubectl describe job db-migrator -n pulsestream-prod | grep -A 8 "Conditions:"
+# Observation: Reason: DeadlineExceeded
+
+# 3. Check container logs:
+kubectl logs job/db-migrator -n pulsestream-prod --tail=20
+# Observation: could not translate host name "postgres-db" to address
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/20-db-migration-job.yaml`:
+   - Change `activeDeadlineSeconds` from `4` to `60`.
+   - Update hostname from `postgres-db` to `pulse-db`:
+```diff
+ spec:
+-  activeDeadlineSeconds: 4
++  activeDeadlineSeconds: 60
+    backoffLimit: 2
+    template:
+      spec:
+        containers:
+          - name: migrator
+            command: ["sh", "-c"]
+            args:
+              - |
+                echo "Connecting to database migration target..."
+-              PGPASSWORD=$POSTGRES_PASSWORD psql -h postgres-db -U pulse_admin -d pulse_analytics -c "CREATE TABLE IF NOT EXISTS events (id INT, event_type VARCHAR(50), payload TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
++              PGPASSWORD=$POSTGRES_PASSWORD psql -h pulse-db -U pulse_admin -d pulse_analytics -c "CREATE TABLE IF NOT EXISTS events (id INT, event_type VARCHAR(50), payload TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+                echo "Running analytics indexing simulation..."
+                sleep 8
+                echo "Migration complete."
+```
+
+2. Replace the immutable Job:
+```bash
+kubectl replace --force -f manifests/20-db-migration-job.yaml
+```
+
+3. Wait for Job completion:
+```bash
+kubectl wait --for=condition=complete job/db-migrator -n pulsestream-prod --timeout=30s
+kubectl get job db-migrator -n pulsestream-prod
+# Expected: COMPLETIONS: 1/1, STATUS: Complete
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **Batch Deadline Budgeting:** Set `activeDeadlineSeconds` to at least 3-5x normal execution duration to prevent aborts during temporary cluster load spikes.
+- **Pre-Flight Hook Architecture:** In enterprise CD pipelines, run database migrations as Helm `pre-install,pre-upgrade` hooks with `hook-delete-policy: before-hook-creation` to ensure automatic cleanup of prior attempts.
+
+---
+
+### [INC-1002] Analytics Worker Redis Connection Refused (Helm Scope & Values Hierarchy)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Isolating Connection Failures:**
+  `analytics-worker` crashes with `CrashLoopBackOff`. Pod logs report:
+  `ConnectionRefusedError: [Errno 111] Connect call failed ('127.0.0.1', 6379)`
+- **Helm Template Scope Investigation:**
+  Inspecting `charts/pulsestream-worker/templates/deployment.yaml` reveals:
+  `value: {{ .Values.backend.redis.host | default "127.0.0.1" | quote }}`
+  The template searches under the nested dictionary `backend.redis.host`.
+  However, in `helm-values/analytics-worker-prod.yaml`, the key is placed at root level: `redisHost: "pulse-redis"`.
+  Because the nested path does not exist, Go template evaluation silently falls back to the default `127.0.0.1`, where no Redis instance runs inside the pod container.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check pod status:
+kubectl get pods -n pulsestream-prod -l app.kubernetes.io/name=analytics-worker
+# Observation: CrashLoopBackOff
+
+# 2. View container logs:
+kubectl logs -n pulsestream-prod -l app.kubernetes.io/name=analytics-worker --tail=20
+# Observation: ConnectionRefusedError: ('127.0.0.1', 6379)
+
+# 3. Inspect Helm template vs values hierarchy:
+grep -A 5 "REDIS_HOST" charts/pulsestream-worker/templates/deployment.yaml
+cat helm-values/analytics-worker-prod.yaml
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `helm-values/analytics-worker-prod.yaml`:
+   - Structure values under `backend.redis.host`:
+```diff
+-redisHost: "pulse-redis"
++backend:
++  redis:
++    host: "pulse-redis"
+```
+
+2. Upgrade Helm release:
+```bash
+helm upgrade --install analytics-worker ./charts/pulsestream-worker   -f helm-values/analytics-worker-prod.yaml   -n pulsestream-prod
+```
+
+3. Confirm pod running and connected:
+```bash
+kubectl rollout status deployment/analytics-worker -n pulsestream-prod --timeout=30s
+kubectl get pods -n pulsestream-prod -l app.kubernetes.io/name=analytics-worker
+# Expected: STATUS: Running, READY: 1/1
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **Helm Values Schema Validation:** Use `values.schema.json` to enforce strict JSON schema checks during `helm lint` and `helm upgrade`, catching structural mismatches before deployment.
+
+---
+
+### [INC-1003] Report API Deployment Rollout Deadlocked (Probe Timeout vs Latency)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Rollout Hang & Probe Starvation:**
+  `report-api` deployment update hangs indefinitely (`Waiting for deployment "report-api" rollout to finish...`). New pods stay at `0/1 Ready` and periodically restart.
+- **Kubelet Probe Execution Mechanics:**
+  Pod events highlight:
+  `Liveness probe failed: HTTP probe failed with statuscode: 500 (or connection deadline exceeded)`
+  `Readiness probe failed: ...`
+  The Python API performs a lightweight simulated report generation during `/healthz` that takes approximately 2.5 seconds.
+  However, the probe definition specifies `timeoutSeconds: 1`.
+  The Kubelet HTTP client enforces a strict 1-second socket read timeout. When exceeded, the probe is recorded as failed, triggering repeated restarts and halting the ReplicaSet rollout.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check deployment rollout status:
+kubectl rollout status deployment/report-api -n pulsestream-prod
+# Observation: Waiting for rollout to finish...
+
+# 2. Inspect probe failures in pod events:
+kubectl describe pod -n pulsestream-prod -l app.kubernetes.io/name=report-api | grep -A 5 "Warning  Unhealthy"
+# Observation: Probe failed: client timeout exceeded
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/30-report-api.yaml`:
+   - Increase `timeoutSeconds` from `1` to `5` for both liveness and readiness probes:
+```diff
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+-           timeoutSeconds: 1
++           timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+-           timeoutSeconds: 1
++           timeoutSeconds: 5
+            failureThreshold: 3
+```
+
+2. Apply manifest and wait for rollout:
+```bash
+kubectl apply -f manifests/30-report-api.yaml
+kubectl rollout status deployment/report-api -n pulsestream-prod --timeout=45s
+kubectl get pods -n pulsestream-prod -l app.kubernetes.io/name=report-api
+# Expected: STATUS: Running, READY: 1/1
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **Probe Endpoint Independence:** Health check endpoints should NEVER execute heavy computational or blocking I/O tasks. Probes should return within <200ms. If processing is required, ensure `timeoutSeconds` accommodates worst-case latency.
+
+---
+
+### [INC-1004] Report API HPA Stuck with Unknown Metrics (Target Name Typo & CPU Requests)
+
+#### 1. 🧠 Diagnostic Mindset
+- **HPA Evaluation Engine:**
+  `kubectl get hpa` shows `TARGETS: <unknown>/70%`.
+  The Kubernetes `horizontal-pod-autoscaler` controller computes desired replica counts using:
+  $$\text{Desired Replicas} = \left\lceil \text{Current Replicas} \times \left( \frac{\text{Current Metric Value}}{\text{Target Metric Value}} \right) \right\rceil$$
+  If either pod metrics cannot be collected or the target workload does not exist, the controller marks targets as `<unknown>`.
+- **Root Cause Analysis:**
+  Inspecting `manifests/40-hpa.yaml` and `manifests/30-report-api.yaml` reveals:
+  1. HPA targets `scaleTargetRef.name: reporting-service`, but the Deployment is named `report-api`.
+  2. The container specification lacks `resources.requests.cpu`. The HPA percentage calculation cannot divide by zero or an unspecified base request.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Inspect HPA status:
+kubectl get hpa -n pulsestream-prod
+# Observation: TARGETS: <unknown>/70%
+
+# 2. View HPA events:
+kubectl describe hpa report-api-hpa -n pulsestream-prod | grep -A 5 "Events:"
+# Observation: FailedGetResourceMetric or FailedComputeMetricsReplicas
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. In `manifests/30-report-api.yaml`, ensure `requests.cpu: 100m` is declared.
+2. Edit `manifests/40-hpa.yaml`:
+   - Change `scaleTargetRef.name` to `report-api`:
+```diff
+   scaleTargetRef:
+     apiVersion: apps/v1
+     kind: Deployment
+-    name: reporting-service
++    name: report-api
+```
+
+3. Apply manifests and verify HPA metrics resolution:
+```bash
+kubectl apply -f manifests/30-report-api.yaml
+kubectl apply -f manifests/40-hpa.yaml
+kubectl get hpa report-api-hpa -n pulsestream-prod
+# Expected: TARGETS shows valid percentage (e.g., 1%/70% or 2%/70%)
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **Resource Requests are Mandatory for Autoscaling:** The K8s autoscaler requires explicit resource requests on every container to establish the denominator for utilization percentages.
+
+---
+
+### [INC-1005] DaemonSet Missing Taint Toleration & Pulse Gateway Named Port Service 502
+
+#### 1. 🧠 Diagnostic Mindset
+- **Two Intertwined Edge Failures:**
+  1. **DaemonSet Missing on Dedicated Node:** `kubectl get ds log-agent` shows `DESIRED: 3, CURRENT: 2`. The pod is missing from Node-3 because Node-3 carries the taint `workload=database:NoSchedule`, which the DaemonSet does not tolerate.
+  2. **Pulse Gateway 502 Bad Gateway:** The reverse proxy gateway returns `502 Bad Gateway`. Inspecting Service definitions reveals that `pulse-gateway` routes to `port: 8080`, but the Service references `targetPort: api-http`. In `manifests/30-report-api.yaml`, the container port name was misconfigured as `http` instead of `api-http`. The EndpointSlice controller maps named ports by exact string match; unmatched named ports cause endpoints to remain unresolved.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1. Check DaemonSet deployment across nodes:
+kubectl get ds log-agent -n pulsestream-prod -o wide
+# Observation: Missing pod on Node-3
+
+# 2. Test Gateway endpoint:
+GATEWAY_IP=$(kubectl get svc pulse-gateway -n pulsestream-prod -o jsonpath='{.spec.clusterIP}')
+curl -v "http://${GATEWAY_IP}/api/reports"
+# Observation: HTTP/1.1 502 Bad Gateway
+
+# 3. Check Service Endpoints:
+kubectl get endpoints report-api -n pulsestream-prod
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/50-daemonset.yaml`:
+   - Add database taint toleration:
+```diff
+       tolerations:
++        - key: workload
++          operator: Equal
++          value: database
++          effect: NoSchedule
+```
+
+2. Edit `manifests/30-report-api.yaml`:
+   - Set container port name to `api-http`:
+```diff
+             ports:
+-              - name: http
++              - name: api-http
+                 containerPort: 8080
+```
+
+3. Apply manifests:
+```bash
+kubectl apply -f manifests/50-daemonset.yaml
+kubectl apply -f manifests/30-report-api.yaml
+kubectl rollout restart deployment/pulse-gateway -n pulsestream-prod
+```
+
+4. Verify full gateway routing:
+```bash
+GATEWAY_IP=$(kubectl get svc pulse-gateway -n pulsestream-prod -o jsonpath='{.spec.clusterIP}')
+curl -s "http://${GATEWAY_IP}/api/reports"
+# Expected: JSON response with generated analytics report (HTTP 200)
+```
+
+#### 4. 💡 SRE Production Wisdom & Takeaways
+- **Named Ports vs Numeric Ports:** Named ports offer abstraction, but typos prevent EndpointSlice population without raising syntax errors.
+- **Cluster-Wide DaemonSets:** Monitoring and log aggregation DaemonSets must explicitly tolerate all known node taints (control-plane, database, GPU).
+
+---
+
+## 🏁 End-to-End Production Health Verification
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+NS="pulsestream-prod"
+echo "========================================================"
+echo " 🏁 PULSESTREAM PRODUCTION HEALTH VERIFICATION"
+echo "========================================================"
+
+echo "=== [1/5] Database Migration Job ==="
+kubectl get job db-migrator -n "${NS}" -o jsonpath='{.status.succeeded}' | grep -q "1" && echo "✅ db-migrator completed"
+
+echo "=== [2/5] Analytics Worker (Helm) ==="
+kubectl get deployment analytics-worker -n "${NS}" -o jsonpath='{.status.readyReplicas}' | grep -q "1" && echo "✅ analytics-worker 1/1 Ready"
+
+echo "=== [3/5] Report API & Probes ==="
+kubectl get deployment report-api -n "${NS}" -o jsonpath='{.status.readyReplicas}' | grep -q "1" && echo "✅ report-api 1/1 Ready"
+
+echo "=== [4/5] HPA Metrics ==="
+kubectl get hpa report-api-hpa -n "${NS}"
+
+echo "=== [5/5] Log Agent DaemonSet & Gateway Flow ==="
+kubectl get ds log-agent -n "${NS}" -o jsonpath='{.status.numberReady}' | grep -q "3" && echo "✅ log-agent running on all 3 nodes"
+
+GATEWAY_IP=$(kubectl get svc pulse-gateway -n "${NS}" -o jsonpath='{.spec.clusterIP}')
+curl -s "http://${GATEWAY_IP}/api/reports" | grep -q "report_id" && echo "✅ Gateway routing operational"
+
+echo "========================================================"
+echo " 🎉 ALL PULSESTREAM SERVICES OPERATIONAL!"
+echo "========================================================"
+```
+
+---
+
+# 🇹🇷 Türkçe Versiyon / Kapsamlı SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 11 (PulseStream)
 
 Bu belge, **PulseStream (`pulsestream-prod` namespace)** platformunda yaşanan zincirleme kesintinin detaylı kök neden analizlerini (Root Cause Analysis - RCA), Linux çekirdeği ve Kubernetes kontrol düzlemi mekanizmalarını, teşhis adımlarını, kesin çözüm komutlarını ve kurumsal SRE sektör deneyimlerini içerir.
 
