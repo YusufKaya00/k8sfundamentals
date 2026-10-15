@@ -56,7 +56,7 @@ spec:
       tolerations:
         - key: workload
           operator: Equal
-          value: "db"
+          value: "database"
           effect: NoSchedule
       containers:
         - name: agent
