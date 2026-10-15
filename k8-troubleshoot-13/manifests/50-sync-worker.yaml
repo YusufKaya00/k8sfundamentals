@@ -67,9 +67,8 @@ spec:
                   name: novaedge-db-secret
                   key: database-password
           readinessProbe:
-            httpGet:
-              path: /ready
-              port: 8080
+            exec:
+              command: ["cat", "/tmp/sync-healthy"]
             initialDelaySeconds: 7
             periodSeconds: 5
             timeoutSeconds: 3
