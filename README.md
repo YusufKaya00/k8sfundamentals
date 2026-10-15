@@ -26,7 +26,8 @@ k8sfundamentals/
 ├── k8-troubleshoot-8/  # SRE Incident Lab 8: Helix Ledger Platform (10 Deep RBAC, NetworkPolicy, StartupProbe & Topology Failures)
 ├── k8-troubleshoot-9/  # SRE Incident Lab 9: PayStream Settlement Engine (5 Sequential Bottom-Up Failures: Scheduling, CSI, Probes, NetPol & Routing)
 ├── k8-troubleshoot-10/ # SRE Incident Lab 10: Chronos Platform (5 Helm, LB, OOM, AntiAffinity & L7 Gateway Failures)
-└── k8-troubleshoot-11/ # SRE Incident Lab 11: PulseStream Analytics Platform (5 Job, Helm Scope, Probe Timeout, HPA & DaemonSet Failures)
+├── k8-troubleshoot-11/ # SRE Incident Lab 11: PulseStream Analytics Platform (5 Job, Helm Scope, Probe Timeout, HPA & DaemonSet Failures)
+└── k8-troubleshoot-12/ # SRE Incident Lab 12: Vortex Platform (5 Traefik Ingress Helm, StripPrefix, Secret Ref, TopologySpread & CronJob OOM Failures)
 ```
 
 ---
@@ -84,6 +85,7 @@ k8sfundamentals/
 * [**k8-troubleshoot-9:** PayStream Settlement Engine Triage](./k8-troubleshoot-9/README.md) — 5 strictly linear, bottom-up production tickets: Taint toleration & ext4 lost+found (Postgres), Block Volume ReadWriteMany vs RWO & Service selector drift (Redis), InitContainer port mismatch & Liveness probe conflict, ConfigMap port mismatch (Readiness failure & traffic blackhole), and NetworkPolicy ingress selector & Nginx trailing slash path stripping.
 * [**k8-troubleshoot-10:** Chronos Distributed Order & Inventory Platform Triage](./k8-troubleshoot-10/README.md) — 5 strictly linear, bottom-up production tickets using Helm & LoadBalancer: Python memory cgroup limit starvation (OOMKilled 137), 2-node hard podAntiAffinity scheduling deadlock, ConfigMap vs extraEnv precedence & 503 readiness failure, Service targetPort mismatch & externalTrafficPolicy: Local packet blackholing, and missing L7 security gateway header with silent ConfigMap reload failure.
 * [**k8-troubleshoot-11:** PulseStream Real-Time Analytics & Reporting Platform Triage](./k8-troubleshoot-11/README.md) — 5 strictly linear, bottom-up production tickets: Job activeDeadlineSeconds & target host mismatch (Database Migration Immutability), Helm values hierarchy scope mismatch (Worker Redis connection refused), Python probe timeout timeoutSeconds: 1 (ReplicaSet rollout deadlock), HPA target name typo & missing requests.cpu (Unknown metrics starvation), and DaemonSet missing database taint toleration with Named Port Service 502 Bad Gateway.
+* [**k8-troubleshoot-12:** Vortex Microservices Platform & Traefik Ingress Triage](./k8-troubleshoot-12/README.md) — 5 cascading production tickets: Traefik Ingress Helm Controller non-root port 80 CrashLoopBackOff, Ingress pathType Exact & StripPrefix routing 404, Auth-Service Secret key typo & Redis DNS discovery, Payment-Service multi-zone TopologySpreadConstraint scheduling deadlock, and Notification-Dispatcher CronJob cgroup memory OOMKilled 137.
 
 ---
 
