@@ -1,4 +1,254 @@
-# 🛠️ SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 9 (PayStream)
+# 🇬🇧 English Version / Comprehensive SRE Post-Mortem & Remediation Guide: Lab 9 (PayStream)
+
+This document provides detailed Root Cause Analyses (RCA), Kubernetes control plane and Linux kernel behaviors, diagnostic triage commands, linear step-by-step remediation procedures, and senior SRE production best practices for **Lab 9 (PayStream — `paystream-prod` namespace)**.
+
+> [!NOTE]
+> PayStream is designed with a strictly linear, bottom-up dependency model. Upstream gateways and readiness checks cannot be verified until the foundational datastores and APIs are stabilized. Follow the tickets sequentially.
+
+---
+
+## 📑 Incident Resolution Matrix
+
+| Ticket | Component | Root Cause | Fix Strategy | Control Plane & Kernel Mechanics | Severity |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **INC-901** | `ledger-db` (Postgres) | 1A: Missing database taint toleration (`Pending`)<br/>1B: ext4 `lost+found` prevents `initdb` | Toleration: `workload=database:NoSchedule`<br/>`subPath: pgdata` or `PGDATA` env | `kube-scheduler` (TaintToleration) & `kubelet` volume mount | P1 - Blocker |
+| **INC-902** | `rate-limiter` (Redis) | 2A: `ReadWriteMany` requested on block storage<br/>2B: Service selector typo (`redis-cache`) | PVC accessMode: `ReadWriteOnce`<br/>Selector: `app.kubernetes.io/name: rate-limiter` | CSI Driver / PV Controller & Endpoints Controller | P1 - Blocker |
+| **INC-903** | `payment-api` (Bootstrap) | 3A: initContainer checks port 5433 (actual 5432)<br/>3B: livenessProbe targets port 8080 (actual 8000) | initContainer port -> 5432<br/>livenessProbe port -> 8000 | Kubelet Pod Lifecycle & Liveness Prober | P1 - Blocker |
+| **INC-904** | `payment-api` (Readiness) | ConfigMap `REDIS_PORT: 6380` -> Redis unreachable, 0/1 Ready | ConfigMap port -> 6379 & rollout restart | Kubelet Readiness Prober & Endpoints Controller | P1 - Blocker |
+| **INC-905** | `edge-gateway` (Nginx) | 5A: NetPol selector typo (`ingress-gateway`)<br/>5B: Nginx `proxy_pass` trailing slash strips URI | NetPol: `app.kubernetes.io/name: edge-gateway`<br/>Remove trailing `/` from `proxy_pass` | CNI NetworkPolicy Engine & Nginx Reverse Proxy Core | P1 - Blocker |
+
+---
+
+## 🔧 Step-by-Step Incident Remediation
+
+---
+
+### [INC-901] ledger-db Pod Stuck in Pending & CrashLoopBackOff
+
+#### 1. 🧠 Diagnostic Mindset
+- **1A Hypothesis (Scheduling):** `ledger-db-0` pod is stuck in `Pending` (`NODE: <none>`). Node-3 carries the taint `workload=database:NoSchedule`. The StatefulSet specifies `nodeSelector: tier: database`, restricting placement to Node-3. Because the pod lacks a matching toleration, Kube-Scheduler's `TaintToleration` filter rejects the pod.
+- **1B Hypothesis (Volume Init):** Once the toleration is added, the pod lands on Node-3 but immediately crashes in `CrashLoopBackOff`. Oracle Block Volume CSI (`oci-bv`) formats disks with ext4, creating a default `lost+found` directory at root. PostgreSQL's `initdb` strictly requires an empty target directory (`initdb: directory "/var/lib/postgresql/data" exists but is not empty`). Mount path without `subPath` or custom `PGDATA` causes exit code 1.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 1A Evidence: Scheduler rejection
+kubectl -n paystream-prod describe pod ledger-db-0 | grep -A 8 "Events:"
+# Observation: 1 node(s) had untolerated taint {workload: database}
+
+# 1B Evidence: Container logs after scheduling
+kubectl -n paystream-prod logs ledger-db-0 --previous
+# Observation: initdb: error: directory "/var/lib/postgresql/data" exists but is not empty (contains lost+found)
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/10-ledger-db.yaml`:
+   - Add toleration for `workload=database:NoSchedule`.
+   - Add `subPath: pgdata` to `volumeMounts`:
+```diff
+       tolerations:
++        - key: workload
++          operator: Equal
++          value: database
++          effect: NoSchedule
+...
+         volumeMounts:
+           - name: data
+             mountPath: /var/lib/postgresql/data
++            subPath: pgdata
+```
+
+2. Apply manifest:
+```bash
+kubectl apply -f manifests/10-ledger-db.yaml
+kubectl -n paystream-prod rollout status statefulset/ledger-db --timeout=45s
+```
+
+---
+
+### [INC-902] rate-limiter Redis PVC Pending & Service Endpoints Empty
+
+#### 1. 🧠 Diagnostic Mindset
+- **2A Hypothesis (CSI AccessMode):** PVC `redis-data` is stuck in `Pending`. The PVC requests `ReadWriteMany` (RWX), but block storage drivers (`oci-bv`, AWS EBS, GCP PD) only support `ReadWriteOnce` (RWO).
+- **2B Hypothesis (Service Discovery):** Service `rate-limiter` has `Endpoints: <none>` because its selector targets `app.kubernetes.io/name: redis-cache`, while the pod label is `app.kubernetes.io/name: rate-limiter`.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 2A: Check PVC events
+kubectl -n paystream-prod describe pvc redis-data | grep -A 5 "Events:"
+# Observation: volume.beta.kubernetes.io/storage-provisioner ... cannot satisfy AccessMode ReadWriteMany
+
+# 2B: Check Service endpoints
+kubectl -n paystream-prod get endpoints rate-limiter
+# Observation: <none>
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/20-rate-limiter.yaml`:
+   - Change PVC accessMode to `ReadWriteOnce`.
+   - Update Service selector to `app.kubernetes.io/name: rate-limiter`:
+```diff
+   accessModes:
+-    - ReadWriteMany
++    - ReadWriteOnce
+...
+   selector:
+-    app.kubernetes.io/name: redis-cache
++    app.kubernetes.io/name: rate-limiter
+```
+
+2. Delete the immutable pending PVC and re-apply:
+```bash
+kubectl -n paystream-prod delete pvc redis-data --wait=false
+kubectl apply -f manifests/20-rate-limiter.yaml
+kubectl -n paystream-prod rollout status deployment/rate-limiter --timeout=45s
+```
+
+---
+
+### [INC-903] payment-api Bootstrap Blocked & Liveness Probe Restart Loop
+
+#### 1. 🧠 Diagnostic Mindset
+- **3A Hypothesis (InitContainer Port):** `payment-api` is stuck in `Init:0/1`. The initContainer runs `nc -z -w 2 ledger-db 5433`, but PostgreSQL listens on standard port 5432.
+- **3B Hypothesis (Liveness Probe Port):** Once the initContainer passes, the container restarts every ~30 seconds because `livenessProbe` checks port 8080, while the Python HTTP app listens on port 8000.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 3A: Check initContainer logs
+kubectl -n paystream-prod logs deploy/payment-api -c wait-for-db
+# Observation: nc: connection to ledger-db (5433) failed
+
+# 3B: Check liveness failure events
+kubectl -n paystream-prod describe pod -l app.kubernetes.io/name=payment-api | grep -A 4 "Liveness probe failed"
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/30-payment-api.yaml`:
+   - In initContainer: update port from `5433` to `5432`.
+   - In livenessProbe: update port from `8080` to `8000`:
+```diff
+-        - until nc -z -w 2 ledger-db 5433; do echo waiting for db; sleep 2; done
++        - until nc -z -w 2 ledger-db 5432; do echo waiting for db; sleep 2; done
+...
+         livenessProbe:
+           httpGet:
+             path: /healthz
+-            port: 8080
++            port: 8000
+```
+
+2. Apply manifest:
+```bash
+kubectl apply -f manifests/30-payment-api.yaml
+```
+
+---
+
+### [INC-904] payment-api Readiness Probe Failing (Wrong Redis Port)
+
+#### 1. 🧠 Diagnostic Mindset
+- **Readiness Failure:** `payment-api` stays at `0/1 Ready` (`HTTP probe failed with statuscode: 503`).
+- **ConfigMap Port Mismatch:** ConfigMap sets `REDIS_PORT: "6380"`, while Redis listens on `6379`. The readiness check tests Redis connectivity and fails.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# Check readiness probe output
+kubectl -n paystream-prod describe pod -l app.kubernetes.io/name=payment-api | grep -A 4 "Readiness probe failed"
+kubectl -n paystream-prod logs deploy/payment-api -c api --tail=20
+# Observation: Error connecting to Redis at rate-limiter:6380
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/30-payment-api.yaml`:
+   - Set `REDIS_PORT: "6379"` in ConfigMap:
+```diff
+   data:
+     DB_HOST: "ledger-db"
+     DB_PORT: "5432"
+     REDIS_HOST: "rate-limiter"
+-    REDIS_PORT: "6380"
++    REDIS_PORT: "6379"
+```
+
+2. Apply manifest and rollout restart:
+```bash
+kubectl apply -f manifests/30-payment-api.yaml
+kubectl -n paystream-prod rollout restart deployment/payment-api
+kubectl -n paystream-prod rollout status deployment/payment-api --timeout=30s
+# Expected: READY: 1/1
+```
+
+---
+
+### [INC-905] edge-gateway NetworkPolicy Selector & NGINX Trailing Slash
+
+#### 1. 🧠 Diagnostic Mindset
+- **5A Hypothesis (NetworkPolicy):** NetworkPolicy `allow-gateway-to-api` allows ingress only from pods matching `app.kubernetes.io/name: ingress-gateway`. However, `edge-gateway` pods are labeled `app.kubernetes.io/name: edge-gateway`. The CNI drops packets with connection timeout.
+- **5B Hypothesis (NGINX Trailing Slash):** In `nginx.conf`, `proxy_pass http://payment-api:8000/;` contains a trailing slash. When a request hits `/api/pay`, NGINX strips the URI and sends `GET /` to the backend instead of `GET /api/pay`, returning HTTP 404.
+
+#### 2. 🔍 Triage Commands (Gathering Evidence)
+```bash
+# 5A: Test connection from edge-gateway to payment-api
+kubectl -n paystream-prod exec deploy/edge-gateway -- curl -s --connect-timeout 3 http://payment-api:8000/healthz
+# Observation: Connection timed out (NetworkPolicy drop)
+
+# 5B: Check proxy_pass configuration
+kubectl -n paystream-prod get configmap edge-gateway-config -o yaml | grep proxy_pass
+# Observation: proxy_pass http://payment-api:8000/;
+```
+
+#### 3. 🛠️ Step-by-Step Resolution
+1. Edit `manifests/40-network-policy.yaml`:
+   - Update podSelector to `edge-gateway`:
+```diff
+       from:
+         - podSelector:
+             matchLabels:
+-              app.kubernetes.io/name: ingress-gateway
++              app.kubernetes.io/name: edge-gateway
+```
+
+2. Edit `manifests/50-edge-gateway.yaml`:
+   - Remove trailing slash from `proxy_pass`:
+```diff
+         location /api/ {
+-            proxy_pass http://payment-api:8000/;
++            proxy_pass http://payment-api:8000;
+         }
+```
+
+3. Apply manifests and restart gateway:
+```bash
+kubectl apply -f manifests/40-network-policy.yaml
+kubectl apply -f manifests/50-edge-gateway.yaml
+kubectl -n paystream-prod rollout restart deployment/edge-gateway
+kubectl -n paystream-prod rollout status deployment/edge-gateway --timeout=30s
+```
+
+4. Verify full end-to-end request:
+```bash
+GW_IP=$(kubectl -n paystream-prod get svc edge-gateway -o jsonpath='{.spec.clusterIP}')
+curl -s "http://${GW_IP}/api/pay"
+# Expected: JSON response with payment settlement details (HTTP 200 OK)
+```
+
+---
+
+## 🏁 End-to-End Production Health Verification
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+NS="paystream-prod"
+echo "=== Validating PayStream End-to-End Platform Health ==="
+kubectl -n "${NS}" get pods -o wide
+GW_IP=$(kubectl -n "${NS}" get svc edge-gateway -o jsonpath='{.spec.clusterIP}')
+curl -s "http://${GW_IP}/api/pay" | grep -q "status.*settled" && echo "✅ PayStream Gateway & Settlement Engine Fully Healthy!"
+```
+
+---
+
+# 🇹🇷 Türkçe Versiyon / Kapsamlı SRE Olay Müdahale Rehberi ve Post-Mortem: Lab 9 (PayStream)
 
 Bu belge **Lab 9 (PayStream — `paystream-prod` namespace)** kesintisinin kök neden analizlerini (RCA), Kubernetes kontrol düzlemi seviyesindeki davranışlarını, teşhis komutlarını, doğrusal çözüm adımlarını ve kıdemli SRE pratiklerini içerir.
 
