@@ -126,5 +126,5 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: api-http
+      targetPort: 8000
       protocol: TCP
