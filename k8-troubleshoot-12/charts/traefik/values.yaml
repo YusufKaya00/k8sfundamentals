@@ -1,0 +1,26 @@
+replicaCount: 1
+
+image:
+  repository: docker.io/library/traefik
+  tag: v2.11
+  pullPolicy: IfNotPresent
+
+nodeSelector:
+  tier: web
+
+ports:
+  web:
+    port: 8000
+    targetPort: 8000
+    nodePort: 30080
+  websecure:
+    port: 8443
+    targetPort: 8443
+
+service:
+  type: NodePort
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: false
