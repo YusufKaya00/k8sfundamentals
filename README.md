@@ -25,9 +25,9 @@ k8sfundamentals/
 ├── k8-troubleshoot-7/  # SRE Incident Lab 7: NexusLogistics Autonomous Dispatch (8 Storage, OOM, RBAC & Gateway Failures)
 ├── k8-troubleshoot-8/  # SRE Incident Lab 8: Helix Ledger Platform (10 Deep RBAC, NetworkPolicy, StartupProbe & Topology Failures)
 ├── k8-troubleshoot-9/  # SRE Incident Lab 9: PayStream Settlement Engine (5 Sequential Bottom-Up Failures: Scheduling, CSI, Probes, NetPol & Routing)
-├── k8-troubleshoot-10/ # SRE Incident Lab 10: Chronos Platform (5 Helm, LB, OOM, AntiAffinity & L7 Gateway Failures)
 ├── k8-troubleshoot-11/ # SRE Incident Lab 11: PulseStream Analytics Platform (5 Job, Helm Scope, Probe Timeout, HPA & DaemonSet Failures)
-└── k8-troubleshoot-12/ # SRE Incident Lab 12: Vortex Platform (5 Traefik Ingress Helm, StripPrefix, Secret Ref, TopologySpread & CronJob OOM Failures)
+├── k8-troubleshoot-12/ # SRE Incident Lab 12: Vortex Platform (5 Traefik Ingress Helm, StripPrefix, Secret Ref, TopologySpread & CronJob OOM Failures)
+└── k8-troubleshoot-13/ # SRE Incident Lab 13: NovaEdge Platform (5 Edge Ingress LB Port, IngressClass 404, Stream API Crash, DaemonSet Taint/RO & Sync Probe Failures)
 ```
 
 ---
