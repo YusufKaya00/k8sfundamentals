@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sync-worker-config
+  namespace: novaedge-prod
+  labels:
+    app.kubernetes.io/name: stream-sync-worker
+data:
+  REDIS_HOST: "novaedge-redis"
+  REDIS_PORT: "6379"
+  REDIS_CHANNEL: "telemetry-stream"
+  DB_HOST: "novaedge-db"
+  DB_PORT: "5432"
+  DB_NAME: "novaedge_db"
+  DB_USER: "novaedge_admin"
+  worker.py: |
+    import os
+    import sys
+    import time
+    import socket
+
+    channel = os.environ.get("REDIS_CHANNEL", "telemetry-stream")
+    heartbeat_file = "/tmp/sync-healthy"
+
+    print(f"Starting Stream Sync Worker... Subscribed to channel: {channel}")
+
+    while True:
+        try:
+            with open(heartbeat_file, "w") as f:
+                f.write(f"ok {int(time.time())}\n")
+        except Exception as e:
+            sys.stderr.write(f"Heartbeat write failed: {e}\n")
+        time.sleep(3)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-sync-worker
+  namespace: novaedge-prod
+  labels:
+    app.kubernetes.io/name: stream-sync-worker
+    app.kubernetes.io/part-of: novaedge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stream-sync-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: stream-sync-worker
+        tier: web
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: worker
+          image: python:3.12-alpine
+          command: ["python3", "/opt/worker/worker.py"]
+          envFrom:
+            - configMapRef:
+                name: sync-worker-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: novaedge-db-secret
+                  key: database-password
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9200
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 30m
+              memory: 48Mi
+            limits:
+              cpu: 150m
+              memory: 96Mi
+          volumeMounts:
+            - name: code
+              mountPath: /opt/worker
+      volumes:
+        - name: code
+          configMap:
+            name: sync-worker-config
