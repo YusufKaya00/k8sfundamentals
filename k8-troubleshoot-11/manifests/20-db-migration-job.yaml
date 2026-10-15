@@ -15,7 +15,7 @@ spec:
         app.kubernetes.io/name: db-migrator
         app.kubernetes.io/part-of: pulsestream
     spec:
-      restartPolicy: always
+      restartPolicy: Always
       nodeSelector:
         tier: web
       containers:
