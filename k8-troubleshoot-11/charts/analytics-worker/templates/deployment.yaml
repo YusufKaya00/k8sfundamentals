@@ -36,13 +36,13 @@ spec:
             httpGet:
               path: /ready
               port: 9100
-            initialDelaySeconds: 3
+            initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
               port: 9100
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
           {{- if .Values.resources }}
           resources:
