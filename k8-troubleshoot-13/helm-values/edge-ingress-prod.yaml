@@ -1,0 +1,23 @@
+replicaCount: 1
+
+controller:
+  containerPort: 8080
+  ingressClass: edge-ingress
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8090
+  nodePort: 30088
+  externalTrafficPolicy: Cluster
+
+nodeSelector:
+  tier: web
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
