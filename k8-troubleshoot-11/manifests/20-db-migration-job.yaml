@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: db-migrator
     app.kubernetes.io/part-of: pulsestream
 spec:
-  activeDeadlineSeconds: 10
+  activeDeadlineSeconds: 30
   backoffLimit: 5
   template:
     metadata:
