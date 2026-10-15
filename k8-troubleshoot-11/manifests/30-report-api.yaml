@@ -93,7 +93,7 @@ spec:
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 5
-            timeoutSeconds: 1
+            timeoutSeconds: 3
             failureThreshold: 2
           readinessProbe:
             httpGet:
@@ -101,7 +101,7 @@ spec:
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 5
-            timeoutSeconds: 1
+            timeoutSeconds: 3
             failureThreshold: 2
           volumeMounts:
             - name: config
@@ -126,5 +126,5 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: 8000
+      targetPort: 8000 
       protocol: TCP
