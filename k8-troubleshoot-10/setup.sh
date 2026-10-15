@@ -5,20 +5,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
 echo "==========================================="
-echo " Deploying PulseStream Platform"
+echo " Deploying Chronos Production Architecture"
 echo "==========================================="
 
-echo "[1/3] Ensuring namespace exists..."
-kubectl apply -f manifests/00-namespace.yaml
+echo "[1/4] Ensuring namespace chronos-prod exists..."
+kubectl create namespace chronos-prod --dry-run=client -o yaml | kubectl apply -f -
 
-echo "[2/3] Applying Kubernetes manifests..."
+echo "[2/4] Applying core infrastructure manifests..."
 kubectl apply -f manifests/
 
-echo "[3/3] Deploying analytics-worker Helm chart..."
-helm upgrade --install analytics-worker ./charts/analytics-worker \
-  -f helm-values/worker-prod.yaml \
-  -n pulsestream-prod
+echo "[3/4] Installing order-api Helm chart..."
+helm upgrade --install order-api ./charts/order-api \
+  -f helm-values/order-api-prod.yaml \
+  -n chronos-prod
+
+echo "[4/4] Installing edge-lb Helm chart..."
+helm upgrade --install edge-lb ./charts/edge-lb \
+  -f helm-values/edge-lb-prod.yaml \
+  -n chronos-prod
 
 echo "==========================================="
-echo " PulseStream deployment completed."
+echo " Chronos setup complete."
 echo "==========================================="

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: edge-lb
+description: Chronos Edge Load Balancer and Gateway
+type: application
+version: 0.1.0
+appVersion: "1.25.0"
