@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-agent-config
+  namespace: novaedge-prod
+  labels:
+    app.kubernetes.io/name: edge-node-agent
+data:
+  agent.py: |
+    import os
+    import sys
+    import time
+    import socket
+
+    runtime_dir = "/var/run/node-agent"
+    lock_file = os.path.join(runtime_dir, "agent.lock")
+    metrics_file = os.path.join(runtime_dir, "metrics.json")
+    node_name = os.environ.get("NODE_NAME", socket.gethostname())
+
+    print(f"Starting Edge Node Agent on node: {node_name}...")
+
+    try:
+        os.makedirs(runtime_dir, exist_ok=True)
+        with open(lock_file, "w") as f:
+            f.write(f"pid={os.getpid()}\nnode={node_name}\nstart={int(time.time())}\n")
+    except Exception as e:
+        sys.stderr.write(f"FATAL: Failed to acquire runtime lock file at {lock_file}: {e}\n")
+        sys.exit(1)
+
+    print("Lock acquired. Beginning node telemetry collection loop...")
+    while True:
+        try:
+            with open(metrics_file, "w") as f:
+                f.write(f'{{"node": "{node_name}", "timestamp": {int(time.time())}, "status": "healthy"}}\n')
+        except Exception as e:
+            sys.stderr.write(f"ERROR: Failed writing telemetry snapshot: {e}\n")
+        time.sleep(5)
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: edge-node-agent
+  namespace: novaedge-prod
+  labels:
+    app.kubernetes.io/name: edge-node-agent
+    app.kubernetes.io/part-of: novaedge
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: edge-node-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: edge-node-agent
+    spec:
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: "db"
+          effect: NoSchedule
+      containers:
+        - name: agent
+          image: python:3.12-alpine
+          command: ["python3", "/opt/agent/agent.py"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: script
+              mountPath: /opt/agent
+            - name: runtime-state
+              mountPath: /var/run/node-agent
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: edge-agent-config
+        - name: runtime-state
+          emptyDir: {}
