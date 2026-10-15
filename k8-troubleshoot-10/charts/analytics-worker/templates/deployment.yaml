@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "analytics-worker.fullname" . }}
+  labels:
+    {{- include "analytics-worker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "analytics-worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "analytics-worker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python
+            - /app/worker.py
+          ports:
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "analytics-worker.fullname" . }}-config
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9100
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9100
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- if .Values.resources }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+      volumes:
+        - name: app-code
+          configMap:
+            name: {{ include "analytics-worker.fullname" . }}-config
