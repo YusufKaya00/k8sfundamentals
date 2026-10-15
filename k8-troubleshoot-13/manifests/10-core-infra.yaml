@@ -124,7 +124,7 @@ spec:
         tier: web
       containers:
         - name: redis
-          image: redis:7.2-alpine
+          image: docker.io/library/redis:7.2-alpine
           ports:
             - containerPort: 6379
               name: redis
