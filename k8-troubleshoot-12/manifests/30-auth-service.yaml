@@ -12,7 +12,7 @@ data:
   DB_PORT: "5432"
   DB_NAME: "vortex_db"
   DB_USER: "vortex_admin"
-  REDIS_HOST: "cache-service"
+  REDIS_HOST: "vortex-redis"
   REDIS_PORT: "6379"
   server.py: |
     from http.server import HTTPServer, BaseHTTPRequestHandler
