@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/edge-controllers/edge-ingress
+  repository: edge-ingress-controller
   tag: 1.25.4-alpine
   pullPolicy: IfNotPresent
 
