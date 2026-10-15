@@ -8,7 +8,7 @@ metadata:
 data:
   REDIS_HOST: "novaedge-redis"
   REDIS_PORT: "6379"
-  REDIS_CHANNEL: "telemetry-stream"
+  REDIS_CHANNEL: "novaedge-telemetry-stream"
   DB_HOST: "novaedge-db"
   DB_PORT: "5432"
   DB_NAME: "novaedge_db"
