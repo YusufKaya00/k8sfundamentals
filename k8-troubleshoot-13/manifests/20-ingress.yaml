@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: novaedge-ingress
     app.kubernetes.io/part-of: novaedge
 spec:
-  ingressClassName: edge-ingress-internal
+  ingressClassName: edge-ingress
   rules:
     - host: api.novaedge.io
       http:
@@ -18,4 +18,4 @@ spec:
               service:
                 name: stream-api
                 port:
-                  number: 80
+                  number: 8080
