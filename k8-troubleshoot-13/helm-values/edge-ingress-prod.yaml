@@ -7,7 +7,7 @@ controller:
 service:
   type: LoadBalancer
   port: 80
-  targetPort: 8090
+  targetPort: 8080
   nodePort: 30088
   externalTrafficPolicy: Cluster
 
