@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vortex-ingress
+  namespace: vortex-prod
+  labels:
+    app.kubernetes.io/name: vortex-ingress
+    app.kubernetes.io/part-of: vortex
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: vortex.local
+      http:
+        paths:
+          - path: /api/v1/auth
+            pathType: Exact
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8081
+          - path: /api/v1/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: 8082
