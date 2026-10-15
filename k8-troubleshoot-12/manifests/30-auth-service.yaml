@@ -154,7 +154,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: vortex-db-secret
-                  key: db-password
+                  key: database-password
           resources:
             requests:
               cpu: 50m
