@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: chronos-prod
+  name: pulsestream-prod
   labels:
-    app.kubernetes.io/part-of: chronos
+    app.kubernetes.io/part-of: pulsestream
     environment: production
