@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vortex-prod
+  labels:
+    app.kubernetes.io/part-of: vortex
+    environment: production
