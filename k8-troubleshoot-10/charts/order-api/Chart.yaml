@@ -1,6 +1,0 @@
-apiVersion: v2
-name: order-api
-description: Chronos Order Processing Service
-type: application
-version: 0.1.0
-appVersion: "1.0.0"
