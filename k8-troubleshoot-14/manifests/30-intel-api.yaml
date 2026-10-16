@@ -162,24 +162,6 @@ spec:
           configMap:
             name: intel-api-config
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: intel-api
-  namespace: aegis-prod
-  labels:
-    app.kubernetes.io/name: intel-api
-    app.kubernetes.io/part-of: aegisgrid
-spec:
-  type: ClusterIP
-  ports:
-    - name: http
-      port: 8000
-      targetPort: 8000
-      protocol: TCP
-  selector:
-    app.kubernetes.io/name: intel-api
----
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
