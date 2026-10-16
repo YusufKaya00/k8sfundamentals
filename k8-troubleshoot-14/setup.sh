@@ -14,6 +14,7 @@ echo "--> [1/5] Creating namespace ${NAMESPACE}..."
 kubectl apply -f manifests/00-namespace.yaml
 
 echo "--> [2/5] Applying Kubernetes manifests..."
+kubectl delete job threat-db-seed manual-feed-sync -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
 kubectl apply -f manifests/
 
 echo "--> [3/5] Deploying scanner-worker Helm release..."
