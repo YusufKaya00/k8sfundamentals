@@ -84,4 +84,4 @@ spec:
               command:
                 - sh
                 - -c
-                - "redis-cli -h aegis-redis -p 6379 SET aegis:feed:last_sync $(date -u +%Y-%m-%dT%H:%M:%SZ) && redis-cli -h redis-cache -p 6379 INCR aegis:feed:sync_count && echo 'Feed rotation synced successfully.'"
+                - "redis-cli -h aegis-redis -p 6379 SET aegis:feed:last_sync $(date -u +%Y-%m-%dT%H:%M:%SZ) && redis-cli -h aegis-redis -p 6379 INCR aegis:feed:sync_count && echo 'Feed rotation synced successfully.'"
