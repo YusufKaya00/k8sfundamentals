@@ -11,10 +11,10 @@ spec:
   ports:
     - name: http
       port: 8000
-      targetPort: 8000
+      targetPort: 8080
       protocol: TCP
   selector:
-    app.kubernetes.io/name: intel-api
+    app.kubernetes.io/name: intel-backend
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -39,7 +39,7 @@ spec:
         - key: workload
           operator: Equal
           value: database
-          effect: NoSchedule
+          effect: NoExecute
       containers:
         - name: shield-agent
           image: docker.io/library/busybox:1.36
