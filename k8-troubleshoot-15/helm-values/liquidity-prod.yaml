@@ -1,0 +1,27 @@
+replicaCount: 1
+
+redis:
+  host: "quant-cache"
+  port: 6379
+
+livenessProbe:
+  path: "/livez"
+  initialDelaySeconds: 5
+  periodSeconds: 4
+  timeoutSeconds: 2
+  failureThreshold: 2
+
+readinessProbe:
+  path: "/healthz"
+  initialDelaySeconds: 3
+  periodSeconds: 4
+  timeoutSeconds: 2
+  failureThreshold: 2
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 16Mi
+  limits:
+    cpu: 250m
+    memory: 32Mi
