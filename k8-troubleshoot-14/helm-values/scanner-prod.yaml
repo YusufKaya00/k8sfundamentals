@@ -2,9 +2,9 @@ replicaCount: 1
 
 db:
   host: "aegis-db"
-  port: 5433
+  port: 5432
 
 startupProbe:
-  periodSeconds: 2
-  failureThreshold: 2
+  periodSeconds: 5
+  failureThreshold: 12
   timeoutSeconds: 2
