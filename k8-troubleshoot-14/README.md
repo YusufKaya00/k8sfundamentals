@@ -44,7 +44,7 @@ k8-troubleshoot-14/
 │   ├── 20-feed-jobs.yaml                  # [INC-1401] Threat DB Seed Job & Feed Rotator CronJob
 │   ├── 30-intel-api.yaml                  # [INC-1403] Intel API Deployment, Service, ConfigMap & PDB
 │   ├── 40-security-and-daemon.yaml        # [INC-1404] Zero-Trust NetworkPolicy & node-shield DaemonSet
-│   └── 50-ingress.yaml                    # [INC-1405] Kubernetes Ingress Resource (aegis-edge-ingress)
+│   └── 50-ingress.yaml                    # [INC-1405] Kubernetes Ingress Resource (aegis-ingress)
 ├── charts/
 │   ├── scanner-worker/                    # [INC-1402] Helm Chart for Signature Scanner Worker
 │   │   ├── Chart.yaml
@@ -53,13 +53,12 @@ k8-troubleshoot-14/
 │   │       ├── configmap.yaml
 │   │       ├── deployment.yaml
 │   │       └── service.yaml
-│   └── aegis-gateway/                     # [INC-1405] Helm Chart for Edge API Gateway & Ingress Controller
+│   └── aegis-gateway/                     # [INC-1405] Helm Chart for Edge API Gateway
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/
 │           ├── configmap.yaml
 │           ├── deployment.yaml
-│           ├── ingressclass.yaml
 │           └── service.yaml
 └── helm-values/
     ├── scanner-prod.yaml                  # [INC-1402] Production Helm overrides for scanner-worker
@@ -113,7 +112,7 @@ kubectl get pods,jobs,cronjobs,ds,svc,pdb,netpol,ingress -n aegis-prod -o wide
 | **[INC-1402]** | `scanner-worker` | Helm Release (`Deployment`) | Pod stuck in `Init:0/1` waiting on DB; once init passes, container loops in `CrashLoopBackOff` (`Startup probe failed`). | `helm-values/scanner-prod.yaml` & `charts/scanner-worker/` | `P1 - Blocker` |
 | **[INC-1403]** | `intel-api` | `Deployment`, `ConfigMap`, `PDB` | Pods `Running` (`0/1 Ready`) with `connection refused` on readiness probe, followed by `HTTP 503` on upstream scanner check. | `manifests/30-intel-api.yaml` | `P1 - Blocker` |
 | **[INC-1404]** | `intel-api-netpol` & `node-shield` | `NetworkPolicy` & `DaemonSet` | Gateway requests to `intel-api` time out (`wget: download timed out`); `node-shield` DaemonSet only runs on `2/3` nodes (missing Node-3). | `manifests/40-security-and-daemon.yaml` | `P1 - Blocker` |
-| **[INC-1405]** | `aegis-gateway` & `aegis-edge-ingress` | Helm Release (`Deployment`, `ConfigMap`) & `Ingress` | Requests to `/api/v1/threats` return `502 Bad Gateway`, then `403 Forbidden` (`invalid security token`), and ConfigMap reload lags. | `helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml` | `P1 - Blocker` |
+| **[INC-1405]** | `aegis-gateway` & `aegis-ingress` | Helm Release (`Deployment`, `ConfigMap`) & `Ingress` | Requests to `/api/v1/threats` return `502 Bad Gateway`, then `403 Forbidden` (`untrusted proxy`), and ConfigMap reload lags. | `helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml` | `P1 - Blocker` |
 
 ---
 
@@ -275,7 +274,7 @@ Resolve each ticket in order from **INC-1401** to **INC-1405**.
   > `[CRITICAL] EdgeGatewayFailure: aegis-gateway returning 502 Bad Gateway and 403 Forbidden on /api/v1/threats.`
 * **Observed Symptoms:**
   * Calling `http://localhost:8080/api/v1/threats` on `aegis-gateway` returns `502 Bad Gateway` because Nginx proxies to an incorrect upstream port on `intel-api`.
-  * Once the upstream port is corrected, requests return `403 Forbidden` (`{"error":"Forbidden: invalid X-Aegis-Token"}`) because the gateway injects an outdated security token header.
+  * Once the upstream port is corrected, requests return `403 Forbidden` (`{"error": "untrusted proxy: invalid or missing X-Aegis-Token header"}`) because the gateway injects an outdated security token header.
   * Updating `helm-values/gateway-prod.yaml` and running `helm upgrade` updates `ConfigMap/aegis-gateway-config`, but Nginx continues using the old configuration until the gateway pods are restarted.
 * **Suspected Components:**
   * `helm-values/gateway-prod.yaml`
@@ -293,7 +292,7 @@ Resolve each ticket in order from **INC-1401** to **INC-1405**.
 
   # 3. Check expected token in intel-api-config and inspect Ingress resource
   kubectl get configmap intel-api-config -n aegis-prod -o yaml
-  kubectl get ingress aegis-edge-ingress -n aegis-prod -o yaml
+  kubectl get ingress aegis-ingress -n aegis-prod -o yaml
   ```
 * **Verification Commands (After Fix):**
   ```bash
@@ -344,14 +343,14 @@ echo "    ✅ scanner-worker (1/1 Ready) responding on :9090/healthz."
 echo "--> [INC-1403] Checking Intel API Readiness, Upstream Discovery & PDB..."
 kubectl rollout status deploy/intel-api -n "${NS}" --timeout=30s >/dev/null
 API_READY=$(kubectl exec -n "${NS}" deploy/intel-api -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/ready').read().decode())")
-echo "${API_READY}" | grep -q '"ready": true'
+echo "${API_READY}" | grep -q '"status": "ready"'
 echo "    ✅ intel-api (2/2 Ready) connected to DB, Redis, and scanner-worker."
 
 echo "--> [INC-1404] Checking Zero-Trust NetworkPolicy & Node-Shield DaemonSet..."
 DESIRED_DS=$(kubectl get ds node-shield -n "${NS}" -o jsonpath='{.status.desiredNumberScheduled}')
 READY_DS=$(kubectl get ds node-shield -n "${NS}" -o jsonpath='{.status.numberReady}')
 [ "${DESIRED_DS}" = "3" ] && [ "${READY_DS}" = "3" ]
-kubectl exec -n "${NS}" deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready | grep -q '"ready": true'
+kubectl exec -n "${NS}" deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready | grep -q '"status": "ready"'
 echo "    ✅ node-shield running on 3/3 nodes & NetworkPolicy allows gateway -> intel-api:8000."
 
 echo "--> [INC-1405] Checking Edge Gateway L7 Routing & Threat Signatures Payload..."
@@ -421,7 +420,7 @@ k8-troubleshoot-14/
 │   ├── 20-feed-jobs.yaml                  # [INC-1401] Tehdit Veritabanı Tohumlama Job & Feed Rotator CronJob
 │   ├── 30-intel-api.yaml                  # [INC-1403] Intel API Deployment, Service, ConfigMap & PDB
 │   ├── 40-security-and-daemon.yaml        # [INC-1404] Zero-Trust NetworkPolicy & node-shield DaemonSet
-│   └── 50-ingress.yaml                    # [INC-1405] Kubernetes Ingress Kaynağı (aegis-edge-ingress)
+│   └── 50-ingress.yaml                    # [INC-1405] Kubernetes Ingress Kaynağı (aegis-ingress)
 ├── charts/
 │   ├── scanner-worker/                    # [INC-1402] İmza Tarayıcı Worker Helm Chart Paketi
 │   │   ├── Chart.yaml
@@ -430,13 +429,12 @@ k8-troubleshoot-14/
 │   │       ├── configmap.yaml
 │   │       ├── deployment.yaml
 │   │       └── service.yaml
-│   └── aegis-gateway/                     # [INC-1405] Edge API Gateway & Ingress Controller Helm Chart Paketi
+│   └── aegis-gateway/                     # [INC-1405] Edge API Gateway Helm Chart Paketi
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/
 │           ├── configmap.yaml
 │           ├── deployment.yaml
-│           ├── ingressclass.yaml
 │           └── service.yaml
 └── helm-values/
     ├── scanner-prod.yaml                  # [INC-1402] scanner-worker üretim ortamı Helm değerleri
@@ -490,7 +488,7 @@ kubectl get pods,jobs,cronjobs,ds,svc,pdb,netpol,ingress -n aegis-prod -o wide
 | **[INC-1402]** | `scanner-worker` | Helm Sürümü (`Deployment`) | Pod veritabanını beklerken `Init:0/1` durumunda takılı kalıyor; init geçilse bile `Startup probe failed` ile `CrashLoopBackOff` döngüsüne giriyor. | `helm-values/scanner-prod.yaml` & `charts/scanner-worker/` | `P1 - Blocker` |
 | **[INC-1403]** | `intel-api` | `Deployment`, `ConfigMap`, `PDB` | Pod'lar `Running` (`0/1 Ready`) ve readiness probunda `connection refused` veriyor; ardından upstream tarayıcı kontrolünde `HTTP 503` dönüyor. | `manifests/30-intel-api.yaml` | `P1 - Blocker` |
 | **[INC-1404]** | `intel-api-netpol` & `node-shield` | `NetworkPolicy` & `DaemonSet` | Gateway'den `intel-api` servisine giden istekler zaman aşımına uğruyor (`wget: download timed out`); `node-shield` `2/3` düğümde çalışıyor (Node-3 eksik). | `manifests/40-security-and-daemon.yaml` | `P1 - Blocker` |
-| **[INC-1405]** | `aegis-gateway` & `aegis-edge-ingress` | Helm Sürümü (`Deployment`, `ConfigMap`) & `Ingress` | `/api/v1/threats` çağrıları önce `502 Bad Gateway`, ardından `403 Forbidden` (`invalid security token`) dönüyor ve ConfigMap değişimi yansımıyor. | `helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml` | `P1 - Blocker` |
+| **[INC-1405]** | `aegis-gateway` & `aegis-ingress` | Helm Sürümü (`Deployment`, `ConfigMap`) & `Ingress` | `/api/v1/threats` çağrıları önce `502 Bad Gateway`, ardından `403 Forbidden` (`untrusted proxy`) dönüyor ve ConfigMap değişimi yansımıyor. | `helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml` | `P1 - Blocker` |
 
 ---
 
@@ -652,7 +650,7 @@ Biletleri **INC-1401**'den **INC-1405**'e kadar sırasıyla çözün.
   > `[CRITICAL] EdgeGatewayFailure: aegis-gateway /api/v1/threats uç noktasında 502 Bad Gateway ve 403 Forbidden döndürüyor.`
 * **Gözlemlenen Semptomlar:**
   * `aegis-gateway` üzerinde `http://localhost:8080/api/v1/threats` çağrıldığında Nginx yanlış bir upstream portuna yönlendirme yaptığı için `502 Bad Gateway` döner.
-  * Upstream portu düzeltildikten sonra istekler `intel-api` tarafından `403 Forbidden` (`{"error":"Forbidden: invalid X-Aegis-Token"}`) ile reddedilir.
+  * Upstream portu düzeltildikten sonra istekler `intel-api` tarafından `403 Forbidden` (`{"error": "untrusted proxy: invalid or missing X-Aegis-Token header"}`) ile reddedilir.
   * `helm-values/gateway-prod.yaml` güncellenip `helm upgrade` çalıştırılsa bile, çalışan Nginx pod'ları yeniden başlatılana kadar eski ConfigMap içeriğini sunmaya devam eder.
 * **Şüphelenilen Bileşenler:**
   * `helm-values/gateway-prod.yaml`
@@ -670,7 +668,7 @@ Biletleri **INC-1401**'den **INC-1405**'e kadar sırasıyla çözün.
 
   # 3. intel-api-config içindeki beklenen güvenlik token'ını ve Ingress kaynağını inceleyin
   kubectl get configmap intel-api-config -n aegis-prod -o yaml
-  kubectl get ingress aegis-edge-ingress -n aegis-prod -o yaml
+  kubectl get ingress aegis-ingress -n aegis-prod -o yaml
   ```
 * **Doğrulama Komutları (Çözüm Sonrası):**
   ```bash
@@ -721,14 +719,14 @@ echo "    ✅ scanner-worker (1/1 Ready) :9090/healthz üzerinde yanıt veriyor.
 echo "--> [INC-1403] Intel API Readiness, Upstream Keşfi & PDB Kontrolü..."
 kubectl rollout status deploy/intel-api -n "${NS}" --timeout=30s >/dev/null
 API_READY=$(kubectl exec -n "${NS}" deploy/intel-api -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/ready').read().decode())")
-echo "${API_READY}" | grep -q '"ready": true'
+echo "${API_READY}" | grep -q '"status": "ready"'
 echo "    ✅ intel-api (2/2 Ready) DB, Redis ve scanner-worker ile bağlantılı."
 
 echo "--> [INC-1404] Zero-Trust NetworkPolicy & Node-Shield DaemonSet Kontrolü..."
 DESIRED_DS=$(kubectl get ds node-shield -n "${NS}" -o jsonpath='{.status.desiredNumberScheduled}')
 READY_DS=$(kubectl get ds node-shield -n "${NS}" -o jsonpath='{.status.numberReady}')
 [ "${DESIRED_DS}" = "3" ] && [ "${READY_DS}" = "3" ]
-kubectl exec -n "${NS}" deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready | grep -q '"ready": true'
+kubectl exec -n "${NS}" deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready | grep -q '"status": "ready"'
 echo "    ✅ node-shield 3/3 düğümde çalışıyor & NetworkPolicy gateway -> intel-api:8000 trafiğine izin veriyor."
 
 echo "--> [INC-1405] Edge Gateway L7 Yönlendirme & Tehdit İmzaları Yanıt Kontrolü..."
