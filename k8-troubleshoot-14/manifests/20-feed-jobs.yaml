@@ -1,0 +1,87 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: threat-db-seed
+  namespace: aegis-prod
+  labels:
+    app.kubernetes.io/name: threat-db-seed
+    app.kubernetes.io/part-of: aegisgrid
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: threat-db-seed
+        app.kubernetes.io/part-of: aegisgrid
+    spec:
+      nodeSelector:
+        tier: web
+      restartPolicy: OnFailure
+      containers:
+        - name: seed-loader
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-db-secret
+                  key: postgres-password
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              export PGPASSWORD="${POSTGRES_PASSWORD}"
+              until pg_isready -h aegis-db -p 5432 -U aegis_admin -d aegis_intel; do
+                echo "Waiting for PostgreSQL at aegis-db:5432..."
+                sleep 2
+              done
+              psql -h aegis-db -U aegis_admin -d aegis_intel -v ON_ERROR_STOP=1 <<'EOF'
+              CREATE TABLE IF NOT EXISTS threat_signatures (
+                id SERIAL PRIMARY KEY,
+                code VARCHAR(32) UNIQUE,
+                severity VARCHAR(16),
+                description TEXT
+              );
+              INSERT INTO threat_signatures (code, severity, description) VALUES
+                ('SQLI-9001', 'CRITICAL', 'Union-based SQL injection payload'),
+                ('XSS-9002', 'HIGH', 'DOM cross-site scripting vector'),
+                ('RCE-9003', 'CRITICAL', 'Remote command execution shellcode')
+              ON CONFLICT (code) DO NOTHING;
+              EOF
+              echo "Threat seed migration completed successfully."
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: feed-rotator
+  namespace: aegis-prod
+  labels:
+    app.kubernetes.io/name: feed-rotator
+    app.kubernetes.io/part-of: aegisgrid
+spec:
+  schedule: "*/2 * * * *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: feed-rotator
+            app.kubernetes.io/part-of: aegisgrid
+        spec:
+          nodeSelector:
+            tier: web
+          restartPolicy: OnFailure
+          containers:
+            - name: rotator
+              image: docker.io/library/redis:7.2-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - "redis-cli -h redis-cache -p 6379 SET aegis:feed:last_sync $(date -u +%Y-%m-%dT%H:%M:%SZ) && redis-cli -h redis-cache -p 6379 INCR aegis:feed:sync_count && echo 'Feed rotation synced successfully.'"

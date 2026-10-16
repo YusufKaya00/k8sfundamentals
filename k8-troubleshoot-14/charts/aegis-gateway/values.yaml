@@ -1,0 +1,31 @@
+replicaCount: 2
+
+image:
+  repository: docker.io/library/nginx
+  tag: "1.25-alpine"
+  pullPolicy: IfNotPresent
+
+nodeSelector:
+  tier: web
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8080
+  nodePort: 30090
+  externalTrafficPolicy: Cluster
+
+upstream:
+  host: "intel-api"
+  port: 8000
+
+gateway:
+  securityToken: "aegis-verified"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
