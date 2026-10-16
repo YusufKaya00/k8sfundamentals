@@ -23,7 +23,7 @@ service:
   targetPort: 9090
 
 startupProbe:
-  periodSeconds: 2
+  periodSeconds: 5
   failureThreshold: 12
   timeoutSeconds: 2
 
