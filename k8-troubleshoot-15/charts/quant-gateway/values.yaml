@@ -1,0 +1,28 @@
+replicaCount: 1
+
+image:
+  repository: docker.io/library/nginx
+  tag: "1.25-alpine"
+  pullPolicy: IfNotPresent
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8080
+  nodePort: 30085
+  externalTrafficPolicy: Cluster
+
+upstream:
+  host: "risk-engine"
+  port: 8000
+
+gateway:
+  signatureToken: "quant-verified"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
