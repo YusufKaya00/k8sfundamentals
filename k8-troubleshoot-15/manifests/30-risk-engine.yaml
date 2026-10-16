@@ -1,0 +1,201 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: risk-engine-config
+  namespace: quantflow-prod
+  labels:
+    app.kubernetes.io/name: risk-engine
+    app.kubernetes.io/part-of: quantflow
+data:
+  PORT: "8000"
+  DB_HOST: "quant-db"
+  DB_PORT: "5433"
+  REDIS_HOST: "quant-redis"
+  REDIS_PORT: "6379"
+  LIQUIDITY_URL: "http://liquidity-worker:9095/healthz"
+  REQUIRED_SIGNATURE: "quant-verified"
+  server.py: |
+    import json
+    import os
+    import socket
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PORT = int(os.environ.get("PORT", "8000"))
+    DB_HOST = os.environ.get("DB_HOST", "quant-db")
+    DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+    REDIS_HOST = os.environ.get("REDIS_HOST", "quant-redis")
+    REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
+    LIQUIDITY_URL = os.environ.get("LIQUIDITY_URL", "http://liquidity-worker:9095/healthz")
+    REQUIRED_SIGNATURE = os.environ.get("REQUIRED_SIGNATURE", "quant-verified")
+
+    class RiskEngineHandler(BaseHTTPRequestHandler):
+        def _send_json(self, status_code, data):
+            payload = json.dumps(data).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            if self.path == "/healthz":
+                self._send_json(200, {"status": "alive", "service": "risk-engine"})
+                return
+
+            if self.path == "/ready":
+                try:
+                    with socket.create_connection((DB_HOST, DB_PORT), timeout=2):
+                        pass
+                    with socket.create_connection((REDIS_HOST, REDIS_PORT), timeout=2):
+                        pass
+                    with urllib.request.urlopen(LIQUIDITY_URL, timeout=2) as resp:
+                        if resp.status != 200:
+                            raise RuntimeError(f"liquidity-worker returned HTTP {resp.status}")
+                    self._send_json(200, {
+                        "status": "ready",
+                        "db": f"{DB_HOST}:{DB_PORT}",
+                        "redis": f"{REDIS_HOST}:{REDIS_PORT}",
+                        "liquidity_worker": "connected"
+                    })
+                except Exception as e:
+                    self._send_json(503, {
+                        "status": "not_ready",
+                        "db_target": f"{DB_HOST}:{DB_PORT}",
+                        "liquidity_target": LIQUIDITY_URL,
+                        "error": str(e)
+                    })
+                return
+
+            if self.path == "/api/v1/risk/evaluate":
+                sig = self.headers.get("X-Quant-Signature")
+                if sig != REQUIRED_SIGNATURE:
+                    self._send_json(403, {
+                        "error": "untrusted gateway: invalid or missing X-Quant-Signature header"
+                    })
+                    return
+                self._send_json(200, {
+                    "platform": "QuantFlow",
+                    "status": "RISK_APPROVED",
+                    "active_portfolios": ["PORTFOLIO-ALPHA", "PORTFOLIO-BETA", "PORTFOLIO-GAMMA", "PORTFOLIO-DELTA"],
+                    "liquidity_engine": "online"
+                })
+                return
+
+            self._send_json(404, {"error": "route not found"})
+
+        def log_message(self, format, *args):
+            print(f"[risk-engine] {self.address_string()} - {format % args}", flush=True)
+
+    if __name__ == "__main__":
+        print(f"Starting risk-engine on 0.0.0.0:{PORT}...", flush=True)
+        server = HTTPServer(("0.0.0.0", PORT), RiskEngineHandler)
+        server.serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-engine
+  namespace: quantflow-prod
+  labels:
+    app.kubernetes.io/name: risk-engine
+    app.kubernetes.io/part-of: quantflow
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: risk-engine
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: risk-engine
+        app.kubernetes.io/part-of: quantflow
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: risk-engine
+          image: docker.io/library/python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -u
+            - /app/server.py
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: risk-engine-config
+          env:
+            - name: LIQUIDITY_URL
+              value: "http://127.0.0.1:9095/healthz"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: app-code
+              mountPath: /app/server.py
+              subPath: server.py
+              readOnly: true
+      volumes:
+        - name: app-code
+          configMap:
+            name: risk-engine-config
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: risk-engine-pdb
+  namespace: quantflow-prod
+  labels:
+    app.kubernetes.io/name: risk-engine
+    app.kubernetes.io/part-of: quantflow
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: risk-engine
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: risk-engine-hpa
+  namespace: quantflow-prod
+  labels:
+    app.kubernetes.io/name: risk-engine
+    app.kubernetes.io/part-of: quantflow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: risk-api
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

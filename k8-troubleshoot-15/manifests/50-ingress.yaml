@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: quant-ingress
+  namespace: quantflow-prod
+  labels:
+    app.kubernetes.io/name: quant-ingress
+    app.kubernetes.io/part-of: quantflow
+spec:
+  ingressClassName: nginx-legacy
+  rules:
+    - host: quant.local
+      http:
+        paths:
+          - path: /api/v1/risk/evaluate
+            pathType: Prefix
+            backend:
+              service:
+                name: quant-gateway
+                port:
+                  number: 8080
