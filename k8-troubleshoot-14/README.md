@@ -42,8 +42,8 @@ k8-troubleshoot-14/
 │   ├── 00-namespace.yaml                  # Target namespace (aegis-prod)
 │   ├── 10-core-infra.yaml                 # Layer 0: Healthy PostgreSQL 16 (aegis-db) & Redis 7.2 (aegis-redis)
 │   ├── 20-feed-jobs.yaml                  # [INC-1401] Threat DB Seed Job & Feed Rotator CronJob
-│   ├── 30-intel-api.yaml                  # [INC-1403] Intel API Deployment, Service, ConfigMap & PDB
-│   ├── 40-security-and-daemon.yaml        # [INC-1404] Zero-Trust NetworkPolicy & node-shield DaemonSet
+│   ├── 30-intel-api.yaml                  # [INC-1403] Intel API Deployment, ConfigMap & PDB
+│   ├── 40-security-and-daemon.yaml        # [INC-1404] Intel API Service Routing & node-shield DaemonSet
 │   └── 50-ingress.yaml                    # [INC-1405] Kubernetes Ingress Resource (aegis-ingress)
 ├── charts/
 │   ├── scanner-worker/                    # [INC-1402] Helm Chart for Signature Scanner Worker
@@ -72,8 +72,8 @@ k8-troubleshoot-14/
 ```mermaid
 flowchart TD
     Client["🌍 External Threat Analysts & SOC Clients"] -->|"HTTP Port 80 (LoadBalancer / Ingress)"| Gateway["5. aegis-gateway (Nginx L7 Edge Gateway)\n[INC-1405] Helm Release & Ingress (Port 80 -> 8080)"]
-    Gateway -->|"Proxy /api/v1/threats + X-Aegis-Token\nAllowed by intel-api-netpol"| NetPol["4A. Zero-Trust NetworkPolicy (intel-api-netpol)\n[INC-1404] L3/L4 Ingress Firewall"]
-    NetPol -->|"TCP Port 8000"| IntelAPI["3. intel-api (Threat Intelligence API)\n[INC-1403] 2 Replicas + PDB (minAvailable: 1)"]
+    Gateway -->|"Proxy /api/v1/threats + X-Aegis-Token\nRouted via Service/intel-api"| SvcIntel["4A. Service/intel-api (ClusterIP :8000)\n[INC-1404] Selector & TargetPort Indirection"]
+    SvcIntel -->|"TCP Port 8000"| IntelAPI["3. intel-api (Threat Intelligence API)\n[INC-1403] 2 Replicas + PDB (minAvailable: 1)"]
     IntelAPI -->|"Upstream Health Check /healthz\n(Port 9090)"| Scanner["2. scanner-worker (Signature Engine)\n[INC-1402] Helm Release (InitContainer + StartupProbe)"]
     Scanner -->|"TCP Readiness Wait"| DB["0A. aegis-db (PostgreSQL 16 StatefulSet)\nLayer 0 Healthy on Node-3 (Port 5432)"]
     SeedJob["1A. threat-db-seed (Migration Job)\n[INC-1401] Seeds threat_signatures Table"] -->|"DDL/DML Seed (3 Signatures)"| DB
@@ -95,7 +95,7 @@ cd /home/ysf/k8sfundamentals/k8-troubleshoot-14
 Inspect the initial cluster status in `aegis-prod`:
 
 ```bash
-kubectl get pods,jobs,cronjobs,ds,svc,pdb,netpol,ingress -n aegis-prod -o wide
+kubectl get pods,jobs,cronjobs,ds,svc,pdb,ingress -n aegis-prod -o wide
 ```
 
 > [!IMPORTANT]
@@ -111,8 +111,8 @@ kubectl get pods,jobs,cronjobs,ds,svc,pdb,netpol,ingress -n aegis-prod -o wide
 | **[INC-1401]** | `threat-db-seed` & `feed-rotator` | `Job` & `CronJob` | `threat-db-seed` pod stuck in `CreateContainerConfigError` (`0/1` Completed); `feed-rotator` CronJob suspended and fails cache sync. | `manifests/20-feed-jobs.yaml` | `P1 - Blocker` |
 | **[INC-1402]** | `scanner-worker` | Helm Release (`Deployment`) | Pod stuck in `Init:0/1` waiting on DB; once init passes, container loops in `CrashLoopBackOff` (`Startup probe failed`). | `helm-values/scanner-prod.yaml` & `charts/scanner-worker/` | `P1 - Blocker` |
 | **[INC-1403]** | `intel-api` | `Deployment`, `ConfigMap`, `PDB` | Pods `Running` (`0/1 Ready`) with `connection refused` on readiness probe, followed by `HTTP 503` on upstream scanner check. | `manifests/30-intel-api.yaml` | `P1 - Blocker` |
-| **[INC-1404]** | `intel-api-netpol` & `node-shield` | `NetworkPolicy` & `DaemonSet` | Gateway requests to `intel-api` time out (`wget: download timed out`); `node-shield` DaemonSet only runs on `2/3` nodes (missing Node-3). | `manifests/40-security-and-daemon.yaml` | `P1 - Blocker` |
-| **[INC-1405]** | `aegis-gateway` & `aegis-ingress` | Helm Release (`Deployment`, `ConfigMap`) & `Ingress` | Requests to `/api/v1/threats` return `502 Bad Gateway`, then `403 Forbidden` (`untrusted proxy`), and ConfigMap reload lags. | `helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml` | `P1 - Blocker` |
+| **[INC-1404]** | `intel-api` (`Service`) & `node-shield` | `Service` & `DaemonSet` | Gateway requests to `http://intel-api:8000/ready` fail with `Connection refused` (`Endpoints: <none>`); `node-shield` DaemonSet only runs on `2/3` nodes (missing Node-3). | `manifests/40-security-and-daemon.yaml` | `P1 - Blocker` |
+| **[INC-1405]** | `aegis-gateway` & `aegis-ingress` | Helm Release (`Deployment`, `ConfigMap`) & `Ingress` | Requests to `/api/v1/threats` return `504 Gateway Time-out` / `502 Bad Gateway`, then `403 Forbidden` (`untrusted proxy`), and ConfigMap reload lags. | `helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml` | `P1 - Blocker` |
 
 ---
 
@@ -202,17 +202,17 @@ Resolve each ticket in order from **INC-1401** to **INC-1405**.
 
 * **Priority:** `P1 - Blocker`
 * **Alert (PagerDuty / Alertmanager):**
-  > `[CRITICAL] ServiceEndpointsEmpty: aegis-prod/intel-api has 0 ready replicas; PodDisruptionBudget disruptionsAllowed=0.`
+  > `[CRITICAL] IntelApiUnready: aegis-prod/intel-api has 0 ready replicas; PodDisruptionBudget disruptionsAllowed=0.`
 * **Observed Symptoms:**
   * Both `intel-api` replicas show `STATUS: Running` (`RESTARTS: 0`), yet remain stuck at `READY: 0/1`.
   * `kubectl describe pod` shows `Readiness probe failed: Get "http://...:8080/ready": dial tcp ...:8080: connect: connection refused`.
   * After aligning the readiness probe port with the container's actual listening port (`8000`), the `/ready` endpoint returns `HTTP 503 Service Unavailable` because it cannot reach the upstream scanner worker hostname configured in `intel-api-config`.
 * **Suspected Components:**
-  * `manifests/30-intel-api.yaml` (`ConfigMap/intel-api-config`, `Deployment/intel-api`)
+  * `manifests/30-intel-api.yaml` (`ConfigMap/intel-api-config`, `Deployment/intel-api`, `PodDisruptionBudget/intel-api-pdb`)
 * **Triage Commands (Before Fix):**
   ```bash
-  # 1. Check intel-api pods, service endpoints, and PDB status
-  kubectl get pods,svc,endpoints,pdb -n aegis-prod -l app.kubernetes.io/name=intel-api
+  # 1. Check intel-api pods and PDB status
+  kubectl get pods,pdb -n aegis-prod -l app.kubernetes.io/name=intel-api
 
   # 2. Inspect pod readiness probe definition and failure events
   kubectl describe pod -n aegis-prod -l app.kubernetes.io/name=intel-api | grep -A 10 "Readiness:"
@@ -233,24 +233,25 @@ Resolve each ticket in order from **INC-1401** to **INC-1405**.
 
 ---
 
-### [INC-1404] Zero-Trust NetworkPolicy Packet Drop & Node-Shield DaemonSet Toleration
+### [INC-1404] Intel API Service Routing Blackhole & Node-Shield DaemonSet Toleration
 
 * **Priority:** `P1 - Blocker`
 * **Alert (PagerDuty / Alertmanager):**
-  > `[CRITICAL] ZeroTrustDrop & NodeCoverageGap: Traffic from aegis-gateway to intel-api drops silently; node-shield missing on database node.`
+  > `[CRITICAL] ServiceEndpointsEmpty & NodeCoverageGap: Service/intel-api has 0 endpoints and wrong targetPort; node-shield missing on database node.`
 * **Observed Symptoms:**
-  * `intel-api` is `2/2 Ready` when tested locally inside its own container, but any request from `aegis-gateway` to `http://intel-api:8000/ready` hangs until socket timeout (`wget: download timed out`).
-  * The cluster-wide security telemetry DaemonSet `node-shield` shows `DESIRED: 2, CURRENT: 2, READY: 2` instead of `3`, leaving `Node-3` (`tier=database`) unmonitored.
+  * `intel-api` is `2/2 Ready` when tested locally inside its own container (`localhost:8000/ready`), but any request from `aegis-gateway` to `http://intel-api:8000/ready` fails immediately with `wget: can't connect to remote host: Connection refused`.
+  * Inspecting `Service/intel-api` reveals `Endpoints: <none>` due to a label selector mismatch AND a `targetPort` mismatch (`8080` instead of `8000`).
+  * Simultaneously, the cluster-wide security telemetry DaemonSet `node-shield` shows `DESIRED: 2, CURRENT: 2, READY: 2` instead of `3`, leaving `Node-3` (`tier=database`) unmonitored.
 * **Suspected Components:**
-  * `manifests/40-security-and-daemon.yaml` (`NetworkPolicy/intel-api-netpol`, `DaemonSet/node-shield`)
+  * `manifests/40-security-and-daemon.yaml` (`Service/intel-api`, `DaemonSet/node-shield`)
 * **Triage Commands (Before Fix):**
   ```bash
-  # 1. Reproduce the network timeout from aegis-gateway to intel-api
+  # 1. Reproduce the Service connection failure from aegis-gateway to intel-api
   kubectl exec -n aegis-prod deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready || true
 
-  # 2. Inspect NetworkPolicy rules and compare against aegis-gateway pod labels
-  kubectl get networkpolicy intel-api-netpol -n aegis-prod -o yaml
-  kubectl get pods -n aegis-prod -l app.kubernetes.io/name=aegis-gateway --show-labels
+  # 2. Inspect Service/intel-api selector, targetPort, and Endpoints vs intel-api pod labels
+  kubectl describe svc intel-api -n aegis-prod
+  kubectl get pods -n aegis-prod -l app.kubernetes.io/name=intel-api --show-labels
 
   # 3. Inspect DaemonSet status and node taints across the 3-node cluster
   kubectl get ds node-shield -n aegis-prod
@@ -259,22 +260,23 @@ Resolve each ticket in order from **INC-1401** to **INC-1405**.
 * **Verification Commands (After Fix):**
   ```bash
   # 1. Verify node-shield DaemonSet is scheduled and Ready across all 3 nodes
+  kubectl rollout status ds/node-shield -n aegis-prod --timeout=45s
   kubectl get ds node-shield -n aegis-prod
 
-  # 2. Verify aegis-gateway can reach intel-api:8000/ready across the NetworkPolicy
+  # 2. Verify aegis-gateway can reach intel-api:8000/ready via Service/intel-api
   kubectl exec -n aegis-prod deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready
   ```
 
 ---
 
-### [INC-1405] Edge Gateway 502 Bad Gateway, 403 Token Rejection & ConfigMap Reload
+### [INC-1405] Edge Gateway 504/502 Upstream Error, 403 Token Rejection & ConfigMap Reload
 
 * **Priority:** `P1 - Blocker`
 * **Alert (PagerDuty / Alertmanager):**
-  > `[CRITICAL] EdgeGatewayFailure: aegis-gateway returning 502 Bad Gateway and 403 Forbidden on /api/v1/threats.`
+  > `[CRITICAL] EdgeGatewayFailure: aegis-gateway returning 504 Gateway Time-out / 502 Bad Gateway and 403 Forbidden on /api/v1/threats.`
 * **Observed Symptoms:**
-  * Calling `http://localhost:8080/api/v1/threats` on `aegis-gateway` returns `502 Bad Gateway` because Nginx proxies to an incorrect upstream port on `intel-api`.
-  * Once the upstream port is corrected, requests return `403 Forbidden` (`{"error": "untrusted proxy: invalid or missing X-Aegis-Token header"}`) because the gateway injects an outdated security token header.
+  * Calling `http://localhost:8080/api/v1/threats` on `aegis-gateway` returns `504 Gateway Time-out` (or `502 Bad Gateway`) because Nginx proxies to an unmapped upstream port (`8080`) on `intel-api`.
+  * Once the upstream port is corrected to `8000`, requests return `403 Forbidden` (`{"error": "untrusted proxy: invalid or missing X-Aegis-Token header"}`) because the gateway injects an outdated security token header.
   * Updating `helm-values/gateway-prod.yaml` and running `helm upgrade` updates `ConfigMap/aegis-gateway-config`, but Nginx continues using the old configuration until the gateway pods are restarted.
 * **Suspected Components:**
   * `helm-values/gateway-prod.yaml`
