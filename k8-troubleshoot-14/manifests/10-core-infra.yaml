@@ -131,8 +131,8 @@ spec:
       targetPort: 6379
       protocol: TCP
   selector:
-    - app.kubernetes.io/name: aegis-redis
-    - app.kubernetes.io/part-of: aegisgrid
+    app.kubernetes.io/name: aegis-redis
+   
 ---
 apiVersion: apps/v1
 kind: Deployment
