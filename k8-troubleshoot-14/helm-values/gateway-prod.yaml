@@ -5,4 +5,4 @@ upstream:
   port: 8000
 
 gateway:
-  securityToken: "legacy-unverified"
+  securityToken: "aegis-verified"
