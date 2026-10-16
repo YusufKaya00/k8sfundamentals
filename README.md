@@ -29,7 +29,8 @@ k8sfundamentals/
 ├── k8-troubleshoot-11/ # SRE Incident Lab 11: PulseStream Analytics Platform (5 Job, Helm Scope, Probe Timeout, HPA & DaemonSet Failures)
 ├── k8-troubleshoot-12/ # SRE Incident Lab 12: Vortex Platform (5 Traefik Ingress Helm, StripPrefix, Secret Ref, TopologySpread & CronJob OOM Failures)
 ├── k8-troubleshoot-13/ # SRE Incident Lab 13: NovaEdge Platform (5 Edge Ingress LB Port, IngressClass 404, Stream API Crash, DaemonSet Taint/RO & Sync Probe Failures)
-└── k8-troubleshoot-14/ # SRE Incident Lab 14: AegisGrid Threat Platform (5 Secret/Job Immutability, Helm Init/StartupProbe, Readiness Port/DNS, Service/DaemonSet Toleration & L7 Gateway Failures)
+├── k8-troubleshoot-14/ # SRE Incident Lab 14: AegisGrid Threat Platform (5 Secret/Job Immutability, Helm Init/StartupProbe, Readiness Port/DNS, Service/DaemonSet Toleration & L7 Gateway Failures)
+└── k8-troubleshoot-15/ # SRE Incident Lab 15: QuantFlow Risk Platform (5 Job/CronJob Immutability, Helm Init/OOMKilled/Liveness, Env Precedence & HPA, Service/DaemonSet RO & L7 Gateway Failures)
 ```
 
 ---
