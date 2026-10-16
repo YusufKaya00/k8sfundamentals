@@ -14,7 +14,7 @@ spec:
       targetPort: 8000
       protocol: TCP
   selector:
-    app.kubernetes.io/name: intel-backend
+    app.kubernetes.io/name: intel-api
 ---
 apiVersion: apps/v1
 kind: DaemonSet
