@@ -1,0 +1,6 @@
+apiVersion: v2
+name: liquidity-worker
+description: QuantFlow Real-Time Liquidity Matrix & Orderbook Depth Engine
+type: application
+version: 1.0.0
+appVersion: "1.4.0"
