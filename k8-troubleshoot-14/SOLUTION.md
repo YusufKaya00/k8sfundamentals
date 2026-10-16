@@ -577,9 +577,9 @@ Bu belge, Oracle Cloud Kubernetes Engine (OKE) kümesi üzerindeki `aegis-prod` 
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **[INC-1401]** | `threat-db-seed` (`Job`) & `feed-rotator` (`CronJob`) | `CreateContainerConfigError` (`0/1 Completed`); `CronJob` `SUSPEND: True` ve Redis bağlantı hatası | **1A:** `secretKeyRef.key: postgres-password` (gerçek anahtar: `database-password`)<br/>**1B/1C:** `suspend: true` & `-h redis-cache` (gerçek Servis: `aegis-redis`) | `manifests/20-feed-jobs.yaml` dosyasını düzelt ve `kubectl replace --force -f manifests/20-feed-jobs.yaml` çalıştır | Kubelet Başlatma Öncesi Secret Doğrulaması, `Job` Değişmezliği (Immutability) & `CronJob` Döngüsü | `P1 - Blocker` |
 | **[INC-1402]** | `scanner-worker` (Helm Sürümü) | `Init:0/1` aşamasında kilitlenme; ardından `CrashLoopBackOff` (`Startup probe failed`) | **2A:** `db.port: 5433` (gerçek port `5432`)<br/>**2B:** `startupProbe.failureThreshold: 2` (6sn yüklemeye karşılık 4sn bütçe) | `helm-values/scanner-prod.yaml` içinde `db.port: 5432` & `failureThreshold: 10` yap ve `helm upgrade` çalıştır | Sıralı InitContainer Kilidi & Kubelet `startupProbe` Başlangıç Bütçesi | `P1 - Blocker` |
-| **[INC-1403]** | `intel-api` (`Deployment`, `ConfigMap`, `PDB`) | `Running` (`0/1 Ready`), `:8080` üzerinde `connection refused`, ardından `/ready` üzerinde `HTTP 503` | **3A:** `readinessProbe.httpGet.port: 8080` (uygulama `8000` dinliyor)<br/>**3B:** `SCANNER_HOST: "scanner-service"` (`"scanner-worker"` olmalı) | `manifests/30-intel-api.yaml` dosyasını düzelt, `kubectl apply` ve `kubectl rollout restart deploy/intel-api` çalıştır | EndpointSlice Kaydı, PDB Kesinti Kilidi & `envFrom` Yeniden Başlatma Gereksinimi | `P1 - Blocker` |
-| **[INC-1404]** | `intel-api-netpol` (`NetworkPolicy`) & `node-shield` (`DaemonSet`) | Gateway -> API zaman aşımı (`wget: download timed out`); DaemonSet `DESIRED: 2` (Node-3 eksik) | **4A:** NetPol `ingress-proxy` ve port `8080` bekliyor (`aegis-gateway` & `8000` olmalı)<br/>**4B:** Toleration `effect: NoExecute` (`NoSchedule` olmalı) | `manifests/40-security-and-daemon.yaml` dosyasını düzelt ve `kubectl apply -f manifests/40-security-and-daemon.yaml` çalıştır | CNI Güvenlik Duvarı Sessiz Paket Düşürme (`DROP`) vs TCP `RST` & Scheduler Taint Eşleşmesi | `P1 - Blocker` |
-| **[INC-1405]** | `aegis-gateway` (Helm Sürümü) & `aegis-ingress` (`Ingress`) | `/api/v1/threats` üzerinde `502 Bad Gateway`, ardından `403 Forbidden` ve eski Nginx konfigürasyonu | **5A:** `upstream.port: 8080` (`8000` olmalı)<br/>**5B:** `gateway.securityToken: "legacy-unverified"` (`"aegis-verified"` olmalı) + `subPath` mount yenilenmemesi | `helm-values/gateway-prod.yaml` dosyasını düzelt, `helm upgrade` ve `kubectl rollout restart deploy/aegis-gateway` çalıştır | L4 `502` vs L7 `403` Proxy Analizi & Kubelet `subPath` Volume Mount Değişmezliği | `P1 - Blocker` |
+| **[INC-1403]** | `intel-api` (`Deployment`, `ConfigMap`, `PDB`) | `Running` (`0/1 Ready`), `:8080` üzerinde `connection refused`, ardından `/ready` üzerinde `HTTP 503` | **3A:** `readinessProbe.httpGet.port: 8080` (uygulama `8000` dinliyor)<br/>**3B:** `SCANNER_HOST: "scanner-service"` (`"scanner-worker"` olmalı) | `manifests/30-intel-api.yaml` dosyasını düzelt, `kubectl apply` ve `kubectl rollout restart deploy/intel-api` çalıştır | Readiness Kontrolü, PDB Kesinti Kilidi & `envFrom` Yeniden Başlatma Gereksinimi | `P1 - Blocker` |
+| **[INC-1404]** | `intel-api` (`Service`) & `node-shield` (`DaemonSet`) | Gateway -> API `Connection refused` (`Endpoints: <none>`); DaemonSet `DESIRED: 2` (Node-3 eksik) | **4A:** `Service/intel-api` içinde `selector: intel-backend` & `targetPort: 8080` (`intel-api` & `8000` olmalı)<br/>**4B:** Toleration `effect: NoExecute` (`NoSchedule` olmalı) | `manifests/40-security-and-daemon.yaml` dosyasını düzelt ve `kubectl apply -f manifests/40-security-and-daemon.yaml` çalıştır | EndpointSlice Seçici Eşleşmesi, `kube-proxy` DNAT & Scheduler Taint Eşleşmesi | `P1 - Blocker` |
+| **[INC-1405]** | `aegis-gateway` (Helm Sürümü) & `aegis-ingress` (`Ingress`) | `/api/v1/threats` üzerinde `504 Gateway Time-out` / `502 Bad Gateway`, ardından `403 Forbidden` ve eski Nginx konfigürasyonu | **5A:** `upstream.port: 8080` (`8000` olmalı)<br/>**5B:** `gateway.securityToken: "legacy-unverified"` (`"aegis-verified"` olmalı) + `subPath` mount yenilenmemesi | `helm-values/gateway-prod.yaml` dosyasını düzelt, `helm upgrade` ve `kubectl rollout restart deploy/aegis-gateway` çalıştır | L4 `504/502` vs L7 `403` Proxy Analizi & Kubelet `subPath` Volume Mount Değişmezliği | `P1 - Blocker` |
 
 ---
 
@@ -779,7 +779,7 @@ kubectl exec -n aegis-prod deploy/scanner-worker -- python3 -c "import urllib.re
 
 #### 1. 🧠 Teşhis Zihniyeti (Bu Semptomu Gördüğünde Nasıl Düşünmelisin?)
 * **`Running (0/1 Ready)` ve `RESTARTS: 0` Semptomu:**
-  Pod'lar `Running` durumunda ve yeniden başlatma sayısı `0` iken `READY: 0/1` kalıyorsa, **`livenessProbe` başarılı oluyor ancak `readinessProbe` başarısız oluyordur**. Readiness probu başarısız olduğunda Kubelet konteyneri öldürmez; bunun yerine EndpointSlice denetleyicisi pod IP'sini Kubernetes `Service` listesinden çıkarır (`Endpoints: <none>`). Bu sırada `PodDisruptionBudget/intel-api-pdb` (`minAvailable: 1`) `ALLOWED DISRUPTIONS: 0` durumuna düşerek düğüm bakımlarını kilitler.
+  Pod'lar `Running` durumunda ve yeniden başlatma sayısı `0` iken `READY: 0/1` kalıyorsa, **`livenessProbe` başarılı oluyor ancak `readinessProbe` başarısız oluyordur**. Readiness probu başarısız olduğunda Kubelet konteyneri öldürmez; ancak pod'u `Ready=False` olarak işaretler ve `PodDisruptionBudget/intel-api-pdb` (`minAvailable: 1`) `ALLOWED DISRUPTIONS: 0` durumuna düşerek düğüm bakımlarını kilitler.
 * **TCP `connection refused` ile `HTTP 503` Arasındaki Fark:**
   1. **Hata 3A (Yanlış Probe Portu -> TCP `connection refused`):** `manifests/30-intel-api.yaml` içinde uygulama `8000` portunu dinlerken (`PORT: "8000"`, `containerPort: 8000`, `livenessProbe.httpGet.port: 8000`), `readinessProbe.httpGet.port: 8080` olarak tanımlanmıştır. `8080` portunu dinleyen bir süreç olmadığı için çekirdek TCP `RST` (`connection refused`) döndürür.
   2. **Hata 3B (Yanlış Upstream Servis Adı -> `HTTP 503`):** Readiness portu `8000` yapıldığında Kubelet `/ready` uç noktasına ulaşır; ancak `/ready` kodu PostgreSQL (`aegis-db:5432`), Redis (`aegis-redis:6379`) ve `http://${SCANNER_HOST}:${SCANNER_PORT}/healthz` adreslerini kontrol eder. `ConfigMap/intel-api-config` içinde `SCANNER_HOST: "scanner-service"` yazılmıştır; oysa INC-1402'deki gerçek servis adı `"scanner-worker"`'dır. CoreDNS bu adı çözemediği için `/ready` `HTTP 503` döner.
@@ -787,15 +787,12 @@ kubectl exec -n aegis-prod deploy/scanner-worker -- python3 -c "import urllib.re
 
 #### 2. 🔍 Teşhis Komutları (Kanıt Toplama)
 ```bash
-# 1. intel-api pod, servis endpoint ve PDB durumlarını kontrol edin
-kubectl get pods,svc,endpoints,pdb -n aegis-prod -l app.kubernetes.io/name=intel-api
+# 1. intel-api pod ve PDB durumlarını kontrol edin
+kubectl get pods,pdb -n aegis-prod -l app.kubernetes.io/name=intel-api
 # Beklenen hatalı çıktı:
 # NAME                             READY   STATUS    RESTARTS   AGE
 # pod/intel-api-xxxxxxxxxx-xxxxx   0/1     Running   0          6m
 # pod/intel-api-xxxxxxxxxx-yyyyy   0/1     Running   0          6m
-#
-# NAME                  ENDPOINTS   AGE
-# endpoints/intel-api   <none>      6m
 #
 # NAME                                        MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
 # poddisruptionbudget.policy/intel-api-pdb    1               N/A               0                     6m
@@ -865,37 +862,35 @@ kubectl exec -n aegis-prod deploy/intel-api -- python3 -c "import urllib.request
 
 ---
 
-### [INC-1404] Zero-Trust NetworkPolicy Paket Düşürme & Node-Shield DaemonSet Toleration Hatası (`manifests/40-security-and-daemon.yaml`)
+### [INC-1404] Intel API Servis Yönlendirme Kara Deliği & Node-Shield DaemonSet Toleration Hatası (`manifests/40-security-and-daemon.yaml`)
 
 #### 1. 🧠 Teşhis Zihniyeti (Bu Semptomu Gördüğünde Nasıl Düşünmelisin?)
-* **Neden İstek Anında Reddedilmek Yerine Zaman Aşımına Uğrar? (`NetworkPolicy` DROP vs TCP `RST`):**
-  INC-1403'te güvenlik duvarı yokken kapalı bir porta gidildiğinde çekirdek milisaniyeler içinde TCP `RST` (`Connection refused`) döndürmüştü. INC-1404'te ise `intel-api` `2/2 Ready` ve `:8000` portunu dinliyor olmasına rağmen `aegis-gateway` içinden çalıştırılan `wget -qO- -T 3 http://intel-api:8000/ready` komutu **3 saniye boyunca sessizce asılı kalıp `wget: download timed out` hatası vermektedir**.
-  Yerel kontrol (`localhost:8000`) anında yanıt verirken pod'lar arası erişimin sessizce zaman aşımına uğraması, **CNI `NetworkPolicy` güvenlik duvarının gelen TCP `SYN` paketlerini sessizce düşürdüğünün (`DROP`) kesin kanıtıdır!**
-* **Güvenlik Katmanındaki İki Hatanın Analizi (`manifests/40-security-and-daemon.yaml`):**
-  1. **Hata 4A (`intel-api-netpol` Etiket ve Port Uyuşmazlığı):** `NetworkPolicy/intel-api-netpol` `intel-api` pod'larını korur; ancak izin verilen kaynak pod seçicisinde `app.kubernetes.io/name: ingress-proxy` (gerçek gateway etiketi: `app.kubernetes.io/name: aegis-gateway`) ve hedef port olarak `8080` (gerçek API portu: `8000`) tanımlanmıştır.
+* **Neden Pod İçinde `localhost:8000/ready` Çalışırken Küme İçinde `http://intel-api:8000/ready` Reddedilir?**
+  INC-1403'te her iki `intel-api` pod'unun `1/1 Ready` olduğunu ve `:8000/ready` üzerinde yanıt verdiğini kanıtladık. Buna rağmen `aegis-gateway` içinden çalıştırılan `wget -qO- -T 3 http://intel-api:8000/ready` komutu anında `wget: can't connect to remote host: Connection refused` hatası vermektedir.
+  Bir pod yerel olarak sağlıklı çalışırken Kubernetes `Service` adresi üzerinden ulaşılamıyorsa, kıdemli bir SRE doğrudan **`Service` kaynağının `selector`, `port`, `targetPort` ve `Endpoints` / `EndpointSlice` alanlarını** inceler.
+* **Servis ve Düğüm Güvenliği Katmanındaki İki Hatanın Analizi (`manifests/40-security-and-daemon.yaml`):**
+  1. **Hata 4A (`Service/intel-api` Seçici Etiket Sapması ve `targetPort` Uyuşmazlığı):**
+     - İlk olarak, `Service/intel-api` içinde `selector.app.kubernetes.io/name: intel-backend` tanımlanmıştır; oysa `intel-api` pod'larının gerçek etiketi `app.kubernetes.io/name: intel-api`'dir. Hiçbir pod eşleşmediği için `Endpoints: <none>` oluşur.
+     - İkinci olarak, seçici etiket düzeltilse bile `Service/intel-api` içinde `targetPort: 8080` tanımlanmıştır; oysa `intel-api` konteynerleri `8000` portunu dinlemektedir. `targetPort: 8000` olarak düzeltilmelidir.
   2. **Hata 4B (`node-shield` DaemonSet Taint Toleration `effect` Uyuşmazlığı):** Kümede 3 düğüm vardır ve `Node-3` üzerinde `workload=database:NoSchedule` taint'i bulunmaktadır. `DaemonSet/node-shield` içinde tanımlanan toleration `effect: NoExecute` değerine sahiptir. Kubernetes zamanlayıcısında `effect: NoExecute` yalnızca `NoExecute` taint'ini tolere eder; `NoSchedule` taint'ini tolere etmez. Bu yüzden `node-shield` `Node-3` üzerine zamanlanamaz (`DESIRED: 2`).
 
 #### 2. 🔍 Teşhis Komutları (Kanıt Toplama)
 ```bash
-# 1. aegis-gateway pod'undan intel-api servisine erişim zaman aşımını gözlemleyin
+# 1. aegis-gateway pod'undan intel-api servisine bağlantı hatasını gözlemleyin
 kubectl exec -n aegis-prod deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready || true
 # Beklenen hatalı çıktı:
-# wget: download timed out
+# wget: can't connect to remote host (10.96.x.x): Connection refused
 
-# 2. NetworkPolicy kurallarını inceleyin ve aegis-gateway pod etiketleriyle karşılaştırın
-kubectl get networkpolicy intel-api-netpol -n aegis-prod -o yaml
+# 2. Service/intel-api selector, targetPort ve Endpoints durumunu pod etiketleriyle karşılaştırın
+kubectl describe svc intel-api -n aegis-prod
 # Beklenen hatalı çıktı:
-#   ingress:
-#   - from:
-#     - podSelector:
-#         matchLabels:
-#           app.kubernetes.io/name: ingress-proxy   <-- Yanlış etiket!
-#     ports:
-#     - port: 8080                                  <-- Yanlış port!
-#       protocol: TCP
+# Selector:          app.kubernetes.io/name=intel-backend   <-- Yanlış etiket!
+# Port:              http  8000/TCP
+# TargetPort:        8080/TCP                               <-- Yanlış targetPort!
+# Endpoints:         <none>
 
-kubectl get pods -n aegis-prod -l app.kubernetes.io/name=aegis-gateway --show-labels
-# Beklenen çıktıda gerçek etiketin app.kubernetes.io/name=aegis-gateway olduğu görülür
+kubectl get pods -n aegis-prod -l app.kubernetes.io/name=intel-api --show-labels
+# Beklenen çıktıda gerçek etiketin app.kubernetes.io/name=intel-api olduğu görülür
 
 # 3. DaemonSet durumunu ve 3 düğümdeki taint tanımlarını inceleyin
 kubectl get ds node-shield -n aegis-prod
@@ -909,26 +904,26 @@ kubectl get nodes -o custom-columns=NAME:.metadata.name,TIER:.metadata.labels.ti
 
 #### 3. 🛠️ Adım Adım Çözüm (Sırasıyla Yapılacak Tüm İşlemler)
 * **Adım 1:** `manifests/40-security-and-daemon.yaml` dosyasını düzenleyin:
-  1. `NetworkPolicy/intel-api-netpol` içinde `app.kubernetes.io/name: ingress-proxy` değerini `app.kubernetes.io/name: aegis-gateway` ve `port: 8080` değerini `port: 8000` yapın.
+  1. `Service/intel-api` içinde `targetPort: 8080` değerini `targetPort: 8000` ve `selector.app.kubernetes.io/name: intel-backend` değerini `app.kubernetes.io/name: intel-api` yapın.
   2. `DaemonSet/node-shield` içinde toleration `effect: NoExecute` değerini `effect: NoSchedule` yapın.
 
 ```diff
 --- a/manifests/40-security-and-daemon.yaml
 +++ b/manifests/40-security-and-daemon.yaml
-@@ -16,10 +16,10 @@ spec:
-     - from:
-         - podSelector:
-             matchLabels:
--              app.kubernetes.io/name: ingress-proxy
-+              app.kubernetes.io/name: aegis-gateway
-       ports:
-         - protocol: TCP
--          port: 8080
-+          port: 8000
+@@ -11,10 +11,10 @@ spec:
+   ports:
+     - name: http
+       port: 8000
+-      targetPort: 8080
++      targetPort: 8000
+       protocol: TCP
+   selector:
+-    app.kubernetes.io/name: intel-backend
++    app.kubernetes.io/name: intel-api
  ---
  apiVersion: apps/v1
  kind: DaemonSet
-@@ -43,7 +43,7 @@ spec:
+@@ -40,7 +40,7 @@ spec:
          - key: workload
            operator: Equal
            value: database
@@ -947,25 +942,26 @@ kubectl apply -f manifests/40-security-and-daemon.yaml
 * **Adım 3:** `node-shield` DaemonSet'inin 3 düğümde (`3/3`) çalıştığını ve `aegis-gateway` -> `intel-api:8000` erişiminin açıldığını doğrulayın:
 ```bash
 # 1. node-shield DaemonSet'inin 3 düğümün tamamında Ready olduğunu doğrulayın
-kubectl rollout status ds/node-shield -n aegis-prod --timeout=30s
+kubectl rollout status ds/node-shield -n aegis-prod --timeout=45s
 kubectl get ds node-shield -n aegis-prod
 # Beklenen çıktı: DESIRED: 3, CURRENT: 3, READY: 3
 
-# 2. aegis-gateway pod'unun NetworkPolicy üzerinden intel-api:8000/ready adresine erişebildiğini doğrulayın
+# 2. aegis-gateway pod'unun Service/intel-api üzerinden intel-api:8000/ready adresine erişebildiğini doğrulayın
 kubectl exec -n aegis-prod deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready
 # Beklenen çıktı: {"status": "ready", "db": "connected", "redis": "connected", "scanner": "connected"}
 ```
 
 #### 4. 💡 Sektör Deneyimi & Benzer Durumlar (Production Karşılaştırması)
-* **NetworkPolicy Tüm Trafiği Engellerken Kubelet Readiness Probe Neden Çalışmaya Devam Etti?** Kubelet sağlık probları düğümün (node) kendi ana ağ ad alanından (root network namespace) gönderilir. Kubernetes CNI eklentileri, yerel düğümdeki Kubelet'in pod'lara yaptığı sağlık kontrollerini `NetworkPolicy` kısıtlamalarından her zaman muaf tutar. Bu nedenle bir pod `1/1 Ready` görünse bile `NetworkPolicy` yüzünden diğer pod'lardan tamamen izole kalabilir!
+* **İsimlendirilmiş (Named) TargetPort Kullanımı:** `Service` tanımlarında sabit sayısal `targetPort: 8000` yerine pod üzerindeki port adını (`targetPort: http`) referans vermek, uygulama ekibi konteyner portunu değiştirdiğinde servis yönlendirmesinin kopmasını önler.
+* **Güvenlik Ajanları İçin Joker (Wildcard) Taint Toleration:** Küme genelindeki güvenlik ve log DaemonSet'lerinde (Falco, Cilium, Node-Problem-Detector) `tolerations: [{operator: Exists}]` tanımlamak, düğümlere hangi özel taint eklenirse eklensin ajanın her düğümde çalışmasını garanti eder.
 
 ---
 
-### [INC-1405] Edge Gateway 502 Bad Gateway, 403 Token Reddi & ConfigMap Yenileme (`helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml`)
+### [INC-1405] Edge Gateway 504/502 Upstream Hatası, 403 Token Reddi & ConfigMap Yenileme (`helm-values/gateway-prod.yaml` & `manifests/50-ingress.yaml`)
 
 #### 1. 🧠 Teşhis Zihniyeti (Bu Semptomu Gördüğünde Nasıl Düşünmelisin?)
-* **Edge Katmanında `502 Bad Gateway` ve `403 Forbidden` Ayrımı:**
-  1. **Hata 5A (`502 Bad Gateway` — L4 Upstream Port Hatası):** `NetworkPolicy` düzeltildikten sonra `aegis-gateway` üzerinden `http://localhost:8080/api/v1/threats` çağrıldığında `502 Bad Gateway` döner. Çünkü `helm-values/gateway-prod.yaml` içinde `upstream.port: 8080` tanımlıdır; oysa `intel-api` Servisi `8000` portunu dinlemektedir.
+* **Edge Katmanında `504 Gateway Time-out` / `502 Bad Gateway` ve `403 Forbidden` Ayrımı:**
+  1. **Hata 5A (`504 Gateway Time-out` / `502 Bad Gateway` — L4 Upstream Port Hatası):** `Service/intel-api` düzeltildikten sonra `aegis-gateway` üzerinden `http://localhost:8080/api/v1/threats` çağrıldığında `504 Gateway Time-out` (veya `502 Bad Gateway`) döner. Çünkü `helm-values/gateway-prod.yaml` içinde `upstream.port: 8080` tanımlıdır; oysa `intel-api` Servisi `8000` portunu dinlemektedir. OCI VCN-Native CNI üzerinde ClusterIP'nin tanımlı olmayan bir portuna (`8080`) giden paketler `kube-proxy` DNAT kuralıyla eşleşmediği için Nginx'in `proxy_connect_timeout 3s` süresinde zaman aşımına uğrar.
   2. **Hata 5B (`403 Forbidden` — L7 Güvenlik Başlığı Reddi):** `charts/aegis-gateway/templates/configmap.yaml` içinde Nginx her isteğe `proxy_set_header X-Aegis-Token "{{ .Values.gateway.securityToken }}";` başlığını ekler. `helm-values/gateway-prod.yaml` içinde bu değer `"legacy-unverified"` olarak kalmıştır; oysa `intel-api` (`REQUIRED_GATEWAY_TOKEN`) `"aegis-verified"` beklemektedir. Token eşleşmediğinde `intel-api` `HTTP 403 Forbidden` (`untrusted proxy: invalid or missing X-Aegis-Token header`) döndürür.
   3. **Neden `helm upgrade` Sonrasında `kubectl rollout restart` Zorunludur?** `charts/aegis-gateway/templates/deployment.yaml` incelendiğinde ConfigMap'in `/etc/nginx/nginx.conf` dosyasına `subPath: nginx.conf` ile bağlandığı görülür. Kubernetes'te **`subPath` kullanılan volume mount'lar Kubelet tarafından asla otomatik güncellenmez**! Üstelik Nginx de başlangıçta okuduğu konfigürasyonu bellekte tutar. Bu nedenle `helm upgrade` sonrasında `kubectl rollout restart deploy/aegis-gateway -n aegis-prod` çalıştırmak zorunludur.
 
@@ -990,10 +986,10 @@ kubectl get configmap aegis-gateway-config -n aegis-prod -o yaml | grep -E "prox
 # 2. Küme içinden gateway yanıtını test edin ve Nginx loglarını kontrol edin
 kubectl exec -n aegis-prod deploy/aegis-gateway -- wget -S -O- http://localhost:8080/api/v1/threats 2>&1 || true
 # Beklenen hatalı çıktı:
-#   HTTP/1.1 502 Bad Gateway
+#   HTTP/1.1 504 Gateway Time-out (veya 502 Bad Gateway)
 
 kubectl logs -n aegis-prod deploy/aegis-gateway --tail=20
-# Beklenen hatalı çıktıda port 8080 upstream bağlantı hatası görülür
+# Beklenen hatalı çıktıda port 8080 upstream bağlantı zaman aşımı / reddi görülür
 
 # 3. intel-api-config içindeki beklenen güvenlik token'ını ve Ingress kaynağını inceleyin
 kubectl get configmap intel-api-config -n aegis-prod -o yaml | grep REQUIRED_GATEWAY_TOKEN
@@ -1085,12 +1081,12 @@ API_READY=$(kubectl exec -n "${NS}" deploy/intel-api -- python3 -c "import urlli
 echo "${API_READY}" | grep -q '"status": "ready"'
 echo "    ✅ intel-api (2/2 Ready) DB, Redis ve scanner-worker ile bağlantılı."
 
-echo "--> [INC-1404] Zero-Trust NetworkPolicy & Node-Shield DaemonSet Kontrolü..."
+echo "--> [INC-1404] Intel API Servis Yönlendirmesi & Node-Shield DaemonSet Kontrolü..."
 DESIRED_DS=$(kubectl get ds node-shield -n "${NS}" -o jsonpath='{.status.desiredNumberScheduled}')
 READY_DS=$(kubectl get ds node-shield -n "${NS}" -o jsonpath='{.status.numberReady}')
 [ "${DESIRED_DS}" = "3" ] && [ "${READY_DS}" = "3" ]
 kubectl exec -n "${NS}" deploy/aegis-gateway -- wget -qO- -T 3 http://intel-api:8000/ready | grep -q '"status": "ready"'
-echo "    ✅ node-shield 3/3 düğümde çalışıyor & NetworkPolicy gateway -> intel-api:8000 trafiğine izin veriyor."
+echo "    ✅ node-shield 3/3 düğümde çalışıyor & Service/intel-api gateway -> intel-api:8000 trafiğini yönlendiriyor."
 
 echo "--> [INC-1405] Edge Gateway L7 Yönlendirme & Tehdit İmzaları Yanıt Kontrolü..."
 THREATS_JSON=$(kubectl exec -n "${NS}" deploy/aegis-gateway -- wget -qO- http://localhost:8080/api/v1/threats)
