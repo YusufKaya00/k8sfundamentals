@@ -16,10 +16,10 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: aegis-gateway
+              app.kubernetes.io/name: ingress-proxy
       ports:
         - protocol: TCP
-          port: 8000
+          port: 8080
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -43,7 +43,7 @@ spec:
         - key: workload
           operator: Equal
           value: database
-          effect: NoSchedule
+          effect: NoExecute
       containers:
         - name: shield-agent
           image: docker.io/library/busybox:1.36

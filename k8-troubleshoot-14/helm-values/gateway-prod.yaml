@@ -2,7 +2,7 @@ replicaCount: 2
 
 upstream:
   host: "intel-api"
-  port: 8000
+  port: 8080
 
 gateway:
-  securityToken: "aegis-verified"
+  securityToken: "legacy-unverified"

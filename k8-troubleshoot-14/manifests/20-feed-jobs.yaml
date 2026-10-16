@@ -26,7 +26,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: aegis-db-secret
-                  key: database-password
+                  key: postgres-password
           command:
             - sh
             - -c
@@ -62,7 +62,7 @@ metadata:
     app.kubernetes.io/part-of: aegisgrid
 spec:
   schedule: "*/2 * * * *"
-  suspend: false
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 2
@@ -84,4 +84,4 @@ spec:
               command:
                 - sh
                 - -c
-                - "redis-cli -h aegis-redis -p 6379 SET aegis:feed:last_sync $(date -u +%Y-%m-%dT%H:%M:%SZ) && redis-cli -h aegis-redis -p 6379 INCR aegis:feed:sync_count && echo 'Feed rotation synced successfully.'"
+                - "redis-cli -h redis-cache -p 6379 SET aegis:feed:last_sync $(date -u +%Y-%m-%dT%H:%M:%SZ) && redis-cli -h redis-cache -p 6379 INCR aegis:feed:sync_count && echo 'Feed rotation synced successfully.'"
