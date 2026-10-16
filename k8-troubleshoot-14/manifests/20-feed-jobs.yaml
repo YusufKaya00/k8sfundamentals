@@ -62,7 +62,6 @@ metadata:
     app.kubernetes.io/part-of: aegisgrid
 spec:
   schedule: "*/2 * * * *"
-  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 2
