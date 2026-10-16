@@ -55,7 +55,7 @@ spec:
         tier: web
       containers:
         - name: worker
-          image: python:3.12-alpine
+          image: docker.io/library/python:3.12-alpine
           command: ["python3", "/opt/worker/worker.py"]
           envFrom:
             - configMapRef:

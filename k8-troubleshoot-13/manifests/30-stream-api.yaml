@@ -96,7 +96,7 @@ spec:
         tier: web
       containers:
         - name: api
-          image: python:3.12-alpine
+          image: docker.io/library/python:3.12-alpine
           command: ["python3", "/app/server.py"]
           envFrom:
             - configMapRef:

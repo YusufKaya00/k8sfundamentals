@@ -60,7 +60,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: agent
-          image: python:3.12-alpine
+          image: docker.io/library/python:3.12-alpine
           command: ["python3", "/opt/agent/agent.py"]
           env:
             - name: NODE_NAME
