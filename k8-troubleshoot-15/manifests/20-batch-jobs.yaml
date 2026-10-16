@@ -1,0 +1,94 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ledger-bootstrap
+  namespace: quantflow-prod
+  labels:
+    app.kubernetes.io/name: ledger-bootstrap
+    app.kubernetes.io/part-of: quantflow
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ledger-bootstrap
+        app.kubernetes.io/part-of: quantflow
+    spec:
+      nodeSelector:
+        tier: web
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGHOST
+              value: "quant-postgres"
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              value: "quant_admin"
+            - name: PGDATABASE
+              value: "quant_ledger"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: quant-db-secret
+                  key: postgres-pass
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"; do
+                echo "Waiting for PostgreSQL at ${PGHOST}:${PGPORT}..."
+                sleep 2
+              done
+              psql -v ON_ERROR_STOP=1 <<'EOF'
+              CREATE TABLE IF NOT EXISTS risk_limits (
+                  id SERIAL PRIMARY KEY,
+                  portfolio_code VARCHAR(32) UNIQUE NOT NULL,
+                  max_drawdown_bps INT NOT NULL,
+                  status VARCHAR(16) NOT NULL
+              );
+              INSERT INTO risk_limits (portfolio_code, max_drawdown_bps, status) VALUES
+                  ('PORTFOLIO-ALPHA', 150, 'ACTIVE'),
+                  ('PORTFOLIO-BETA', 200, 'ACTIVE'),
+                  ('PORTFOLIO-GAMMA', 125, 'ACTIVE'),
+                  ('PORTFOLIO-DELTA', 300, 'ACTIVE')
+              ON CONFLICT (portfolio_code) DO NOTHING;
+              EOF
+              echo "QuantFlow risk_limits table seeded successfully."
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: market-snapshot
+  namespace: quantflow-prod
+  labels:
+    app.kubernetes.io/name: market-snapshot
+    app.kubernetes.io/part-of: quantflow
+spec:
+  schedule: "*/2 * * * *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: market-snapshot
+            app.kubernetes.io/part-of: quantflow
+        spec:
+          nodeSelector:
+            tier: web
+          restartPolicy: OnFailure
+          containers:
+            - name: snapshot
+              image: docker.io/library/redis:7.2-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - "redis-cli -h quant-redis -p 6380 SET quant:market:status ACTIVE && redis-cli -h quant-redis -p 6380 INCR quant:market:tick && echo 'Market snapshot synced successfully.'"
