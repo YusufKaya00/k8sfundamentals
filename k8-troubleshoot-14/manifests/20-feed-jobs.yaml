@@ -26,7 +26,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: aegis-db-secret
-                  key: postgres-password
+                  key: database-password
           command:
             - sh
             - -c
