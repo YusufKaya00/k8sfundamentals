@@ -140,7 +140,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /ready
-              port: 8080
+              port: 8000
             initialDelaySeconds: 3
             periodSeconds: 5
             timeoutSeconds: 2
