@@ -48,6 +48,7 @@ spec:
             - sh
             - -c
             - |
+              set -e
               echo "[latency-probe] Starting kernel network latency monitor on node $(hostname)..."
               while true; do
                 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) node=$(hostname) rtt_us=142 status=OK" >> /var/log/quant-probe/latency.log
