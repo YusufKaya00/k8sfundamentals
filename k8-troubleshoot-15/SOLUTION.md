@@ -379,8 +379,8 @@ kubectl apply -f manifests/50-ingress.yaml
 
 * **Step 4:** Run the end-to-end verification:
 ```bash
-GW_IP=$(kubectl get svc quant-gateway -n quantflow-prod -o jsonpath='{.spec.clusterIP}')
-curl -i -sS "http://${GW_IP}/api/v1/risk/evaluate"
+LB_IP=$(kubectl get svc quant-gateway -n quantflow-prod -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -i -sS "http://${LB_IP}/api/v1/risk/evaluate"
 # Expected: HTTP/1.1 200 OK
 # {"platform": "QuantFlow", "status": "RISK_APPROVED", "active_portfolios": ["PORTFOLIO-ALPHA", "PORTFOLIO-BETA", "PORTFOLIO-GAMMA", "PORTFOLIO-DELTA"], "liquidity_engine": "online"}
 ```

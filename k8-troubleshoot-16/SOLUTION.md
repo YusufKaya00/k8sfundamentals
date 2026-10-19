@@ -338,15 +338,15 @@ Update `manifests/60-ingress.yaml`:
 +                  number: 80
 ```
 
-Upgrade, restart `omni-gateway` (for `subPath` reload), and verify:
+Upgrade, restart `omni-gateway` (for `subPath` reload), and verify via External LoadBalancer IP:
 ```bash
 helm upgrade --install omni-gateway ./charts/omni-gateway -f helm-values/gateway-prod.yaml -n omnicore-prod
 kubectl rollout restart deploy/omni-gateway -n omnicore-prod
 kubectl rollout status deploy/omni-gateway -n omnicore-prod --timeout=45s
 kubectl apply -f manifests/60-ingress.yaml
 
-GW_IP=$(kubectl get svc omni-gateway -n omnicore-prod -o jsonpath='{.spec.clusterIP}')
-curl -i -sS "http://${GW_IP}/api/v1/checkout"
+LB_IP=$(kubectl get svc omni-gateway -n omnicore-prod -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -i -sS -H "Host: omnicore.local" "http://${LB_IP}/api/v1/checkout"
 ```
 
 ---

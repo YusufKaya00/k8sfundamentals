@@ -333,12 +333,13 @@ cat manifests/60-ingress.yaml
 
 #### ✅ Success Criteria & Grand Finale End-to-End Verification
 ```bash
-# 1. Verify omni-gateway health and end-to-end checkout response through Service port 80
-GW_IP=$(kubectl get svc omni-gateway -n omnicore-prod -o jsonpath='{.spec.clusterIP}')
-curl -sS "http://${GW_IP}/healthz"
+# 1. Verify omni-gateway health and end-to-end checkout response through External LoadBalancer IP (Port 80)
+LB_IP=$(kubectl get svc omni-gateway -n omnicore-prod -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "OmniCore External LoadBalancer IP: ${LB_IP}"
+curl -sS "http://${LB_IP}/healthz"
 # Expected: {"status":"ok","gateway":"omni-gateway"}
 
-curl -i -sS "http://${GW_IP}/api/v1/checkout"
+curl -i -sS -H "Host: omnicore.local" "http://${LB_IP}/api/v1/checkout"
 # Expected: HTTP/1.1 200 OK
 # {"platform": "OmniCore", "status": "ORDER_COMMITTED", "verified_accounts": ["ACC-CORE-01", "ACC-CORE-02", "ACC-CORE-03", "ACC-CORE-04"], "catalog_engine": "online"}
 
@@ -547,11 +548,12 @@ cat manifests/60-ingress.yaml
 
 #### ✅ Başarı Kriterleri ve Büyük Final Uçtan Uca Doğrulaması
 ```bash
-GW_IP=$(kubectl get svc omni-gateway -n omnicore-prod -o jsonpath='{.spec.clusterIP}')
-curl -sS "http://${GW_IP}/healthz"
+LB_IP=$(kubectl get svc omni-gateway -n omnicore-prod -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "OmniCore Dış LoadBalancer IP: ${LB_IP}"
+curl -sS "http://${LB_IP}/healthz"
 # Beklenen: {"status":"ok","gateway":"omni-gateway"}
 
-curl -i -sS "http://${GW_IP}/api/v1/checkout"
+curl -i -sS -H "Host: omnicore.local" "http://${LB_IP}/api/v1/checkout"
 # Beklenen: HTTP/1.1 200 OK
 # {"platform": "OmniCore", "status": "ORDER_COMMITTED", "verified_accounts": ["ACC-CORE-01", "ACC-CORE-02", "ACC-CORE-03", "ACC-CORE-04"], "catalog_engine": "online"}
 

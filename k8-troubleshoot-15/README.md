@@ -293,11 +293,11 @@ cat manifests/50-ingress.yaml
 Run the following commands to verify **INC-1505** and full platform recovery:
 ```bash
 # 1. Verify quant-gateway health and end-to-end risk evaluation response through Service port 80
-GW_IP=$(kubectl get svc quant-gateway -n quantflow-prod -o jsonpath='{.spec.clusterIP}')
-curl -sS "http://${GW_IP}/healthz"
+LB_IP=$(kubectl get svc quant-gateway -n quantflow-prod -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -sS "http://${LB_IP}/healthz"
 # Expected: {"status":"ok","gateway":"quant-gateway"}
 
-curl -i -sS "http://${GW_IP}/api/v1/risk/evaluate"
+curl -i -sS "http://${LB_IP}/api/v1/risk/evaluate"
 # Expected: HTTP/1.1 200 OK
 # {"platform": "QuantFlow", "status": "RISK_APPROVED", "active_portfolios": ["PORTFOLIO-ALPHA", "PORTFOLIO-BETA", "PORTFOLIO-GAMMA", "PORTFOLIO-DELTA"], "liquidity_engine": "online"}
 
