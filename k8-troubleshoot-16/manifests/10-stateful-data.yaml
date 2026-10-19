@@ -103,6 +103,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+              subPath: pgdata
   volumeClaimTemplates:
     - metadata:
         name: data
