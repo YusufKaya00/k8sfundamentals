@@ -15,7 +15,12 @@ spec:
         app.kubernetes.io/part-of: omnicore
     spec:
       nodeSelector:
-        tier: web
+        tier: database
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: database
+          effect: NoSchedule
       restartPolicy: OnFailure
       containers:
         - name: migrator
