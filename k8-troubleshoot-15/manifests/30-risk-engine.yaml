@@ -9,7 +9,7 @@ metadata:
 data:
   PORT: "8000"
   DB_HOST: "quant-db"
-  DB_PORT: "5433"
+  DB_PORT: "5432"
   REDIS_HOST: "quant-redis"
   REDIS_PORT: "6379"
   LIQUIDITY_URL: "http://liquidity-worker:9095/healthz"
