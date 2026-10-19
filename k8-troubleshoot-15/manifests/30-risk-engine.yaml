@@ -189,7 +189,8 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: risk-api
+    name: risk-engine
+    
   minReplicas: 2
   maxReplicas: 5
   metrics:
