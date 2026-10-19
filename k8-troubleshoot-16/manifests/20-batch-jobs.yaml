@@ -28,7 +28,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: PGHOST
-              value: "omnicore-postgres"
+              value: "omnicore-db"
             - name: PGPORT
               value: "5432"
             - name: PGUSER
