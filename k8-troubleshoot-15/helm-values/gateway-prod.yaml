@@ -12,4 +12,4 @@ upstream:
   port: 8000
 
 gateway:
-  signatureToken: "legacy-invalid"
+  signatureToken: "quant-verified"
