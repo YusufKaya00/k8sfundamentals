@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-worker-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: catalog-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: omnicore
+data:
+  worker.py: |
+    import json
+    import os
+    import socket
+    import time
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PORT = int(os.environ.get("PORT", "9090"))
+    DB_HOST = os.environ.get("DB_HOST", "omnicore-db")
+    DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+    REDIS_HOST = os.environ.get("REDIS_HOST", "omnicore-redis")
+    REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
+
+    print("[catalog-worker] Allocating 48 MiB in-memory product catalog index...", flush=True)
+    CATALOG_CACHE = bytearray(48 * 1024 * 1024)
+    for i in range(0, len(CATALOG_CACHE), 4096):
+        CATALOG_CACHE[i] = 1
+    print("[catalog-worker] Warming up catalog index trees (6 seconds)...", flush=True)
+    time.sleep(6)
+    print("[catalog-worker] Catalog warmup complete (48 MiB pinned).", flush=True)
+
+    class CatalogHandler(BaseHTTPRequestHandler):
+        def _send_json(self, code, payload):
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path == "/healthz":
+                try:
+                    with socket.create_connection((DB_HOST, DB_PORT), timeout=2):
+                        pass
+                    with socket.create_connection((REDIS_HOST, REDIS_PORT), timeout=2):
+                        pass
+                    self._send_json(200, {
+                        "status": "healthy",
+                        "service": "catalog-worker",
+                        "cache_mib": 48,
+                        "db": f"{DB_HOST}:{DB_PORT}",
+                        "redis": f"{REDIS_HOST}:{REDIS_PORT}"
+                    })
+                except Exception as exc:
+                    self._send_json(503, {
+                        "status": "unhealthy",
+                        "error": str(exc)
+                    })
+                return
+
+            self._send_json(404, {"error": "endpoint not found"})
+
+        def log_message(self, format, *args):
+            print(f"[catalog-worker] {self.address_string()} - {format % args}", flush=True)
+
+    if __name__ == "__main__":
+        print(f"[catalog-worker] Listening on 0.0.0.0:{PORT}...", flush=True)
+        HTTPServer(("0.0.0.0", PORT), CatalogHandler).serve_forever()

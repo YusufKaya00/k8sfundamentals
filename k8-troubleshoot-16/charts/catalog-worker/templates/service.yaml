@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: catalog-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: omnicore
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: catalog-worker
