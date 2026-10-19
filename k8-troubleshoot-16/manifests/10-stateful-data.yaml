@@ -127,7 +127,7 @@ spec:
   ports:
     - name: redis
       port: 6379
-      targetPort: 6380
+      targetPort: 6379
       protocol: TCP
   selector:
     app.kubernetes.io/name: omnicore-redis
