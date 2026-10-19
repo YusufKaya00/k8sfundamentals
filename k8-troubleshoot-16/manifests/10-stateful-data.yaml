@@ -54,7 +54,7 @@ spec:
         - key: workload
           operator: Equal
           value: database
-          effect: NoExecute
+          effect: NoSchedule
       containers:
         - name: postgres
           image: docker.io/library/postgres:16-alpine
