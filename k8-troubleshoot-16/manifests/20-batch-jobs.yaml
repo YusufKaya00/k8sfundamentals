@@ -1,0 +1,94 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: schema-migrator
+  namespace: omnicore-prod
+  labels:
+    app.kubernetes.io/name: schema-migrator
+    app.kubernetes.io/part-of: omnicore
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: schema-migrator
+        app.kubernetes.io/part-of: omnicore
+    spec:
+      nodeSelector:
+        tier: web
+      restartPolicy: OnFailure
+      containers:
+        - name: migrator
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGHOST
+              value: "omnicore-postgres"
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              value: "omni_admin"
+            - name: PGDATABASE
+              value: "omnicore_ledger"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omnicore-db-secret
+                  key: postgres-pass
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"; do
+                echo "Waiting for PostgreSQL at ${PGHOST}:${PGPORT}..."
+                sleep 2
+              done
+              psql -v ON_ERROR_STOP=1 <<'EOF'
+              CREATE TABLE IF NOT EXISTS ledger_accounts (
+                  id SERIAL PRIMARY KEY,
+                  account_code VARCHAR(32) UNIQUE NOT NULL,
+                  credit_limit_usd INT NOT NULL,
+                  status VARCHAR(16) NOT NULL
+              );
+              INSERT INTO ledger_accounts (account_code, credit_limit_usd, status) VALUES
+                  ('ACC-CORE-01', 250000, 'VERIFIED'),
+                  ('ACC-CORE-02', 500000, 'VERIFIED'),
+                  ('ACC-CORE-03', 150000, 'VERIFIED'),
+                  ('ACC-CORE-04', 750000, 'VERIFIED')
+              ON CONFLICT (account_code) DO NOTHING;
+              EOF
+              echo "OmniCore ledger_accounts table seeded successfully."
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: state-heartbeat
+  namespace: omnicore-prod
+  labels:
+    app.kubernetes.io/name: state-heartbeat
+    app.kubernetes.io/part-of: omnicore
+spec:
+  schedule: "*/2 * * * *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: state-heartbeat
+            app.kubernetes.io/part-of: omnicore
+        spec:
+          nodeSelector:
+            tier: web
+          restartPolicy: OnFailure
+          containers:
+            - name: heartbeat
+              image: docker.io/library/redis:7.2-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - "redis-cli -h redis-master -p 6379 SET omnicore:cluster:heartbeat ONLINE && redis-cli -h redis-master -p 6379 INCR omnicore:cluster:ticks && echo 'Cluster heartbeat recorded.'"
