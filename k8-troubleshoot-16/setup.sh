@@ -18,6 +18,7 @@ kubectl apply -f manifests/00-namespace.yaml
 
 echo "--> [3/6] Applying Kubernetes manifests..."
 kubectl delete job schema-migrator manual-heartbeat -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
+kubectl delete statefulset omnicore-db -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
 kubectl delete pvc data-omnicore-db-0 -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
 kubectl apply -f manifests/
 
