@@ -128,9 +128,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: risk-engine-config
-          env:
-            - name: LIQUIDITY_URL
-              value: "http://liquidity-worker:9095/healthz"
+    
           livenessProbe:
             httpGet:
               path: /healthz
@@ -150,6 +148,7 @@ spec:
           resources:
             requests:
               memory: 64Mi
+              cpu: 50m
             limits:
               cpu: 250m
               memory: 512Mi
@@ -190,13 +189,15 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: risk-engine
-    
+
   minReplicas: 2
   maxReplicas: 5
   metrics:
     - type: Resource
       resource:
-        name: cpu
+        
+        name: cpu 
+        
         target:
           type: Utilization
           averageUtilization: 70
