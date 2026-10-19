@@ -96,4 +96,4 @@ spec:
               command:
                 - sh
                 - -c
-                - "redis-cli -h redis -p 6379 SET omnicore:cluster:heartbeat ONLINE && redis-cli -h redis -p 6379 INCR omnicore:cluster:ticks && echo 'Cluster heartbeat recorded.'"
+                - "redis-cli -h omnicore-redis -p 6379 SET omnicore:cluster:heartbeat ONLINE && redis-cli -h omnicore-redis -p 6379 INCR omnicore:cluster:ticks && echo 'Cluster heartbeat recorded.'"
