@@ -27,7 +27,7 @@ livenessProbe:
   failureThreshold: 3
 
 readinessProbe:
-  path: "/ready"
+  path: "/healthz"
   initialDelaySeconds: 3
   periodSeconds: 5
   timeoutSeconds: 2
