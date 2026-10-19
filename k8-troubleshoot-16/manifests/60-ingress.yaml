@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: omni-ingress
+  namespace: omnicore-prod
+  labels:
+    app.kubernetes.io/name: omni-ingress
+    app.kubernetes.io/part-of: omnicore
+spec:
+  ingressClassName: nginx-legacy
+  rules:
+    - host: omnicore.local
+      http:
+        paths:
+          - path: /api/v1/checkout
+            pathType: Prefix
+            backend:
+              service:
+                name: omni-gateway
+                port:
+                  number: 8080
