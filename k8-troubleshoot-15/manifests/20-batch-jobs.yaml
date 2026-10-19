@@ -34,7 +34,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: quant-db-secret
-                  key: db-password
+                  key:  db-password
           command:
             - sh
             - -c
