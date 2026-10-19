@@ -104,6 +104,11 @@ metadata:
     app.kubernetes.io/part-of: omnicore
 spec:
   replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 100%
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: checkout-api

@@ -10,8 +10,8 @@ echo "=========================================================="
 echo " Bootstrapping SRE Incident Lab 16: OmniCore Platform"
 echo "=========================================================="
 
-echo "--> [1/6] Cleaning up previous lab namespaces if present..."
-kubectl delete namespace quantflow-prod aegis-prod --ignore-not-found >/dev/null 2>&1 || true
+echo "--> [1/6] Cleaning up old lab namespaces if present..."
+kubectl delete namespace aegis-prod --ignore-not-found >/dev/null 2>&1 || true
 
 echo "--> [2/6] Creating namespace ${NAMESPACE}..."
 kubectl apply -f manifests/00-namespace.yaml
