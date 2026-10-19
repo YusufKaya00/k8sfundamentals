@@ -142,7 +142,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: checkout-api-config
-     
+        
           livenessProbe:
             httpGet:
               path: /healthz
