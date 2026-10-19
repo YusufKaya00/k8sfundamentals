@@ -23,7 +23,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: PGHOST
-              value: "quant-postgres"
+              value: "quant-db"
             - name: PGPORT
               value: "5432"
             - name: PGUSER
