@@ -45,7 +45,7 @@ spec:
           volumeMounts:
             - name: telemetry-logs
               mountPath: /var/log/omnicore-node
-              readOnly: true
+              readOnly: false
       volumes:
         - name: telemetry-logs
           emptyDir: {}
