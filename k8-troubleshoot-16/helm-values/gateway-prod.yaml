@@ -1,0 +1,15 @@
+replicaCount: 1
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8081
+  nodePort: 30086
+  externalTrafficPolicy: Cluster
+
+upstream:
+  host: "checkout-api"
+  port: 8000
+
+gateway:
+  authToken: "legacy-invalid"
