@@ -130,7 +130,7 @@ spec:
                 name: risk-engine-config
           env:
             - name: LIQUIDITY_URL
-              value: "http://127.0.0.1:9095/healthz"
+              value: "http://liquidity-worker:9095/healthz"
           livenessProbe:
             httpGet:
               path: /healthz
