@@ -2,7 +2,7 @@ replicaCount: 1
 
 db:
   host: "omnicore-db"
-  port: 5433
+  port: 5432
 
 redis:
   host: "omnicore-redis"
