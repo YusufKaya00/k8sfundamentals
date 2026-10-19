@@ -74,7 +74,7 @@ metadata:
     app.kubernetes.io/part-of: omnicore
 spec:
   schedule: "*/2 * * * *"
-  suspend: true
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 2
