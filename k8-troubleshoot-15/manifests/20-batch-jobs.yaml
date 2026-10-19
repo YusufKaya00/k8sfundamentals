@@ -91,4 +91,4 @@ spec:
               command:
                 - sh
                 - -c
-                - "redis-cli -h quant-redis -p 6380 SET quant:market:status ACTIVE && redis-cli -h quant-redis -p 6380 INCR quant:market:tick && echo 'Market snapshot synced successfully.'"
+                - "redis-cli -h quant-redis -p 6379 SET quant:market:status ACTIVE && redis-cli -h quant-redis -p 6379 INCR quant:market:tick && echo 'Market snapshot synced successfully.'"
