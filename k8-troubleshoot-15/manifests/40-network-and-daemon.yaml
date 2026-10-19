@@ -36,7 +36,7 @@ spec:
         app.kubernetes.io/part-of: quantflow
     spec:
       tolerations:
-        - key: role
+        - key: workload
           operator: Equal
           value: database
           effect: NoSchedule
@@ -64,7 +64,7 @@ spec:
           volumeMounts:
             - name: probe-logs
               mountPath: /var/log/quant-probe
-              readOnly: true
+              readOnly: false
       volumes:
         - name: probe-logs
           emptyDir: {}
