@@ -34,7 +34,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: quant-db-secret
-                  key: postgres-pass
+                  key: db-password
           command:
             - sh
             - -c
