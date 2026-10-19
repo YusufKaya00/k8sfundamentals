@@ -1,11 +1,11 @@
 replicaCount: 1
 
 redis:
-  host: "quant-cache"
+  host: "quant-redis"
   port: 6379
 
 livenessProbe:
-  path: "/livez"
+  path: "/healthz"
   initialDelaySeconds: 5
   periodSeconds: 4
   timeoutSeconds: 2
@@ -21,7 +21,7 @@ readinessProbe:
 resources:
   requests:
     cpu: 50m
-    memory: 16Mi
+    memory: 50Mi
   limits:
     cpu: 250m
-    memory: 32Mi
+    memory: 256Mi
