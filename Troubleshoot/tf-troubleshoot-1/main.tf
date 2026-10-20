@@ -9,7 +9,8 @@ terraform {
 
 provider "azurerm" {
   features {}
-  subscription_id                 = "671cc34b-e462-449f-b81f-d58b6c056acc"
+  # az login ile giris yapildigi icin subscription_id otomatik algilanabilir veya asagidaki gibi verilebilir:
+  # subscription_id                 = "<SUBSCRIPTION_ID>"
   resource_provider_registrations = "none"
 }
 
