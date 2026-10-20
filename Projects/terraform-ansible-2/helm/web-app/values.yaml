@@ -1,0 +1,19 @@
+replicaCount: 2
+
+image:
+  repository: nginx
+  tag: "alpine"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: "traefik"
+
+appContent:
+  title: "Cloud-Native Multi-Node Kubernetes Lab"
+  heading: "Azure + Terraform + Ansible + Helm Pipeline Success! 🚀"
+  message: "This web application was provisioned on Azure using Terraform, configured with Ansible, and deployed via Helm Chart."
