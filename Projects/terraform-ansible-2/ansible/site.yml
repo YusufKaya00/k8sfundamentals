@@ -1,0 +1,85 @@
+---
+# ==========================================
+# 1. COMMON: PREPARATION ON ALL NODES
+# ==========================================
+- name: Common Setup and Packages for All Nodes
+  hosts: k8s_cluster
+  become: true
+  tasks:
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install prerequisite packages
+      apt:
+        name:
+          - curl
+          - apt-transport-https
+          - ca-certificates
+          - git
+          - htop
+        state: present
+
+    - name: Disable swap immediately
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Disable swap permanently in /etc/fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^(\s*)([^#\s]+\s+swap\s+.*)$'
+        replace: '# \1\2'
+
+    - name: Install containerd runtime
+      apt:
+        name: containerd
+        state: present
+
+    - name: Enable and start containerd service
+      systemd:
+        name: containerd
+        state: started
+        enabled: yes
+
+# ==========================================
+# 2. CONTROL-PLANE: MASTER NODE INSTALLATION
+# ==========================================
+- name: Master (Control-Plane) Installation
+  hosts: master
+  become: true
+  tasks:
+    - name: Install K3s server on Master
+      shell: curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Grant read permissions to kubeconfig
+      file:
+        path: /etc/rancher/k3s/k3s.yaml
+        mode: '0644'
+
+    - name: Retrieve Master node token for worker join
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: master_token_encoded
+
+    - name: Store decoded token as a fact
+      set_fact:
+        k3s_token: "{{ master_token_encoded.content | b64decode | trim }}"
+
+# ==========================================
+# 3. WORKER: AGENT INSTALLATION & JOIN CLUSTER
+# ==========================================
+- name: Worker Node Installation and Cluster Join
+  hosts: workers
+  become: true
+  tasks:
+    - name: Install K3s agent and join Master node
+      shell: >
+        curl -sfL https://get.k3s.io |
+        K3S_URL=https://{{ hostvars['master1']['private_ip'] }}:6443
+        K3S_TOKEN={{ hostvars['master1']['k3s_token'] }}
+        sh -
+      args:
+        creates: /usr/local/bin/k3s-agent
