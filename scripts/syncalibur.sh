@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Syncalibur (syncalibur.sh) - Cross-Platform Git Auto-Sync Daemon
+# ⚔️  Syncalibur (syncalibur.sh) - Cross-Platform Git Auto-Sync Daemon
 # ------------------------------------------------------------------------------
 # Watches a git repository (or a specific subdirectory inside one) and
 # automatically stages, commits, and pushes changes in the background.
@@ -143,6 +143,7 @@ SERVICE_BACKEND="$(detect_service_backend)"
 
 SCRIPT_PATH="$(resolve_path "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "${SCRIPT_PATH}")"
+LOGO_ANSI_FILE="${SCRIPT_DIR}/assets/syncalibur-logo.ansi"
 
 # Supported configuration keys in syncalibur.env (both SYNCALIBUR_* and AUTO_SYNC_* are accepted).
 CONFIG_KEYS=" SYNCALIBUR_REPO_PATH SYNCALIBUR_SERVICE_NAME SYNCALIBUR_REMOTE SYNCALIBUR_POLL_INTERVAL
@@ -293,15 +294,15 @@ win_startup_vbs_path() {
 # Tunable parameters
 # ==============================================================================
 
-POLL_INTERVAL="${SYNCALIBUR_POLL_INTERVAL:-${AUTO_SYNC_POLL_INTERVAL:-3}}"        # Seconds between change checks
-DEBOUNCE_WAIT="${SYNCALIBUR_DEBOUNCE_WAIT:-${AUTO_SYNC_DEBOUNCE_WAIT:-5}}"        # Seconds files must remain untouched before commit
-MAX_DEBOUNCE="${SYNCALIBUR_MAX_DEBOUNCE:-${AUTO_SYNC_MAX_DEBOUNCE:-60}}"          # Maximum seconds to wait if files change continuously
+POLL_INTERVAL="${SYNCALIBUR_POLL_INTERVAL:-${AUTO_SYNC_POLL_INTERVAL:-3}}"          # Seconds between change checks
+DEBOUNCE_WAIT="${SYNCALIBUR_DEBOUNCE_WAIT:-${AUTO_SYNC_DEBOUNCE_WAIT:-5}}"          # Seconds files must remain untouched before commit
+MAX_DEBOUNCE="${SYNCALIBUR_MAX_DEBOUNCE:-${AUTO_SYNC_MAX_DEBOUNCE:-60}}"            # Maximum seconds to wait if files change continuously
 MAX_FILE_SIZE_MB="${SYNCALIBUR_MAX_FILE_SIZE_MB:-${AUTO_SYNC_MAX_FILE_SIZE_MB:-50}}" # Skip files larger than this MiB limit (0 = unlimited)
-RETRY_BASE="${SYNCALIBUR_RETRY_BASE:-${AUTO_SYNC_RETRY_BASE:-30}}"                # Initial backoff delay after a failed push (seconds)
-RETRY_MAX="${SYNCALIBUR_RETRY_MAX:-${AUTO_SYNC_RETRY_MAX:-900}}"                  # Maximum backoff delay between push retries (seconds)
-PUSH_TIMEOUT="${SYNCALIBUR_PUSH_TIMEOUT:-${AUTO_SYNC_PUSH_TIMEOUT:-120}}"         # Timeout in seconds for `git push`
-LOG_MAX_KB="${SYNCALIBUR_LOG_MAX_KB:-${AUTO_SYNC_LOG_MAX_KB:-1024}}"              # Maximum log file size in KiB before trimming
-REMOTE_OVERRIDE="${SYNCALIBUR_REMOTE:-${AUTO_SYNC_REMOTE:-}}"                     # Remote name (defaults to "all" if present, else "origin")
+RETRY_BASE="${SYNCALIBUR_RETRY_BASE:-${AUTO_SYNC_RETRY_BASE:-30}}"                  # Initial backoff delay after a failed push (seconds)
+RETRY_MAX="${SYNCALIBUR_RETRY_MAX:-${AUTO_SYNC_RETRY_MAX:-900}}"                    # Maximum backoff delay between push retries (seconds)
+PUSH_TIMEOUT="${SYNCALIBUR_PUSH_TIMEOUT:-${AUTO_SYNC_PUSH_TIMEOUT:-120}}"           # Timeout in seconds for `git push`
+LOG_MAX_KB="${SYNCALIBUR_LOG_MAX_KB:-${AUTO_SYNC_LOG_MAX_KB:-1024}}"                # Maximum log file size in KiB before trimming
+REMOTE_OVERRIDE="${SYNCALIBUR_REMOTE:-${AUTO_SYNC_REMOTE:-}}"                       # Remote name (defaults to "all" if present, else "origin")
 
 DEFAULT_SENSITIVE_PATTERNS='*.tfstate *.tfstate.* *.tfvars .env .env.* *.pem *.key *.p12 *.pfx id_rsa* id_ecdsa* id_ed25519* kubeconfig *.kubeconfig credentials.json'
 EFFECTIVE_SENSITIVE="${SYNCALIBUR_SENSITIVE_PATTERNS-${AUTO_SYNC_SENSITIVE_PATTERNS-${DEFAULT_SENSITIVE_PATTERNS}}}"
@@ -324,6 +325,163 @@ export GIT_TERMINAL_PROMPT=0
 export GCM_INTERACTIVE=never
 
 # ==============================================================================
+# Terminal Theme, Avatar Renderer & Styled Log Formatter
+# ==============================================================================
+
+# Palette inspired by the Syncalibur emblem (Orokin Gold + Sentient Cyan + Dark Armor)
+C_RESET=$'\033[0m'
+C_BOLD=$'\033[1m'
+C_DIM=$'\033[2m'
+C_GOLD=$'\033[38;2;245;194;66m'
+C_CYAN=$'\033[38;2;56;189;248m'
+C_GREEN=$'\033[38;2;52;211;153m'
+C_RED=$'\033[38;2;248;113;113m'
+C_AMBER=$'\033[38;2;251;191;36m'
+C_SLATE=$'\033[38;2;148;163;184m'
+C_WHITE=$'\033[38;2;241;245;249m'
+
+# Fallback 16-row ASCII emblem if `assets/syncalibur-logo.ansi` is absent.
+fallback_logo_line() {
+  case "$1" in
+    1)  printf '%s' "          ${C_GOLD}▄▄████████▄▄${C_RESET}          " ;;
+    2)  printf '%s' "       ${C_GOLD}▄██▀▀${C_WHITE}   ██   ${C_GOLD}▀▀██▄${C_RESET}       " ;;
+    3)  printf '%s' "     ${C_GOLD}▄█▀${C_SLATE}     ▄████▄     ${C_GOLD}▀█▄${C_RESET}     " ;;
+    4)  printf '%s' "    ${C_GOLD}██${C_SLATE}      ██▀${C_CYAN}██${C_SLATE}▀██      ${C_GOLD}██${C_RESET}    " ;;
+    5)  printf '%s' "   ${C_GOLD}██${C_SLATE}      ███ ${C_CYAN}██${C_SLATE} ███      ${C_GOLD}██${C_RESET}   " ;;
+    6)  printf '%s' "  ${C_GOLD}██   ▄▄${C_WHITE}▀███${C_SLATE}▄▄▄▄▄▄${C_WHITE}███▀${C_GOLD}▄▄   ██${C_RESET}  " ;;
+    7)  printf '%s' " ${C_GOLD}◄███▀▀${C_SLATE}    ▀█${C_GOLD}▄████▄${C_SLATE}█▀    ${C_GOLD}▀▀███►${C_RESET} " ;;
+    8)  printf '%s' "  ${C_GOLD}██▄▄     ██${C_CYAN}██▀▀██${C_GOLD}██     ▄▄██${C_RESET}  " ;;
+    9)  printf '%s' "  ${C_GOLD}██ ▀▀██▄▄██${C_CYAN}██▄▄██${C_GOLD}██▄▄██▀▀ ██${C_RESET}  " ;;
+    10) printf '%s' "   ${C_GOLD}██${C_WHITE}   ▀▀███${C_GOLD}▀████▀${C_WHITE}███▀▀   ${C_GOLD}██${C_RESET}   " ;;
+    11) printf '%s' "    ${C_GOLD}██${C_WHITE}     ▀█▄${C_WHITE}▀██▀${C_WHITE}▄█▀     ${C_GOLD}██${C_RESET}    " ;;
+    12) printf '%s' "     ${C_GOLD}▀█▄${C_SLATE}   ${C_GOLD}◄█►${C_WHITE}████${C_GOLD}◄█►${C_SLATE}   ${C_GOLD}▄█▀${C_RESET}     " ;;
+    13) printf '%s' "       ${C_GOLD}▀██▄▄${C_SLATE} ▀████▀ ${C_GOLD}▄▄██▀${C_RESET}       " ;;
+    14) printf '%s' "          ${C_GOLD}▀▀████████▀▀${C_RESET}          " ;;
+    15) printf '%s' "             ${C_WHITE}▀████▀${C_RESET}             " ;;
+    16) printf '%s' "               ${C_GOLD}▀▀${C_RESET}               " ;;
+  esac
+}
+
+# Format a raw `[YYYY-MM-DD HH:MM:SS] message` log line with Syncalibur badges & colors.
+format_log_line() {
+  local raw="$1"
+  if [[ "${raw}" =~ ^\[([0-9]{4}-[0-9]{2}-[0-9]{2})\ ([0-9]{2}:[0-9]{2}:[0-9]{2})\]\ (.*)$ ]]; then
+    local ts="${BASH_REMATCH[2]}"
+    local msg="${BASH_REMATCH[3]}"
+    local badge_color="${C_SLATE}"
+    local badge_text="◈ INFO     "
+    local msg_color="${C_WHITE}"
+
+    case "${msg}" in
+      *"Syncalibur started"*|*"başlatıldı"*)
+        badge_color="${C_GOLD}"; badge_text="⚔️  ONLINE  "; msg_color="${C_GOLD}${C_BOLD}" ;;
+      *"Poll:"*|*"Kontrol aralığı:"*)
+        badge_color="${C_CYAN}"; badge_text="⚙ CONFIG   "; msg_color="${C_SLATE}" ;;
+      *"Changes detected"*|*"Değişiklik algılandı"*)
+        badge_color="${C_CYAN}"; badge_text="◉ DETECTED "; msg_color="${C_CYAN}" ;;
+      *"Committed"*|*"Commit oluşturuldu"*)
+        badge_color="${C_GREEN}"; badge_text="✔ COMMIT   "; msg_color="${C_GREEN}" ;;
+      *"Pushing to"*|*"Uzak depoya"*)
+        badge_color="${C_GOLD}"; badge_text="▲ PUSHING  "; msg_color="${C_GOLD}" ;;
+      *"Push succeeded"*|*"Başarıyla pushlandı"*)
+        badge_color="${C_GREEN}${C_BOLD}"; badge_text="★ SYNCED   "; msg_color="${C_GREEN}${C_BOLD}" ;;
+      *"Not committing"*)
+        badge_color="${C_AMBER}"; badge_text="🛡 GUARD    "; msg_color="${C_AMBER}" ;;
+      *"Push failed"*|*"timed out"*|*"failed"*|*"Another Syncalibur"*)
+        badge_color="${C_RED}${C_BOLD}"; badge_text="✖ ERROR    "; msg_color="${C_RED}" ;;
+      *"Retrying"*)
+        badge_color="${C_AMBER}"; badge_text="↻ RETRY    "; msg_color="${C_AMBER}" ;;
+      *"paused"*)
+        badge_color="${C_AMBER}"; badge_text="⏸ PAUSED   "; msg_color="${C_AMBER}" ;;
+      *"stopped"*|*"durduruldu"*)
+        badge_color="${C_RED}"; badge_text="■ STOPPED  "; msg_color="${C_SLATE}" ;;
+    esac
+
+    printf '%s[%s]%s %s⟪%s⟫%s %s%s%s\n' \
+      "${C_SLATE}" "${ts}" "${C_RESET}" \
+      "${badge_color}" "${badge_text}" "${C_RESET}" \
+      "${msg_color}" "${msg}" "${C_RESET}"
+  else
+    printf '           %s│ %s%s\n' "${C_SLATE}" "${raw}" "${C_RESET}"
+  fi
+}
+
+# Print the side-by-side Syncalibur Emblem + Status Dashboard (16 rows).
+print_syncalibur_dashboard() {
+  local pid state_str autostart_str branch remote target_str unpushed_str cfg_short watch_short log_short
+  if pid="$(daemon_pid)"; then
+    state_str="${C_GREEN}${C_BOLD}● ONLINE${C_RESET} ${C_SLATE}(PID ${pid})${C_RESET}"
+  else
+    state_str="${C_RED}${C_BOLD}○ OFFLINE${C_RESET}"
+  fi
+
+  if is_service_installed; then
+    autostart_str="${C_GREEN}✔ Enabled${C_RESET} ${C_SLATE}(${SERVICE_NAME} • ${SERVICE_BACKEND})${C_RESET}"
+  else
+    autostart_str="${C_AMBER}○ Not installed${C_RESET} ${C_SLATE}(${SERVICE_BACKEND})${C_RESET}"
+  fi
+
+  remote="$(cd "${REPO_ROOT}" && get_remote)"
+  if branch="$(cd "${REPO_ROOT}" && get_branch)"; then
+    target_str="${C_CYAN}${remote}/${branch}${C_RESET}"
+    local up_cnt
+    up_cnt="$(cd "${REPO_ROOT}" && unpushed_count "${remote}" "${branch}")"
+    if (( up_cnt == 0 )); then
+      unpushed_str="${C_GREEN}0 commits (in sync)${C_RESET}"
+    else
+      unpushed_str="${C_AMBER}${up_cnt} commit(s) pending push${C_RESET}"
+    fi
+  else
+    target_str="${C_AMBER}${remote} (detached HEAD)${C_RESET}"
+    unpushed_str="${C_AMBER}paused${C_RESET}"
+  fi
+
+  cfg_short="${CONFIG_FILE:-<defaults>}"
+  cfg_short="${cfg_short/#${HOME}/~}"
+  watch_short="${WATCH_PATH/#${HOME}/~}"
+  log_short="${LOG_FILE/#${HOME}/~}"
+
+  local -a info_lines=(
+    "${C_GOLD}╭──────────────────────────────────────────────────────────╮${C_RESET}"
+    "${C_GOLD}│${C_RESET}  ⚔️  ${C_GOLD}${C_BOLD}S Y N C A L I B U R${C_RESET}   ${C_SLATE}•${C_RESET}   ${C_CYAN}Autonomous Git Sync${C_RESET}       ${C_GOLD}│${C_RESET}"
+    "${C_GOLD}╰──────────────────────────────────────────────────────────╯${C_RESET}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Status    :${C_RESET} ${state_str}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}OS / Mode :${C_RESET} ${C_WHITE}${OS_KERNEL} (${SERVICE_BACKEND})${C_RESET}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Autostart :${C_RESET} ${autostart_str}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Config    :${C_RESET} ${C_SLATE}${cfg_short}${C_RESET}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Watching  :${C_RESET} ${C_WHITE}${watch_short}${C_RESET}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Scope     :${C_RESET} ${C_SLATE}${SCOPE}${C_RESET}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Target    :${C_RESET} ${target_str}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Sync State:${C_RESET} ${unpushed_str}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Timing    :${C_RESET} ${C_SLATE}Poll ${POLL_INTERVAL}s • Debounce ${DEBOUNCE_WAIT}s (max ${MAX_DEBOUNCE}s)${C_RESET}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Shield    :${C_RESET} ${C_SLATE}≤ ${MAX_FILE_SIZE_MB} MiB • Secret guard active${C_RESET}"
+    "  ${C_GOLD}◈${C_RESET} ${C_BOLD}Log File  :${C_RESET} ${C_SLATE}${log_short}${C_RESET}"
+    "  ${C_SLATE}──────────────────────────────────────────────────────────${C_RESET}"
+    "  ${C_SLATE}Commands  : ${C_CYAN}status${C_SLATE} | ${C_CYAN}logs${C_SLATE} | ${C_CYAN}restart${C_SLATE} | ${C_CYAN}stop${C_SLATE} | ${C_CYAN}install${C_RESET}"
+  )
+
+  local -a logo_lines=()
+  local line
+  if [[ -f "${LOGO_ANSI_FILE}" ]]; then
+    while IFS= read -r line; do
+      logo_lines+=("${line}")
+    done < "${LOGO_ANSI_FILE}"
+  fi
+
+  printf '\n'
+  local i=0
+  while (( i < 16 )); do
+    if (( ${#logo_lines[@]} >= 16 )); then
+      printf '  %s   %s\n' "${logo_lines[$i]}" "${info_lines[$i]}"
+    else
+      printf '  %s   %s\n' "$(fallback_logo_line $(( i + 1 )))" "${info_lines[$i]}"
+    fi
+    i=$(( i + 1 ))
+  done
+  printf '\n'
+}
+
+# ==============================================================================
 # Logging & sleep helpers
 # ==============================================================================
 
@@ -331,7 +489,13 @@ log() {
   local line
   line="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
   printf '%s\n' "${line}" >> "${LOG_FILE}"
-  [[ "${SYNCALIBUR_BACKGROUND:-0}" == "1" ]] || printf '%s\n' "${line}"
+  if [[ "${SYNCALIBUR_BACKGROUND:-0}" != "1" ]]; then
+    if [[ -t 1 ]]; then
+      format_log_line "${line}"
+    else
+      printf '%s\n' "${line}"
+    fi
+  fi
 }
 
 LAST_NOTICE=""
@@ -577,7 +741,6 @@ acquire_single_instance_lock() {
     flock -w 5 9 || return 1
     return 0
   fi
-  # Portable fallback when `flock` is unavailable (macOS / Windows Git Bash).
   local existing_pid
   if existing_pid="$(daemon_pid)" && [[ "${existing_pid}" != "$$" ]]; then
     return 1
@@ -602,6 +765,12 @@ run_daemon() {
   echo "$$" > "${PID_FILE}"
   trap on_exit EXIT
   trap 'exit 0' INT TERM
+
+  # When running interactively in a terminal (`./scripts/syncalibur.sh run`),
+  # render the full Syncalibur emblem & dashboard header first.
+  if [[ "${SYNCALIBUR_BACKGROUND:-0}" != "1" && -t 1 ]]; then
+    print_syncalibur_dashboard
+  fi
 
   local remote branch busy head snap
   local idle_snapshot="" checked_head="" push_pending=0 next_retry=0 retry_delay="${RETRY_BASE}"
@@ -716,7 +885,6 @@ stop_background_pid() {
 }
 
 cmd_install() {
-  # Ensure syncalibur.env exists so the watched path is persisted clearly.
   if [[ -z "${CONFIG_FILE}" || ! -f "${CONFIG_FILE}" ]]; then
     save_repo_path_to_env "${WATCH_PATH}"
     echo "📝 Created config file: ${CONFIG_FILE} (watching ${WATCH_PATH})"
@@ -750,10 +918,6 @@ EOF
         && systemctl --user restart "${SERVICE_NAME}" \
         || { echo "❌ Could not enable/start systemd service '${SERVICE_NAME}'." >&2; return 1; }
       command -v loginctl >/dev/null 2>&1 && loginctl enable-linger "${USER:-$(id -un)}" 2>/dev/null || true
-      echo "✅ Installed and started systemd user service '${SERVICE_NAME}' (auto-starts at login/boot)."
-      echo "   Unit file   : ${UNIT_FILE}"
-      echo "   Config file : ${CONFIG_FILE}"
-      echo "   Watching    : ${WATCH_PATH}"
       ;;
 
     launchd)
@@ -794,10 +958,6 @@ EOF
 EOF
       launchctl unload "${PLIST_FILE}" >/dev/null 2>&1 || true
       launchctl load -w "${PLIST_FILE}" || { echo "❌ launchctl load failed." >&2; return 1; }
-      echo "✅ Installed and started macOS LaunchAgent '${PLIST_LABEL}' (auto-starts at login)."
-      echo "   Plist file  : ${PLIST_FILE}"
-      echo "   Config file : ${CONFIG_FILE}"
-      echo "   Watching    : ${WATCH_PATH}"
       ;;
 
     windows-startup)
@@ -820,11 +980,7 @@ WshEnv("SYNCALIBUR_CONFIG") = "${config_win}"
 WshShell.Run """${bash_win}"" ""${script_win}"" start", 0, False
 EOF
       daemon_pid >/dev/null && stop_background_pid
-      start_background_nohup
-      echo "✅ Installed Windows Startup launcher (auto-starts silently at login)."
-      echo "   Startup VBS : ${vbs_file}"
-      echo "   Config file : ${CONFIG_FILE}"
-      echo "   Watching    : ${WATCH_PATH}"
+      start_background_nohup >/dev/null
       ;;
 
     cron)
@@ -842,12 +998,14 @@ X-GNOME-Autostart-enabled=true
 NoDisplay=true
 EOF
       daemon_pid >/dev/null && stop_background_pid
-      start_background_nohup
-      echo "✅ Installed autostart entry (cron @reboot + XDG autostart) and started daemon."
-      echo "   Config file : ${CONFIG_FILE}"
-      echo "   Watching    : ${WATCH_PATH}"
+      start_background_nohup >/dev/null
       ;;
   esac
+
+  sleep 1
+  print_syncalibur_dashboard
+  echo "  ${C_GREEN}${C_BOLD}✔ Syncalibur installed and active!${C_RESET} It will start automatically on every boot/login."
+  echo ""
 }
 
 cmd_uninstall() {
@@ -872,7 +1030,7 @@ cmd_uninstall() {
     windows-startup)
       rm -f "$(win_startup_vbs_path)"
       stop_background_pid
-      echo "✅ Removed Windows Startup launcher and stopped daemon."
+      echo "✅ Removed Windows Startup launcher and stopped Syncalibur."
       ;;
     cron)
       if command -v crontab >/dev/null 2>&1; then
@@ -880,7 +1038,7 @@ cmd_uninstall() {
       fi
       rm -f "${DESKTOP_FILE}"
       stop_background_pid
-      echo "✅ Removed autostart entries and stopped daemon."
+      echo "✅ Removed autostart entries and stopped Syncalibur."
       ;;
   esac
 }
@@ -946,73 +1104,60 @@ cmd_restart() {
 
 cmd_status() {
   cd "${REPO_ROOT}" || return 1
-  local pid remote branch path reason
+  print_syncalibur_dashboard
+
+  local path reason
   local -a blocked=()
-
-  if pid="$(daemon_pid)"; then
-    echo "🟢 Syncalibur is RUNNING (PID ${pid})"
-  else
-    echo "🔴 Syncalibur is NOT running"
-  fi
-
-  echo "   OS / Mode: ${OS_KERNEL} (${SERVICE_BACKEND})"
-  if is_service_installed; then
-    echo "   Autostart: enabled (${SERVICE_NAME})"
-  else
-    echo "   Autostart: not installed (run '${SCRIPT_PATH} install' to enable on boot/login)"
-  fi
-  echo "   Config   : ${CONFIG_FILE:-<none, using defaults>}"
-  echo "   Watching : ${WATCH_PATH} (repo: ${REPO_ROOT}, scope: ${SCOPE})"
-
-  remote="$(get_remote)"
-  if branch="$(get_branch)"; then
-    echo "   Target   : ${remote}/${branch}"
-    echo "   Unpushed : $(unpushed_count "${remote}" "${branch}") commit(s)"
-  else
-    echo "   Target   : ${remote} (detached HEAD, syncing paused)"
-  fi
-
   while IFS= read -r -d '' path; do
-    reason="$(block_reason "${path}")" && blocked+=("     - ${path}: ${reason}")
+    reason="$(block_reason "${path}")" && blocked+=("    ${C_AMBER}🛡 ${path}${C_RESET} ${C_SLATE}— ${reason}${C_RESET}")
   done < <(changed_paths)
   if (( ${#blocked[@]} > 0 )); then
-    echo "   Skipped  : ${#blocked[@]} file(s) blocked by safety guards"
+    printf '  %s%sSkipped Files (%d):%s\n' "${C_AMBER}" "${C_BOLD}" "${#blocked[@]}" "${C_RESET}"
     printf '%s\n' "${blocked[@]}"
+    printf '\n'
   fi
 
-  echo "   Log file : ${LOG_FILE}"
   if [[ -f "${LOG_FILE}" ]]; then
-    echo ""
-    echo "--- Last 10 log lines ---"
-    tail -n 10 "${LOG_FILE}"
+    printf '  %s%sRecent Activity%s\n' "${C_GOLD}" "${C_BOLD}" "${C_RESET}"
+    printf '  %s──────────────────────────────────────────────────────────────────────────────%s\n' "${C_SLATE}" "${C_RESET}"
+    local line
+    while IFS= read -r line; do
+      printf '  '
+      format_log_line "${line}"
+    done < <(tail -n 10 "${LOG_FILE}")
+    printf '\n'
   fi
 }
 
 cmd_logs() {
   mkdir -p "$(dirname "${LOG_FILE}")"
   touch "${LOG_FILE}"
-  echo "📋 Following ${LOG_FILE} (Ctrl+C to quit)..."
-  tail -n 20 -f "${LOG_FILE}"
+  print_syncalibur_dashboard
+  printf '  %s%s⚔️  Live Syncalibur Telemetry%s %s(Press Ctrl+C to exit)%s\n' "${C_GOLD}" "${C_BOLD}" "${C_RESET}" "${C_SLATE}" "${C_RESET}"
+  printf '  %s──────────────────────────────────────────────────────────────────────────────%s\n' "${C_SLATE}" "${C_RESET}"
+  local line
+  tail -n 20 -f "${LOG_FILE}" | while IFS= read -r line; do
+    printf '  '
+    format_log_line "${line}"
+  done
 }
 
 usage() {
+  print_syncalibur_dashboard
   cat << EOF
-⚔️  Syncalibur - Cross-Platform Git Auto-Sync Daemon
+  ${C_GOLD}${C_BOLD}Usage:${C_RESET} $0 ${C_CYAN}{install [path]|uninstall|start|stop|restart|status|logs|run}${C_RESET}
 
-Usage: $0 {install [path]|uninstall|start|stop|restart|status|logs|run}
+  ${C_GOLD}${C_BOLD}Commands:${C_RESET}
+    ${C_CYAN}install [path]${C_RESET}  Configure auto-start on login/boot (Linux/macOS/Windows) and start now.
+                    Optionally pass the directory path to watch (saved to syncalibur.env).
+    ${C_CYAN}uninstall${C_RESET}       Stop Syncalibur and remove the auto-start service/launcher
+    ${C_CYAN}start${C_RESET}           Start Syncalibur in the background
+    ${C_CYAN}stop${C_RESET}            Stop the running daemon
+    ${C_CYAN}restart${C_RESET}         Restart Syncalibur (run this after changing syncalibur.env)
+    ${C_CYAN}status${C_RESET}          Show Syncalibur emblem, live dashboard, skipped files, and recent logs
+    ${C_CYAN}logs${C_RESET}            Show Syncalibur emblem and stream live colorized telemetry
+    ${C_CYAN}run${C_RESET}             Run the daemon in the foreground
 
-Commands:
-  install [path]  Configure auto-start on login/boot (Linux/macOS/Windows) and start now.
-                  Optionally pass the directory path to watch (saved to syncalibur.env).
-  uninstall       Stop Syncalibur and remove the auto-start service/launcher
-  start           Start Syncalibur in the background
-  stop            Stop the running daemon
-  restart         Restart Syncalibur (run this after changing syncalibur.env)
-  status          Show running state, watched path, unpushed commits, and recent logs
-  logs            Follow the log file live
-  run             Run the daemon in the foreground
-
-See scripts/README.md for full documentation.
 EOF
 }
 

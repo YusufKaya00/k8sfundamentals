@@ -1,21 +1,71 @@
-# ⚔️ Syncalibur (`scripts/`)
+<div align="center">
 
-**Syncalibur** is a lightweight, dependency-free, **cross-platform** background daemon that watches any Git repository (or a specific folder inside one) and automatically stages, commits, and pushes your changes.
+<img src="assets/syncalibur-logo.png" width="180" alt="Syncalibur Emblem" />
 
-Works out of the box on **Linux**, **macOS**, and **Windows (Git Bash / MSYS2 / WSL)** — and automatically starts in the background whenever your computer boots or you log in.
+# ⚔️ S Y N C A L I B U R
 
-| File | Purpose |
-| --- | --- |
-| [`syncalibur.sh`](syncalibur.sh) | Main Syncalibur daemon and cross-platform service installer |
-| [`syncalibur.env`](syncalibur.env) | Configuration file where you set the folder path to watch (`SYNCALIBUR_REPO_PATH`) and tune behavior |
+**Autonomous Cross-Platform Git Auto-Sync Daemon**
+
+*Set your repository path once. Syncalibur watches, guards, commits, and pushes your work in the background — across Linux, macOS, and Windows.*
+
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-F5C242?style=for-the-badge)](#3-how-auto-start-works-across-operating-systems)
+[![Shell](https://img.shields.io/badge/Shell-Bash%203.2%2B-38BDF8?style=for-the-badge)](#)
+[![Dependencies](https://img.shields.io/badge/Dependencies-Zero%20(Pure%20Git%20%2B%20Bash)-34D399?style=for-the-badge)](#)
+[![Safety Shield](https://img.shields.io/badge/Shield-50%20MiB%20%26%20Secret%20Guard-F87171?style=for-the-badge)](#4-built-in-safety-shield)
+
+</div>
 
 ---
 
-## 1. Quick Start (3 Steps on Any OS)
+## ✨ Highlights
 
-### Step 1 — Set the path you want to watch
+- **⚔️ Rich Terminal Dashboard & Emblem:** Renders the TrueColor Syncalibur emblem right in your terminal (`status`, `logs`, `install`, `run`) alongside a live telemetry panel and badge-formatted logs.
+- **🌍 True Cross-Platform Auto-Start:** Automatically registers a native OS background service (`systemd` / `cron` on Linux, `launchd` `LaunchAgents` on macOS, hidden Startup launcher on Windows Git Bash) so it starts silently every time your computer boots.
+- **🛡️ Pre-Staging Safety Shield:** Blocks oversized binaries (`> 50 MiB`, e.g. `.terraform/` providers) and sensitive secret files (`*.tfstate`, `.env`, `*.pem`, `*.key`, `id_rsa*`, `kubeconfig`) **before** `git add` so they never pollute `.git/objects` or break remote pushes.
+- **⏱️ Smart Write Debouncing:** Waits until modified files stop changing size/mtime before committing, preventing half-written saves from being committed.
+- **🤝 Git-Operation Aware:** Automatically pauses while you are running an interactive `rebase`, `merge`, `cherry-pick`, `bisect`, or when `HEAD` is detached, and resumes seamlessly when finished.
+- **🔁 Resilient Exponential Backoff:** Enforces push timeouts (`120s`) and retries failed pushes automatically (`30s -> 60s -> ... -> 15m`) when offline.
 
-Open [`scripts/syncalibur.env`](syncalibur.env) and set `SYNCALIBUR_REPO_PATH` to your repository (or subfolder) path:
+---
+
+## 🖥️ Terminal UI Preview
+
+Running `./scripts/syncalibur.sh status` or `./scripts/syncalibur.sh logs` displays the full-color Syncalibur emblem next to your live repository telemetry:
+
+```text
+          ▄▄████████▄▄            ╭──────────────────────────────────────────────────────────╮
+       ▄██▀▀   ██   ▀▀██▄         │  ⚔️  S Y N C A L I B U R   •   Autonomous Git Sync       │
+     ▄█▀     ▄████▄     ▀█▄       ╰──────────────────────────────────────────────────────────╯
+    ██      ██▀██▀██      ██        ◈ Status    : ● ONLINE (PID 38685)
+   ██      ███ ██ ███      ██       ◈ OS / Mode : Linux (systemd)
+  ██   ▄▄▀███▄▄▄▄▄▄███▀▄▄   ██      ◈ Autostart : ✔ Enabled (syncalibur • systemd)
+ ◄███▀▀    ▀█▄████▄█▀    ▀▀███►     ◈ Config    : ~/k8sfundamentals/scripts/syncalibur.env
+  ██▄▄     ████▀▀████     ▄▄██      ◈ Watching  : ~/k8sfundamentals
+  ██ ▀▀██▄▄████▄▄████▄▄██▀▀ ██      ◈ Scope     : .
+   ██   ▀▀███▀████▀███▀▀   ██       ◈ Target    : all/main
+    ██     ▀█▄▀██▀▄█▀     ██        ◈ Sync State: 0 commits (in sync)
+     ▀█▄   ◄█►████◄█►   ▄█▀         ◈ Timing    : Poll 3s • Debounce 5s (max 60s)
+       ▀██▄▄ ▀████▀ ▄▄██▀           ◈ Shield    : ≤ 50 MiB • Secret guard active
+          ▀▀████████▀▀              ◈ Log File  : ~/k8sfundamentals/.git/syncalibur.log
+             ▀████▀                 ──────────────────────────────────────────────────────────
+               ▀▀                   Commands  : status | logs | restart | stop | install
+
+  Recent Activity
+  ──────────────────────────────────────────────────────────────────────────────
+  [10:49:46] ⟪⚔️  ONLINE  ⟫ ⚔️  Syncalibur started. Repo: /home/ysf/k8sfundamentals (scope: .) | Remote: all
+  [10:49:46] ⟪◉ DETECTED ⟫ 📝 Changes detected; waiting for writes to settle...
+  [10:49:51] ⟪✔ COMMIT   ⟫ ✅ Committed 3 file(s): auto: scripts/README.md, scripts/syncalibur.env (+1 more)
+  [10:49:51] ⟪▲ PUSHING  ⟫ 📤 Pushing to 'all' (main)...
+  [10:49:56] ⟪★ SYNCED   ⟫ 🎉 Push succeeded.
+```
+
+---
+
+## 🚀 1. Quick Start (3 Steps on Any OS)
+
+### Step 1 — Set the directory path to watch
+
+Open [`scripts/syncalibur.env`](syncalibur.env) and set `SYNCALIBUR_REPO_PATH` to the Git repository (or specific subfolder) you want to watch:
 
 ```ini
 # Linux example:
@@ -27,7 +77,7 @@ SYNCALIBUR_REPO_PATH="/home/ysf/k8sfundamentals"
 # Windows (Git Bash) example — both C:/... and C:\... work:
 # SYNCALIBUR_REPO_PATH="C:/Users/yourname/projects/my-repo"
 
-# Relative path (watches the repo that contains scripts/):
+# Relative path (watches the repository containing scripts/):
 # SYNCALIBUR_REPO_PATH=".."
 ```
 
@@ -41,22 +91,38 @@ chmod +x scripts/syncalibur.sh
 ```
 
 > [!TIP]
-> You can also pass the path directly to `install` and Syncalibur will update `syncalibur.env` for you automatically:
+> You can also pass the path directly to `install` and Syncalibur will write it into `syncalibur.env` automatically:
 > ```bash
 > ./scripts/syncalibur.sh install /path/to/your/repo
 > ```
 
-### Step 3 — Verify status
+### Step 3 — Watch live logs or check status
 
 ```bash
+# View emblem + live dashboard + recent activity
 ./scripts/syncalibur.sh status
-```
 
-That's it! Syncalibur is now running in the background and will start automatically every time your computer turns on.
+# Stream live colorized telemetry with the Syncalibur emblem
+./scripts/syncalibur.sh logs
+```
 
 ---
 
-## 2. How Auto-Start Works Across Operating Systems
+## 📦 2. Repository Structure
+
+```text
+scripts/
+├── syncalibur.sh               # Main daemon, TUI dashboard & cross-platform installer
+├── syncalibur.env              # Configuration file (set SYNCALIBUR_REPO_PATH here)
+├── assets/
+│   ├── syncalibur-logo.png     # Official Syncalibur emblem (512x512 RGBA)
+│   └── syncalibur-logo.ansi    # Pre-rendered TrueColor ANSI half-block terminal emblem
+└── README.md                   # Documentation
+```
+
+---
+
+## 🌍 3. How Auto-Start Works Across Operating Systems
 
 `./scripts/syncalibur.sh install` automatically detects your operating system and registers a native startup service:
 
@@ -75,44 +141,33 @@ To remove the auto-start service on any OS:
 
 ---
 
-## 3. Architecture & Workflow
+## 🛡️ 4. Built-in Safety Shield
 
 ```mermaid
 flowchart LR
     A["Poll every N sec<br/>(git status in scope)"] -->|Changes found| B["Debounce wait<br/>(until writes settle)"]
-    B --> C["Safety guards<br/>(skip >50 MiB & secrets)"]
+    B --> C["Safety Shield<br/>(skip >50 MiB & secrets)"]
     C --> D["git add + commit<br/>auto: file1, file2 (+N more)"]
     D --> E["git push"]
     E -->|Network / remote error| F["Exponential backoff<br/>30s -> 60s -> ... -> 15m"]
     F --> E
 ```
 
-1. **Scoped Detection:** Checks `git status` every `SYNCALIBUR_POLL_INTERVAL` seconds inside `SYNCALIBUR_REPO_PATH` (respecting `.gitignore`).
-2. **True Debounce:** Waits until modified files stop changing size/timestamp for `SYNCALIBUR_DEBOUNCE_WAIT` seconds so half-saved files are never committed mid-write (capped at `SYNCALIBUR_MAX_DEBOUNCE` seconds).
-3. **Safety Guards:** Automatically excludes oversized binaries (e.g. `.terraform/` providers) and sensitive files (`.env`, `*.tfstate`, private keys) **before** staging so they never enter `.git/objects`.
-4. **Pause on Manual Git Operations:** Automatically pauses if a `rebase`, `merge`, `cherry-pick`, `bisect`, or `index.lock` is active, or if `HEAD` is detached, and resumes once finished.
-5. **Resilient Push:** Uses non-interactive mode (`GIT_TERMINAL_PROMPT=0`), enforces a timeout (`SYNCALIBUR_PUSH_TIMEOUT`), and retries failed pushes with exponential backoff.
+Because Syncalibur stages changes automatically, it enforces two pre-staging guards so large binaries or credentials are never accidentally committed:
+
+| Guard | Default Rule | Protected Examples |
+| --- | --- | --- |
+| **File Size Limit** | Skips files `> 50 MiB` (`SYNCALIBUR_MAX_FILE_SIZE_MB`) | `.terraform/providers/...`, VM images, archives, dumps |
+| **Sensitive Pattern Shield** | `*.tfstate` `*.tfstate.*` `*.tfvars` `.env` `.env.*` `*.pem` `*.key` `*.p12` `*.pfx` `id_rsa*` `id_ecdsa*` `id_ed25519*` `kubeconfig` `*.kubeconfig` `credentials.json` | Terraform state, `.env` secrets, SSH/TLS private keys, cloud credentials |
+
+- Template files ending in `.example`, `.sample`, `.template`, or `.dist` (such as `.env.example`) are always allowed.
+- Blocked files are excluded **before** `git add`, so they never enter `.git/objects` and never block `git push`.
 
 ---
 
-## 4. CLI Commands
+## ⚙️ 5. Configuration Reference (`scripts/syncalibur.env`)
 
-| Command | Description |
-| --- | --- |
-| `./scripts/syncalibur.sh install [path]` | Register native OS auto-start service and start Syncalibur immediately |
-| `./scripts/syncalibur.sh uninstall` | Stop Syncalibur and remove the OS auto-start service |
-| `./scripts/syncalibur.sh start` | Start Syncalibur in the background |
-| `./scripts/syncalibur.sh stop` | Stop the running daemon |
-| `./scripts/syncalibur.sh restart` | Restart Syncalibur (run this after editing `syncalibur.env`) |
-| `./scripts/syncalibur.sh status` | Show OS mode, watched path, unpushed commit count, skipped files, and recent logs |
-| `./scripts/syncalibur.sh logs` | Stream the log file live (`tail -f`) |
-| `./scripts/syncalibur.sh run` | Run the daemon loop in the foreground |
-
----
-
-## 5. Configuration Reference (`scripts/syncalibur.env`)
-
-All settings live in [`scripts/syncalibur.env`](syncalibur.env). After changing a value, run `./scripts/syncalibur.sh restart`.
+All settings live in [`scripts/syncalibur.env`](syncalibur.env). After editing a value, apply it with `./scripts/syncalibur.sh restart`.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -123,23 +178,23 @@ All settings live in [`scripts/syncalibur.env`](syncalibur.env). After changing 
 | `SYNCALIBUR_DEBOUNCE_WAIT` | `5` | Seconds files must stay quiet before committing. |
 | `SYNCALIBUR_MAX_DEBOUNCE` | `60` | Maximum seconds to wait if files keep changing continuously. |
 | `SYNCALIBUR_MAX_FILE_SIZE_MB` | `50` | Maximum allowed file size in MiB (`0` disables the limit). |
-| `SYNCALIBUR_SENSITIVE_PATTERNS` | `*.tfstate *.tfstate.* *.tfvars .env .env.* *.pem *.key *.p12 *.pfx id_rsa* id_ecdsa* id_ed25519* kubeconfig *.kubeconfig credentials.json` | Space-separated filename globs that are never auto-committed (`""` disables). Template files ending in `.example`, `.sample`, `.template`, or `.dist` are always allowed. |
+| `SYNCALIBUR_SENSITIVE_PATTERNS` | *(see above)* | Space-separated filename globs that are never auto-committed (`""` disables). |
 | `SYNCALIBUR_RETRY_BASE` | `30` | Initial retry delay in seconds after a failed push. |
 | `SYNCALIBUR_RETRY_MAX` | `900` | Maximum retry delay in seconds (15 minutes). |
 | `SYNCALIBUR_PUSH_TIMEOUT` | `120` | Seconds before aborting a hanging `git push`. |
 | `SYNCALIBUR_LOG_MAX_KB` | `1024` | Maximum log size in KiB before automatic in-place trimming. |
 
-> [!NOTE]
-> **Watching multiple repositories:** Copy `syncalibur.env` to another file (e.g. `my-other-repo.env`), set a different `SYNCALIBUR_REPO_PATH` and `SYNCALIBUR_SERVICE_NAME="syncalibur-other"`, and run:
-> ```bash
-> SYNCALIBUR_CONFIG=/path/to/my-other-repo.env ./scripts/syncalibur.sh install
-> ```
-
 ---
 
-## 6. Prerequisite for Passwordless Background Push
+## 🧭 6. CLI Commands
 
-Because Syncalibur runs unattended in the background, `git push` must not ask for a username or password interactively:
-
-- **SSH URLs (`git@github.com:...`):** Make sure your SSH key is loaded in your OS ssh-agent (or has no passphrase) and is added to GitHub/GitLab.
-- **HTTPS URLs (`https://github.com/...`):** Configure Git Credential Manager (`git config --global credential.helper manager` on Windows/macOS, or `store`/`libsecret` on Linux) and run `git push` once manually so your token is saved.
+| Command | Description |
+| --- | --- |
+| `./scripts/syncalibur.sh install [path]` | Register native OS auto-start service and start Syncalibur immediately |
+| `./scripts/syncalibur.sh uninstall` | Stop Syncalibur and remove the OS auto-start service |
+| `./scripts/syncalibur.sh start` | Start Syncalibur in the background |
+| `./scripts/syncalibur.sh stop` | Stop the running daemon |
+| `./scripts/syncalibur.sh restart` | Restart Syncalibur (run this after editing `syncalibur.env`) |
+| `./scripts/syncalibur.sh status` | Render the Syncalibur emblem, live dashboard, skipped files, and recent logs |
+| `./scripts/syncalibur.sh logs` | Render the Syncalibur emblem and stream live colorized telemetry (`tail -f`) |
+| `./scripts/syncalibur.sh run` | Run the daemon in the foreground with the live terminal UI |
