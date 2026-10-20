@@ -44,3 +44,15 @@
         name: containerd
         state: started
         enabled: yes
+
+        # 6. GÖREV: K3s (Hafif Kubernetes) Kurulumu
+    - name: K3s resmi scripti ile Kubernetes kur
+      shell: curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /usr/local/bin/k3s # Eğer bu dosya zaten varsa scripti tekrar calistirma (Idempotency!)
+
+    # 7. GÖREV: azureuser kullanicisinin 'sudo' yazmadan kubectl kullanabilmesi icin izin ver
+    - name: Kubeconfig dosyasinin okuma yetkisini ayarla
+      file:
+        path: /etc/rancher/k3s/k3s.yaml
+        mode: '0644'
