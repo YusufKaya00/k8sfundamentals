@@ -65,3 +65,25 @@ resource "azurerm_network_security_group" "vm_nsg" {
   }
   
 }
+
+resource "azurerm_network_interface" "vm_nic" {
+  name                = "nic-k8s-node"
+  location            = azurerm_resource_group.k8s_rg.location
+  resource_group_name = azurerm_resource_group.k8s_rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.k8s_subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.vm_public_ip.id
+  }
+
+
+  
+}
+
+resource "azurerm_network_interface_security_group_association" "nic_nsg_assoc" {
+  network_interface_id      = azurerm_network_interface.vm_nic.id
+  network_security_group_id = azurerm_network_security_group.vm_nsg.id
+  
+}
