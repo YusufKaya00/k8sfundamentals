@@ -100,7 +100,7 @@ resource "azurerm_linux_virtual_machine" "k8s_vm" {
 
   admin_ssh_key {
     username   = "azureuser"
-    public_key = file("~/.ssh/id_rsa.pub")
+    public_key = file("${path.module}/user.pub")
   }
 
   os_disk {
@@ -116,7 +116,7 @@ resource "azurerm_linux_virtual_machine" "k8s_vm" {
   }
 
 }
-  
+
 output "vm_public_ip_address" {
     value = azurerm_public_ip.vm_public_ip.ip_address
     description = "The public IP address of the virtual machine"
