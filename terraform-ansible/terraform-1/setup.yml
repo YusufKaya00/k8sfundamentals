@@ -1,0 +1,46 @@
+---
+- name: Kubernetes Icin Sunucuyu Hazirla
+  hosts: k8s_nodes        # hosts.ini dosyasindaki grup adi
+  become: true            # Komutlari 'sudo' yetkisiyle calistir
+
+  tasks:
+    # 1. GÖREV: Paket listesini guncelle
+    - name: Apt paket listesini guncelle
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    # 2. GÖREV: Temel paketleri kur
+    - name: Temel paketleri kur (curl, git, htop vb.)
+      apt:
+        name:
+          - curl
+          - apt-transport-https
+          - ca-certificates
+          - git
+          - htop
+        state: present
+
+    # 3. GÖREV: Kubernetes icin Swap'i kapat (K8s zorunlu kilar)
+    - name: Swap'i anlik olarak kapat
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Fstab dosyasindan Swap'i kalici olarak cikar
+      replace:
+        path: /etc/fstab
+        regexp: '^(\s*)([^#\s]+\s+swap\s+.*)$'
+        replace: '# \1\2'
+
+    # 4. GÖREV: Containerd (Container Runtime) paketini kur
+    - name: Containerd paketini kur
+      apt:
+        name: containerd
+        state: present
+
+    # 5. GÖREV: Containerd servisini baslat ve acilista baslamasini sagla
+    - name: Containerd servisini aktif et ve baslat
+      systemd:
+        name: containerd
+        state: started
+        enabled: yes
