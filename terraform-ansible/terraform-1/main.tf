@@ -36,3 +36,32 @@ resource "azurerm_subnet" "k8s_subnet" {
   virtual_network_name = azurerm_virtual_network.k8s_vnet.name
   address_prefixes     = ["10.0.1.0/24"]
 }
+
+resource "azurerm_public_ip" "vm_public_ip" {
+  name                = "pip-k8s-node"
+  location            = azurerm_resource_group.k8s_rg.location
+  resource_group_name = azurerm_resource_group.k8s_rg.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  
+}
+
+
+resource "azurerm_network_security_group" "vm_nsg" {
+  name                = "nsg-k8s-node"
+  location            = azurerm_resource_group.k8s_rg.location
+  resource_group_name = azurerm_resource_group.k8s_rg.name
+
+  security_rule {
+    name                       = "Allow-SSH"
+    priority                   = 1000
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  
+}

@@ -1,207 +1,1023 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Git Auto-Sync Daemon (Automatic Add, Commit, and Push on File Changes)
+# git-auto-sync.sh - Cross-Platform Git Auto-Sync Daemon
+# ------------------------------------------------------------------------------
+# Watches a git repository (or a specific subdirectory inside one) and
+# automatically stages, commits, and pushes changes in the background.
+#
+# Supported operating systems & auto-start backends:
+#   - Linux (systemd) : ~/.config/systemd/user/<service>.service
+#   - Linux (fallback): crontab @reboot + ~/.config/autostart/<service>.desktop
+#   - macOS (launchd) : ~/Library/LaunchAgents/com.git-auto-sync.<service>.plist
+#   - Windows         : Startup folder hidden VBS launcher (Git Bash / MSYS2)
+#
+# Configuration is loaded from (highest priority first):
+#   1. Environment variables already set in the shell
+#   2. Config file specified by $AUTO_SYNC_CONFIG
+#   3. scripts/git-auto-sync.env (next to this script)
+#   4. Built-in defaults (watches the repository containing this script)
+#
+# Usage : ./scripts/git-auto-sync.sh {install|uninstall|start|stop|restart|status|logs|run}
+# Docs  : ./scripts/README.md
 # ==============================================================================
 
-set -euo pipefail
+set -uo pipefail
+# NOTE: `set -e` is intentionally omitted. The daemon loop must survive
+# transient git/network errors rather than exiting unexpectedly.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# ==============================================================================
+# Cross-platform portability helpers (Linux, macOS Bash 3.2+, Windows Git Bash)
+# ==============================================================================
 
-PID_FILE="${REPO_ROOT}/.git/git-auto-sync.pid"
-LOG_FILE="${REPO_ROOT}/.git/git-auto-sync.log"
-POLL_INTERVAL=3      # Saniye cinsinden değişiklik kontrol sıklığı
-DEBOUNCE_WAIT=5      # Değişiklikler durduktan sonra beklenilecek saniye
+OS_KERNEL="$(uname -s 2>/dev/null || echo Unknown)"
 
-log() {
-  local timestamp
-  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-  echo "[$timestamp] $*" | tee -a "${LOG_FILE}"
+# Convert Windows paths (e.g. C:\Users\...) to POSIX paths when running under
+# Git Bash / MSYS2 / Cygwin, and expand a leading ~ to $HOME.
+normalize_path_input() {
+  local raw="$1"
+  raw="${raw/#\~/${HOME}}"
+  if command -v cygpath >/dev/null 2>&1 && [[ "${raw}" =~ ^[A-Za-z]:[\\/] ]]; then
+    cygpath -u "${raw}"
+  else
+    printf '%s\n' "${raw}"
+  fi
 }
 
-get_remote_target() {
-  cd "${REPO_ROOT}"
-  if git remote | grep -qw "all"; then
+# Portable replacement for `readlink -f` (works on macOS BSD userland too).
+resolve_path() {
+  local target="$1"
+  if [[ -d "${target}" ]]; then
+    (cd "${target}" 2>/dev/null && pwd -P)
+    return
+  fi
+  local dir base
+  dir="$(dirname "${target}")"
+  base="$(basename "${target}")"
+  if [[ -L "${target}" ]] && command -v readlink >/dev/null 2>&1; then
+    local link
+    link="$(readlink "${target}")"
+    [[ "${link}" == /* ]] || link="${dir}/${link}"
+    dir="$(dirname "${link}")"
+    base="$(basename "${link}")"
+  fi
+  (cd "${dir}" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "${base}")
+}
+
+# Detect whether `stat` uses GNU flags (-c) or BSD/macOS flags (-f).
+if stat -c '%s' . >/dev/null 2>&1; then
+  STAT_FLAVOR="gnu"
+else
+  STAT_FLAVOR="bsd"
+fi
+
+# Print file size in bytes (portable across GNU and BSD/macOS).
+file_size_bytes() {
+  if [[ "${STAT_FLAVOR}" == "gnu" ]]; then
+    stat -c '%s' -- "$1" 2>/dev/null || echo 0
+  else
+    stat -f '%z' -- "$1" 2>/dev/null || echo 0
+  fi
+}
+
+# Print "<size> <mtime>" signature for change detection.
+file_signature() {
+  if [[ "${STAT_FLAVOR}" == "gnu" ]]; then
+    stat -c '%s %Y' -- "$1" 2>/dev/null || echo gone
+  else
+    stat -f '%z %m' -- "$1" 2>/dev/null || echo gone
+  fi
+}
+
+# Run a command with a timeout in seconds. Returns 124 on timeout.
+# Uses GNU `timeout` when available; falls back to a background watchdog on macOS.
+run_with_timeout() {
+  local secs="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${secs}" "$@"
+    return $?
+  fi
+
+  "$@" &
+  local cmd_pid=$!
+  (
+    sleep "${secs}"
+    kill -TERM "${cmd_pid}" 2>/dev/null || true
+  ) &
+  local watchdog_pid=$!
+
+  wait "${cmd_pid}" 2>/dev/null
+  local rc=$?
+  if kill -0 "${watchdog_pid}" 2>/dev/null; then
+    kill "${watchdog_pid}" 2>/dev/null || true
+    wait "${watchdog_pid}" 2>/dev/null || true
+    return "${rc}"
+  fi
+  return 124
+}
+
+# Detect which background service manager to use on this OS.
+detect_service_backend() {
+  case "${OS_KERNEL}" in
+    Darwin*)
+      echo "launchd"
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      echo "windows-startup"
+      ;;
+    *)
+      if command -v systemctl >/dev/null 2>&1 && systemctl --user list-units >/dev/null 2>&1; then
+        echo "systemd"
+      else
+        echo "cron"
+      fi
+      ;;
+  esac
+}
+
+SERVICE_BACKEND="$(detect_service_backend)"
+
+# ==============================================================================
+# Configuration file loading
+# ==============================================================================
+
+SCRIPT_PATH="$(resolve_path "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "${SCRIPT_PATH}")"
+
+# Supported configuration keys in git-auto-sync.env.
+CONFIG_KEYS=" AUTO_SYNC_REPO_PATH AUTO_SYNC_SERVICE_NAME AUTO_SYNC_REMOTE AUTO_SYNC_POLL_INTERVAL
+  AUTO_SYNC_DEBOUNCE_WAIT AUTO_SYNC_MAX_DEBOUNCE AUTO_SYNC_MAX_FILE_SIZE_MB AUTO_SYNC_SENSITIVE_PATTERNS
+  AUTO_SYNC_RETRY_BASE AUTO_SYNC_RETRY_MAX AUTO_SYNC_PUSH_TIMEOUT AUTO_SYNC_LOG_MAX_KB "
+
+# Safely parse a KEY=VALUE env file without executing shell code.
+# Shell environment variables set prior to invocation take precedence.
+load_config() {
+  local file="$1" line key value n=0 is_set=0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    n=$(( n + 1 ))
+    line="${line%$'\r'}"
+    [[ "${line}" =~ ^[[:space:]]*(#|$) ]] && continue
+    if ! [[ "${line}" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Z_][A-Z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+      echo "⚠️  ${file}:${n}: ignoring malformed line: ${line}" >&2
+      continue
+    fi
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+    if [[ "${CONFIG_KEYS}" != *[[:space:]]"${key}"[[:space:]]* ]]; then
+      echo "⚠️  ${file}:${n}: unknown key '${key}' (ignored)" >&2
+      continue
+    fi
+    if [[ "${value}" =~ ^\"(.*)\"[[:space:]]*(#.*)?$ || "${value}" =~ ^\'(.*)\'[[:space:]]*(#.*)?$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    else
+      value="${value%%[[:space:]]#*}"
+      value="${value%"${value##*[![:space:]]}"}"
+    fi
+    # Bash 3.2-safe check for whether variable `${key}` is already set in env.
+    eval "[[ -n \"\${${key}+x}\" ]] && is_set=1 || is_set=0"
+    (( is_set )) && continue
+    printf -v "${key}" '%s' "${value}"
+  done < "${file}"
+}
+
+DEFAULT_ENV_FILE="${SCRIPT_DIR}/git-auto-sync.env"
+CONFIG_FILE="${AUTO_SYNC_CONFIG:-${DEFAULT_ENV_FILE}}"
+
+# If the user runs `install /path/to/repo`, write/update git-auto-sync.env first.
+save_repo_path_to_env() {
+  local target_path="$1"
+  local env_file="${AUTO_SYNC_CONFIG:-${DEFAULT_ENV_FILE}}"
+  if [[ -f "${env_file}" ]]; then
+    local tmp
+    tmp="$(mktemp)"
+    grep -vE '^[[:space:]]*(export[[:space:]]+)?AUTO_SYNC_REPO_PATH=' "${env_file}" > "${tmp}" || true
+    printf 'AUTO_SYNC_REPO_PATH="%s"\n' "${target_path}" >> "${tmp}"
+    mv "${tmp}" "${env_file}"
+  else
+    cat > "${env_file}" << EOF
+# Git Auto-Sync configuration (generated by 'install')
+# Path to the git repository (or subfolder inside a repo) to watch and sync:
+AUTO_SYNC_REPO_PATH="${target_path}"
+EOF
+  fi
+  CONFIG_FILE="$(resolve_path "${env_file}")"
+  AUTO_SYNC_REPO_PATH="${target_path}"
+}
+
+if [[ "${1:-}" == "install" && -n "${2:-}" ]]; then
+  INSTALL_ARG_PATH="$(normalize_path_input "${2}")"
+  if [[ ! -d "${INSTALL_ARG_PATH}" ]]; then
+    echo "❌ Specified directory does not exist: ${2}" >&2
+    exit 1
+  fi
+  INSTALL_ARG_PATH="$(resolve_path "${INSTALL_ARG_PATH}")"
+  save_repo_path_to_env "${INSTALL_ARG_PATH}"
+fi
+
+if [[ -f "${CONFIG_FILE}" ]]; then
+  CONFIG_FILE="$(resolve_path "${CONFIG_FILE}")"
+  load_config "${CONFIG_FILE}"
+elif [[ -n "${AUTO_SYNC_CONFIG:-}" ]]; then
+  echo "❌ Config file not found: ${AUTO_SYNC_CONFIG}" >&2
+  exit 1
+else
+  CONFIG_FILE=""
+fi
+
+# ==============================================================================
+# Repository & scope resolution
+# ==============================================================================
+
+WATCH_PATH="${AUTO_SYNC_REPO_PATH:-}"
+if [[ -n "${WATCH_PATH}" ]]; then
+  WATCH_PATH="$(normalize_path_input "${WATCH_PATH}")"
+  [[ "${WATCH_PATH}" == /* ]] || WATCH_PATH="$(dirname "${CONFIG_FILE:-${SCRIPT_PATH}}")/${WATCH_PATH}"
+  if [[ ! -d "${WATCH_PATH}" ]]; then
+    echo "❌ AUTO_SYNC_REPO_PATH does not exist: ${WATCH_PATH}" >&2
+    exit 1
+  fi
+else
+  WATCH_PATH="${SCRIPT_DIR}"
+fi
+WATCH_PATH="$(resolve_path "${WATCH_PATH}")"
+
+REPO_ROOT="$(git -C "${WATCH_PATH}" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "❌ '${WATCH_PATH}' is not inside a git repository." >&2
+  echo "   Set AUTO_SYNC_REPO_PATH in ${DEFAULT_ENV_FILE}" >&2
+  echo "   or run: ${SCRIPT_PATH} install /path/to/your/repo" >&2
+  exit 1
+}
+REPO_ROOT="$(resolve_path "${REPO_ROOT}")"
+GIT_DIR="$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir)"
+
+# Relative path from REPO_ROOT to WATCH_PATH ("." watches the entire repo).
+SCOPE="$(git -C "${WATCH_PATH}" rev-parse --show-prefix 2>/dev/null || true)"
+SCOPE="${SCOPE%/}"
+SCOPE="${SCOPE:-.}"
+
+# Runtime files live inside .git/ so they are never tracked by git.
+PID_FILE="${GIT_DIR}/git-auto-sync.pid"
+LOCK_FILE="${GIT_DIR}/git-auto-sync.lock"
+LOG_FILE="${GIT_DIR}/git-auto-sync.log"
+
+SERVICE_NAME="${AUTO_SYNC_SERVICE_NAME:-git-auto-sync}"
+if ! [[ "${SERVICE_NAME}" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
+  echo "❌ AUTO_SYNC_SERVICE_NAME may only contain letters, digits and _ . @ - (got '${SERVICE_NAME}')." >&2
+  exit 1
+fi
+
+# OS-specific service file paths
+UNIT_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user/${SERVICE_NAME}.service"
+PLIST_LABEL="com.git-auto-sync.${SERVICE_NAME}"
+PLIST_FILE="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+DESKTOP_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/autostart/${SERVICE_NAME}.desktop"
+
+win_startup_vbs_path() {
+  local appdata_posix=""
+  if command -v cygpath >/dev/null 2>&1 && [[ -n "${APPDATA:-}" ]]; then
+    appdata_posix="$(cygpath -u "${APPDATA}")"
+  elif [[ -d "${HOME}/AppData/Roaming" ]]; then
+    appdata_posix="${HOME}/AppData/Roaming"
+  fi
+  if [[ -n "${appdata_posix}" ]]; then
+    printf '%s/Microsoft/Windows/Start Menu/Programs/Startup/%s.vbs\n' "${appdata_posix}" "${SERVICE_NAME}"
+  else
+    printf '%s/.config/git-auto-sync/%s.vbs\n' "${HOME}" "${SERVICE_NAME}"
+  fi
+}
+
+# ==============================================================================
+# Tunable parameters
+# ==============================================================================
+
+POLL_INTERVAL="${AUTO_SYNC_POLL_INTERVAL:-3}"        # Seconds between change checks
+DEBOUNCE_WAIT="${AUTO_SYNC_DEBOUNCE_WAIT:-5}"        # Seconds files must remain untouched before commit
+MAX_DEBOUNCE="${AUTO_SYNC_MAX_DEBOUNCE:-60}"         # Maximum seconds to wait if files change continuously
+MAX_FILE_SIZE_MB="${AUTO_SYNC_MAX_FILE_SIZE_MB:-50}" # Skip files larger than this MiB limit (0 = unlimited)
+RETRY_BASE="${AUTO_SYNC_RETRY_BASE:-30}"             # Initial backoff delay after a failed push (seconds)
+RETRY_MAX="${AUTO_SYNC_RETRY_MAX:-900}"              # Maximum backoff delay between push retries (seconds)
+PUSH_TIMEOUT="${AUTO_SYNC_PUSH_TIMEOUT:-120}"        # Timeout in seconds for `git push`
+LOG_MAX_KB="${AUTO_SYNC_LOG_MAX_KB:-1024}"           # Maximum log file size in KiB before trimming
+REMOTE_OVERRIDE="${AUTO_SYNC_REMOTE:-}"              # Remote name (defaults to "all" if present, else "origin")
+
+DEFAULT_SENSITIVE_PATTERNS='*.tfstate *.tfstate.* *.tfvars .env .env.* *.pem *.key *.p12 *.pfx id_rsa* id_ecdsa* id_ed25519* kubeconfig *.kubeconfig credentials.json'
+read -r -a SENSITIVE_PATTERNS <<< "${AUTO_SYNC_SENSITIVE_PATTERNS-${DEFAULT_SENSITIVE_PATTERNS}}"
+
+for var in POLL_INTERVAL DEBOUNCE_WAIT MAX_DEBOUNCE MAX_FILE_SIZE_MB RETRY_BASE RETRY_MAX PUSH_TIMEOUT LOG_MAX_KB; do
+  if ! [[ "${!var}" =~ ^[0-9]+$ ]]; then
+    echo "❌ ${var} must be a non-negative integer (got '${!var}')." >&2
+    exit 1
+  fi
+done
+if (( POLL_INTERVAL < 1 || DEBOUNCE_WAIT < 1 || RETRY_BASE < 1 )); then
+  echo "❌ POLL_INTERVAL, DEBOUNCE_WAIT and RETRY_BASE must be at least 1 second." >&2
+  exit 1
+fi
+MAX_FILE_BYTES=$(( MAX_FILE_SIZE_MB * 1024 * 1024 ))
+
+# Fail immediately instead of hanging if git ever asks for interactive input.
+export GIT_TERMINAL_PROMPT=0
+export GCM_INTERACTIVE=never
+
+# ==============================================================================
+# Logging & sleep helpers
+# ==============================================================================
+
+log() {
+  local line
+  line="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+  printf '%s\n' "${line}" >> "${LOG_FILE}"
+  [[ "${AUTO_SYNC_BACKGROUND:-0}" == "1" ]] || printf '%s\n' "${line}"
+}
+
+LAST_NOTICE=""
+notice() {
+  [[ "$*" == "${LAST_NOTICE}" ]] && return 0
+  LAST_NOTICE="$*"
+  log "$@"
+}
+
+# Track already-warned blocked paths in a newline-separated string (Bash 3.2 compatible).
+WARNED_PATHS=""
+warn_blocked() {
+  local path="$1" reason="$2"
+  case $'\n'"${WARNED_PATHS}"$'\n' in
+    *$'\n'"${path}"$'\n'*) return 0 ;;
+  esac
+  WARNED_PATHS="${WARNED_PATHS}"$'\n'"${path}"
+  log "🚫 Not committing '${path}': ${reason}. Add it to .gitignore to silence this warning."
+}
+
+trim_log() {
+  local max_bytes=$(( LOG_MAX_KB * 1024 )) size tmp
+  [[ -f "${LOG_FILE}" ]] || return 0
+  size="$(file_size_bytes "${LOG_FILE}")"
+  (( size > max_bytes )) || return 0
+  tmp="$(mktemp)" || return 0
+  if tail -c "$(( max_bytes / 2 ))" "${LOG_FILE}" | tail -n +2 > "${tmp}"; then
+    cat "${tmp}" > "${LOG_FILE}"
+  fi
+  rm -f "${tmp}"
+}
+
+NAP_PID=""
+nap() {
+  sleep "${1:-${POLL_INTERVAL}}" &
+  NAP_PID=$!
+  wait "${NAP_PID}" 2>/dev/null || true
+  NAP_PID=""
+}
+
+# ==============================================================================
+# Git helpers (called with current working directory = REPO_ROOT)
+# ==============================================================================
+
+get_remote() {
+  if [[ -n "${REMOTE_OVERRIDE}" ]]; then
+    echo "${REMOTE_OVERRIDE}"
+  elif git remote | grep -qx "all"; then
     echo "all"
   else
     echo "origin"
   fi
 }
 
-get_current_branch() {
-  cd "${REPO_ROOT}"
-  git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main"
+get_branch() {
+  git symbolic-ref --quiet --short HEAD 2>/dev/null
 }
 
-run_daemon() {
-  cd "${REPO_ROOT}"
-  local remote_name
-  local branch_name
-  remote_name="$(get_remote_target)"
-  branch_name="$(get_current_branch)"
-
-  log "🚀 Git Auto-Sync başlatıldı. Repo: ${REPO_ROOT}"
-  log "📡 Hedef Uzak Depo: ${remote_name} | Dal: ${branch_name}"
-  log "⏱️  Kontrol aralığı: ${POLL_INTERVAL}s | Debounce bekleme: ${DEBOUNCE_WAIT}s"
-
-  while true; do
-    # Git durumunu kontrol et (.gitignore kurallarına uyar)
-    if [[ -n "$(git status --porcelain)" ]]; then
-      log "📝 Değişiklik algılandı. Dosya yazımlarının bitmesi için ${DEBOUNCE_WAIT}s bekleniyor..."
-      sleep "${DEBOUNCE_WAIT}"
-
-      # Debounce süresi sonrasında hala değişiklik var mı kontrol et
-      local changes
-      changes="$(git status --porcelain)"
-      if [[ -n "${changes}" ]]; then
-        # Değişen ilk 2 dosyanın adını özet mesajı için al
-        local summary
-        summary="$(git status --porcelain | awk '{print $2}' | head -n 2 | paste -sd ", " -)"
-        local count
-        count="$(git status --porcelain | wc -l)"
-        if [[ "${count}" -gt 2 ]]; then
-          summary="${summary} (+ $((count - 2)) dosya)"
-        fi
-
-        local commit_msg="auto: ${summary} ($(date '+%H:%M:%S'))"
-        
-        log "📦 Değişiklikler paketleniyor (${count} dosya): ${summary}"
-        git add -A
-
-        # Eğer stage edilmiş değişiklik varsa commit et
-        if ! git diff --cached --quiet; then
-          git commit -m "${commit_msg}" >> "${LOG_FILE}" 2>&1 || true
-          log "✅ Commit oluşturuldu: ${commit_msg}"
-
-          log "📤 Uzak depoya gönderiliyor (git push ${remote_name} ${branch_name})..."
-          if git push "${remote_name}" "${branch_name}" >> "${LOG_FILE}" 2>&1; then
-            log "🎉 Başarıyla pushlandı!"
-          else
-            log "⚠️ Push işlemi başarısız oldu. Log detayları için: ${LOG_FILE}"
-          fi
-        fi
-      fi
+repo_busy() {
+  local marker
+  for marker in index.lock MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG rebase-merge rebase-apply; do
+    if [[ -e "${GIT_DIR}/${marker}" ]]; then
+      echo "${marker}"
+      return 0
     fi
-    sleep "${POLL_INTERVAL}"
   done
+  return 1
 }
 
-start() {
-  if is_running; then
-    local pid
-    pid="$(cat "${PID_FILE}")"
-    echo "⚠️  Git Auto-Sync zaten çalışıyor (PID: ${pid})."
-    return 0
-  fi
-
-  mkdir -p "$(dirname "${LOG_FILE}")"
-  nohup bash "${SCRIPT_DIR}/git-auto-sync.sh" run </dev/null >> "${LOG_FILE}" 2>&1 &
-  local new_pid=$!
-  disown "${new_pid}" 2>/dev/null || true
-  echo "${new_pid}" > "${PID_FILE}"
-
-  sleep 1
-  if is_running; then
-    echo "✅ Git Auto-Sync arka planda başarıyla başlatıldı (PID: ${new_pid})."
-    echo "📋 Logları canlı izlemek için:  ${SCRIPT_DIR}/git-auto-sync.sh logs"
-    echo "🛑 Durdurmak için:               ${SCRIPT_DIR}/git-auto-sync.sh stop"
+unpushed_count() {
+  local remote="$1" branch="$2"
+  if git rev-parse -q --verify "refs/remotes/${remote}/${branch}" >/dev/null 2>&1; then
+    git rev-list --count "refs/remotes/${remote}/${branch}..HEAD" 2>/dev/null || echo 0
   else
-    echo "❌ Başlatılamadı. Hata detayları için '${LOG_FILE}' dosyasını inceleyin."
-    return 1
+    git rev-list --count HEAD 2>/dev/null || echo 0
   fi
 }
 
-stop() {
-  if ! is_running; then
-    echo "ℹ️  Git Auto-Sync şu anda çalışmıyor."
-    rm -f "${PID_FILE}"
-    return 0
-  fi
-
-  local pid
-  pid="$(cat "${PID_FILE}")"
-  echo "🛑 Git Auto-Sync durduruluyor (PID: ${pid})..."
-  kill "${pid}" 2>/dev/null || true
-  sleep 1
-
-  if kill -0 "${pid}" 2>/dev/null; then
-    kill -9 "${pid}" 2>/dev/null || true
-  fi
-
-  rm -f "${PID_FILE}"
-  echo "✅ Git Auto-Sync durduruldu."
+has_changes_in_scope() {
+  [[ -n "$(git status --porcelain -uall -- "${SCOPE}" 2>/dev/null)" ]]
 }
 
-is_running() {
-  if [[ -f "${PID_FILE}" ]]; then
-    local pid
-    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+# Compute a portable SHA-1 fingerprint of all modified paths + their sizes/mtimes
+# within SCOPE using `git hash-object` (works on Linux, macOS, and Windows).
+snapshot() {
+  git -c core.quotePath=false status --porcelain -uall -- "${SCOPE}" 2>/dev/null \
+    | sed -E 's/^.{3}//; s/^.* -> //; s/^"(.*)"$/\1/' \
+    | while IFS= read -r path; do
+        printf '%s %s\n' "${path}" "$(file_signature "${path}")"
+      done \
+    | git hash-object --stdin
+}
+
+wait_for_quiet() {
+  local previous current waited=0
+  previous="$(snapshot)"
+  while (( waited < MAX_DEBOUNCE )); do
+    nap "${DEBOUNCE_WAIT}"
+    waited=$(( waited + DEBOUNCE_WAIT ))
+    current="$(snapshot)"
+    [[ "${current}" == "${previous}" ]] && return 0
+    previous="${current}"
+  done
+  log "⏳ Files still changing after ${MAX_DEBOUNCE}s; committing anyway."
+}
+
+# Emit NUL-separated paths of added/modified files within SCOPE.
+changed_paths() {
+  local entry xy
+  while IFS= read -r -d '' entry; do
+    xy="${entry:0:2}"
+    if [[ "${xy}" == R* || "${xy}" == C* ]]; then
+      IFS= read -r -d '' _
+    fi
+    [[ "${xy}" == *D* ]] && continue
+    printf '%s\0' "${entry:3}"
+  done < <(git status --porcelain -z -uall -- "${SCOPE}" 2>/dev/null)
+}
+
+block_reason() {
+  local path="$1" name="${1##*/}" pattern size
+  case "${name}" in
+    *.example | *.sample | *.template | *.dist) ;;
+    *)
+      if (( ${#SENSITIVE_PATTERNS[@]} > 0 )); then
+        for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+          [[ -z "${pattern}" ]] && continue
+          # shellcheck disable=SC2053
+          if [[ "${name}" == ${pattern} ]]; then
+            echo "looks sensitive (matches '${pattern}')"
+            return 0
+          fi
+        done
+      fi
+      ;;
+  esac
+  if (( MAX_FILE_BYTES > 0 )) && [[ -f "${path}" && ! -L "${path}" ]]; then
+    size="$(file_size_bytes "${path}")"
+    if (( size > MAX_FILE_BYTES )); then
+      echo "too large ($(( size / 1024 / 1024 )) MiB > ${MAX_FILE_SIZE_MB} MiB limit)"
       return 0
     fi
   fi
   return 1
 }
 
-status() {
-  if is_running; then
-    local pid
-    pid="$(cat "${PID_FILE}")"
-    echo "🟢 Git Auto-Sync ÇALIŞIYOR (PID: ${pid})"
-    local remote_name
-    local branch_name
-    remote_name="$(get_remote_target)"
-    branch_name="$(get_current_branch)"
-    echo "   Hedef: ${remote_name}/${branch_name}"
-    echo "   Log Dosyası: ${LOG_FILE}"
-    echo ""
-    echo "--- Son 10 Log Satırı ---"
-    if [[ -f "${LOG_FILE}" ]]; then
-      tail -n 10 "${LOG_FILE}"
+commit_changes() {
+  local path reason msg count line
+  local -a excludes=() files=()
+
+  # 1) Exclude oversized/sensitive files before `git add` so large blobs are
+  #    never hashed into .git/objects.
+  while IFS= read -r -d '' path; do
+    if reason="$(block_reason "${path}")"; then
+      excludes+=(":(exclude,literal)${path}")
+      warn_blocked "${path}" "${reason}"
     fi
+  done < <(changed_paths)
+
+  # 2) Stage everything else inside SCOPE.
+  if ! git add -A -- "${SCOPE}" "${excludes[@]}" >> "${LOG_FILE}" 2>&1; then
+    log "❌ 'git add' failed (details in ${LOG_FILE})."
+    return 1
+  fi
+
+  # 3) Safety net: unstage any blocked file that the user staged manually.
+  while IFS= read -r -d '' path; do
+    if reason="$(block_reason "${path}")"; then
+      git reset -q -- "${path}" 2>/dev/null || git rm -q --cached -- "${path}" >/dev/null 2>&1
+      warn_blocked "${path}" "${reason}"
+    fi
+  done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+
+  git diff --cached --quiet && return 1
+
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] && files+=("${line}")
+  done < <(git -c core.quotePath=false diff --cached --name-only)
+
+  count=${#files[@]}
+  msg="auto: ${files[0]}"
+  (( count > 1 )) && msg+=", ${files[1]}"
+  (( count > 2 )) && msg+=" (+$(( count - 2 )) more)"
+  msg+=" ($(date '+%H:%M:%S'))"
+
+  if git commit -q -m "${msg}" >> "${LOG_FILE}" 2>&1; then
+    log "✅ Committed ${count} file(s): ${msg}"
+    return 0
+  fi
+  log "❌ 'git commit' failed (details in ${LOG_FILE})."
+  return 1
+}
+
+push_error_summary() {
+  local line summary="" count=0
+  while IFS= read -r line; do
+    line="${line#remote:}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" ]] && continue
+    if [[ -z "${summary}" ]]; then
+      summary="${line}"
+    else
+      summary="${summary} | ${line}"
+    fi
+    count=$(( count + 1 ))
+    (( count >= 3 )) && break
+  done < <(grep -iE 'rejected|error|fatal|denied|exceed|too large|LFS|could not' <<< "$1")
+  echo "${summary:-unknown error, see ${LOG_FILE}}"
+}
+
+push_changes() {
+  local remote="$1" branch="$2" output rc
+  log "📤 Pushing to '${remote}' (${branch})..."
+  output="$(run_with_timeout "${PUSH_TIMEOUT}" git push "${remote}" "${branch}" 2>&1)"
+  rc=$?
+  printf '%s\n' "${output}" >> "${LOG_FILE}"
+  if (( rc == 0 )); then
+    log "🎉 Push succeeded."
+    return 0
+  fi
+  if (( rc == 124 )); then
+    log "⚠️  Push timed out after ${PUSH_TIMEOUT}s."
   else
-    echo "🔴 Git Auto-Sync ÇALIŞMIYOR."
-    if [[ -f "${LOG_FILE}" ]]; then
-      echo ""
-      echo "--- Son Log Kayıtları ---"
-      tail -n 5 "${LOG_FILE}"
+    log "⚠️  Push failed: $(push_error_summary "${output}")"
+  fi
+  return 1
+}
+
+# ==============================================================================
+# Daemon loop
+# ==============================================================================
+
+daemon_pid() {
+  local pid
+  pid="$(cat "${PID_FILE}" 2>/dev/null)" || return 1
+  [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null && echo "${pid}"
+}
+
+acquire_single_instance_lock() {
+  if command -v flock >/dev/null 2>&1; then
+    exec 9> "${LOCK_FILE}"
+    flock -w 5 9 || return 1
+    return 0
+  fi
+  # Portable fallback when `flock` is unavailable (macOS / Windows Git Bash).
+  local existing_pid
+  if existing_pid="$(daemon_pid)" && [[ "${existing_pid}" != "$$" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+on_exit() {
+  [[ -n "${NAP_PID}" ]] && kill "${NAP_PID}" 2>/dev/null || true
+  rm -f "${PID_FILE}"
+  log "🛑 Git Auto-Sync stopped."
+}
+
+run_daemon() {
+  cd "${REPO_ROOT}" || exit 1
+  mkdir -p "$(dirname "${LOG_FILE}")"
+
+  if ! acquire_single_instance_lock; then
+    log "❌ Another git-auto-sync instance is already running for ${REPO_ROOT}."
+    exit 1
+  fi
+  echo "$$" > "${PID_FILE}"
+  trap on_exit EXIT
+  trap 'exit 0' INT TERM
+
+  local remote branch busy head snap
+  local idle_snapshot="" checked_head="" push_pending=0 next_retry=0 retry_delay="${RETRY_BASE}"
+
+  log "🚀 Git Auto-Sync started. Repo: ${REPO_ROOT} (scope: ${SCOPE}) | Remote: $(get_remote)"
+  log "⏱️  Poll: ${POLL_INTERVAL}s | Debounce: ${DEBOUNCE_WAIT}s (max ${MAX_DEBOUNCE}s) | Max file size: ${MAX_FILE_SIZE_MB} MiB"
+
+  while true; do
+    trim_log
+    remote="$(get_remote)"
+
+    if ! branch="$(get_branch)"; then
+      notice "⏸️  Detached HEAD; paused until a branch is checked out."
+      nap; continue
     fi
+    if busy="$(repo_busy)"; then
+      notice "⏸️  Git operation in progress (${busy}); paused."
+      nap; continue
+    fi
+    LAST_NOTICE=""
+
+    # --- 1) Stage & commit local file changes --------------------------------
+    if has_changes_in_scope; then
+      snap="$(snapshot)"
+      if [[ "${snap}" != "${idle_snapshot}" ]]; then
+        log "📝 Changes detected; waiting for writes to settle..."
+        wait_for_quiet
+        repo_busy >/dev/null && continue
+        if commit_changes; then
+          idle_snapshot="$(snapshot)"
+          push_pending=1; next_retry=0; retry_delay="${RETRY_BASE}"
+        else
+          idle_snapshot="$(snapshot)"
+        fi
+      fi
+    fi
+
+    # --- 2) Detect unpushed commits (startup, manual commits, branch switch) -
+    head="$(git rev-parse -q --verify HEAD 2>/dev/null || true)"
+    if [[ -n "${head}" && "${head}" != "${checked_head}" ]]; then
+      checked_head="${head}"
+      if (( $(unpushed_count "${remote}" "${branch}") > 0 )); then
+        push_pending=1
+      fi
+    fi
+
+    # --- 3) Push to remote, retrying with exponential backoff ----------------
+    if (( push_pending )) && (( $(date +%s) >= next_retry )); then
+      if push_changes "${remote}" "${branch}"; then
+        push_pending=0
+        retry_delay="${RETRY_BASE}"
+      else
+        next_retry=$(( $(date +%s) + retry_delay ))
+        log "🔁 Retrying the push in ${retry_delay}s."
+        retry_delay=$(( retry_delay * 2 > RETRY_MAX ? RETRY_MAX : retry_delay * 2 ))
+      fi
+    fi
+
+    nap
+  done
+}
+
+# ==============================================================================
+# Cross-platform Service Management (install / uninstall / start / stop / status)
+# ==============================================================================
+
+is_service_installed() {
+  case "${SERVICE_BACKEND}" in
+    systemd)         [[ -f "${UNIT_FILE}" ]] ;;
+    launchd)         [[ -f "${PLIST_FILE}" ]] ;;
+    windows-startup) [[ -f "$(win_startup_vbs_path)" ]] ;;
+    cron)            crontab -l 2>/dev/null | grep -Fq "# git-auto-sync:${SERVICE_NAME}" || [[ -f "${DESKTOP_FILE}" ]] ;;
+  esac
+}
+
+start_background_nohup() {
+  local pid
+  if pid="$(daemon_pid)"; then
+    echo "⚠️  Git Auto-Sync is already running (PID ${pid})."
+    return 0
+  fi
+  mkdir -p "$(dirname "${LOG_FILE}")"
+  AUTO_SYNC_BACKGROUND=1 AUTO_SYNC_CONFIG="${CONFIG_FILE}" \
+    nohup bash "${SCRIPT_PATH}" run </dev/null >> "${LOG_FILE}" 2>&1 &
+  sleep 1
+  if pid="$(daemon_pid)"; then
+    echo "✅ Git Auto-Sync started in the background (PID ${pid})."
+    echo "📋 Follow logs : ${SCRIPT_PATH} logs"
+    echo "🛑 Stop daemon : ${SCRIPT_PATH} stop"
+    return 0
+  fi
+  echo "❌ Failed to start. Check '${LOG_FILE}' for details." >&2
+  return 1
+}
+
+stop_background_pid() {
+  local pid
+  if ! pid="$(daemon_pid)"; then
+    echo "ℹ️  Git Auto-Sync is not running."
+    rm -f "${PID_FILE}"
+    return 0
+  fi
+  echo "🛑 Stopping Git Auto-Sync (PID ${pid})..."
+  kill "${pid}" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 1
+  done
+  kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
+  rm -f "${PID_FILE}"
+  echo "✅ Git Auto-Sync stopped."
+}
+
+cmd_install() {
+  # Ensure git-auto-sync.env exists so the watched path is persisted clearly.
+  if [[ -z "${CONFIG_FILE}" || ! -f "${CONFIG_FILE}" ]]; then
+    save_repo_path_to_env "${WATCH_PATH}"
+    echo "📝 Created config file: ${CONFIG_FILE} (watching ${WATCH_PATH})"
+  fi
+
+  case "${SERVICE_BACKEND}" in
+    systemd)
+      if ! is_service_installed && daemon_pid >/dev/null; then
+        stop_background_pid
+      fi
+      mkdir -p "$(dirname "${UNIT_FILE}")"
+      cat > "${UNIT_FILE}" << EOF
+[Unit]
+Description=Git Auto-Sync Daemon for $(basename "${REPO_ROOT}")
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${REPO_ROOT}
+Environment="AUTO_SYNC_CONFIG=${CONFIG_FILE}"
+ExecStart=/usr/bin/env bash "${SCRIPT_PATH}" run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+      systemctl --user daemon-reload \
+        && systemctl --user enable "${SERVICE_NAME}" >/dev/null 2>&1 \
+        && systemctl --user restart "${SERVICE_NAME}" \
+        || { echo "❌ Could not enable/start systemd service '${SERVICE_NAME}'." >&2; return 1; }
+      command -v loginctl >/dev/null 2>&1 && loginctl enable-linger "${USER:-$(id -un)}" 2>/dev/null || true
+      echo "✅ Installed and started systemd user service '${SERVICE_NAME}' (auto-starts at login/boot)."
+      echo "   Unit file   : ${UNIT_FILE}"
+      echo "   Config file : ${CONFIG_FILE}"
+      echo "   Watching    : ${WATCH_PATH}"
+      ;;
+
+    launchd)
+      daemon_pid >/dev/null && stop_background_pid
+      mkdir -p "$(dirname "${PLIST_FILE}")"
+      cat > "${PLIST_FILE}" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${SCRIPT_PATH}</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${REPO_ROOT}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AUTO_SYNC_CONFIG</key>
+    <string>${CONFIG_FILE}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${LOG_FILE}</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_FILE}</string>
+</dict>
+</plist>
+EOF
+      launchctl unload "${PLIST_FILE}" >/dev/null 2>&1 || true
+      launchctl load -w "${PLIST_FILE}" || { echo "❌ launchctl load failed." >&2; return 1; }
+      echo "✅ Installed and started macOS LaunchAgent '${PLIST_LABEL}' (auto-starts at login)."
+      echo "   Plist file  : ${PLIST_FILE}"
+      echo "   Config file : ${CONFIG_FILE}"
+      echo "   Watching    : ${WATCH_PATH}"
+      ;;
+
+    windows-startup)
+      local vbs_file bash_win script_win config_win
+      vbs_file="$(win_startup_vbs_path)"
+      mkdir -p "$(dirname "${vbs_file}")"
+      if command -v cygpath >/dev/null 2>&1; then
+        bash_win="$(cygpath -w "$(command -v bash)")"
+        script_win="$(cygpath -w "${SCRIPT_PATH}")"
+        config_win="$(cygpath -w "${CONFIG_FILE}")"
+      else
+        bash_win="bash.exe"
+        script_win="${SCRIPT_PATH}"
+        config_win="${CONFIG_FILE}"
+      fi
+      cat > "${vbs_file}" << EOF
+Set WshShell = CreateObject("WScript.Shell")
+Set WshEnv = WshShell.Environment("PROCESS")
+WshEnv("AUTO_SYNC_CONFIG") = "${config_win}"
+WshShell.Run """${bash_win}"" ""${script_win}"" start", 0, False
+EOF
+      daemon_pid >/dev/null && stop_background_pid
+      start_background_nohup
+      echo "✅ Installed Windows Startup launcher (auto-starts silently at login)."
+      echo "   Startup VBS : ${vbs_file}"
+      echo "   Config file : ${CONFIG_FILE}"
+      echo "   Watching    : ${WATCH_PATH}"
+      ;;
+
+    cron)
+      if command -v crontab >/dev/null 2>&1; then
+        local cron_line="@reboot AUTO_SYNC_CONFIG=\"${CONFIG_FILE}\" \"${SCRIPT_PATH}\" start >/dev/null 2>&1 # git-auto-sync:${SERVICE_NAME}"
+        (crontab -l 2>/dev/null | grep -Fv "# git-auto-sync:${SERVICE_NAME}" || true; echo "${cron_line}") | crontab - 2>/dev/null || true
+      fi
+      mkdir -p "$(dirname "${DESKTOP_FILE}")" 2>/dev/null || true
+      cat > "${DESKTOP_FILE}" 2>/dev/null << EOF || true
+[Desktop Entry]
+Type=Application
+Name=Git Auto-Sync (${SERVICE_NAME})
+Exec=/usr/bin/env AUTO_SYNC_CONFIG="${CONFIG_FILE}" "${SCRIPT_PATH}" start
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+      daemon_pid >/dev/null && stop_background_pid
+      start_background_nohup
+      echo "✅ Installed autostart entry (cron @reboot + XDG autostart) and started daemon."
+      echo "   Config file : ${CONFIG_FILE}"
+      echo "   Watching    : ${WATCH_PATH}"
+      ;;
+  esac
+}
+
+cmd_uninstall() {
+  case "${SERVICE_BACKEND}" in
+    systemd)
+      if [[ -f "${UNIT_FILE}" ]]; then
+        systemctl --user disable --now "${SERVICE_NAME}" >/dev/null 2>&1 || true
+        rm -f "${UNIT_FILE}"
+        systemctl --user daemon-reload 2>/dev/null || true
+      fi
+      stop_background_pid >/dev/null 2>&1 || true
+      echo "✅ Stopped, disabled and removed systemd service '${SERVICE_NAME}'."
+      ;;
+    launchd)
+      if [[ -f "${PLIST_FILE}" ]]; then
+        launchctl unload -w "${PLIST_FILE}" >/dev/null 2>&1 || true
+        rm -f "${PLIST_FILE}"
+      fi
+      stop_background_pid >/dev/null 2>&1 || true
+      echo "✅ Stopped and removed macOS LaunchAgent '${PLIST_LABEL}'."
+      ;;
+    windows-startup)
+      rm -f "$(win_startup_vbs_path)"
+      stop_background_pid
+      echo "✅ Removed Windows Startup launcher and stopped daemon."
+      ;;
+    cron)
+      if command -v crontab >/dev/null 2>&1; then
+        (crontab -l 2>/dev/null | grep -Fv "# git-auto-sync:${SERVICE_NAME}" || true) | crontab - 2>/dev/null || true
+      fi
+      rm -f "${DESKTOP_FILE}"
+      stop_background_pid
+      echo "✅ Removed autostart entries and stopped daemon."
+      ;;
+  esac
+}
+
+cmd_start() {
+  case "${SERVICE_BACKEND}" in
+    systemd)
+      if is_service_installed; then
+        systemctl --user start "${SERVICE_NAME}" && echo "✅ Started systemd user service '${SERVICE_NAME}'."
+        return
+      fi
+      ;;
+    launchd)
+      if is_service_installed; then
+        launchctl start "${PLIST_LABEL}" 2>/dev/null || launchctl load -w "${PLIST_FILE}" 2>/dev/null
+        echo "✅ Started macOS LaunchAgent '${PLIST_LABEL}'."
+        return
+      fi
+      ;;
+  esac
+  start_background_nohup
+}
+
+cmd_stop() {
+  case "${SERVICE_BACKEND}" in
+    systemd)
+      if is_service_installed && systemctl --user is-active --quiet "${SERVICE_NAME}"; then
+        systemctl --user stop "${SERVICE_NAME}" && echo "✅ Stopped systemd user service '${SERVICE_NAME}'."
+        return
+      fi
+      ;;
+    launchd)
+      if is_service_installed; then
+        launchctl unload "${PLIST_FILE}" >/dev/null 2>&1 || true
+        stop_background_pid >/dev/null 2>&1 || true
+        echo "✅ Stopped macOS LaunchAgent '${PLIST_LABEL}'."
+        return
+      fi
+      ;;
+  esac
+  stop_background_pid
+}
+
+cmd_restart() {
+  case "${SERVICE_BACKEND}" in
+    systemd)
+      if is_service_installed; then
+        systemctl --user restart "${SERVICE_NAME}" && echo "✅ Restarted '${SERVICE_NAME}'."
+        return
+      fi
+      ;;
+    launchd)
+      if is_service_installed; then
+        launchctl unload "${PLIST_FILE}" >/dev/null 2>&1 || true
+        launchctl load -w "${PLIST_FILE}" && echo "✅ Restarted '${PLIST_LABEL}'."
+        return
+      fi
+      ;;
+  esac
+  stop_background_pid
+  start_background_nohup
+}
+
+cmd_status() {
+  cd "${REPO_ROOT}" || return 1
+  local pid remote branch path reason
+  local -a blocked=()
+
+  if pid="$(daemon_pid)"; then
+    echo "🟢 Git Auto-Sync is RUNNING (PID ${pid})"
+  else
+    echo "🔴 Git Auto-Sync is NOT running"
+  fi
+
+  echo "   OS / Mode: ${OS_KERNEL} (${SERVICE_BACKEND})"
+  if is_service_installed; then
+    echo "   Autostart: enabled (${SERVICE_NAME})"
+  else
+    echo "   Autostart: not installed (run '${SCRIPT_PATH} install' to enable on boot/login)"
+  fi
+  echo "   Config   : ${CONFIG_FILE:-<none, using defaults>}"
+  echo "   Watching : ${WATCH_PATH} (repo: ${REPO_ROOT}, scope: ${SCOPE})"
+
+  remote="$(get_remote)"
+  if branch="$(get_branch)"; then
+    echo "   Target   : ${remote}/${branch}"
+    echo "   Unpushed : $(unpushed_count "${remote}" "${branch}") commit(s)"
+  else
+    echo "   Target   : ${remote} (detached HEAD, syncing paused)"
+  fi
+
+  while IFS= read -r -d '' path; do
+    reason="$(block_reason "${path}")" && blocked+=("     - ${path}: ${reason}")
+  done < <(changed_paths)
+  if (( ${#blocked[@]} > 0 )); then
+    echo "   Skipped  : ${#blocked[@]} file(s) blocked by safety guards"
+    printf '%s\n' "${blocked[@]}"
+  fi
+
+  echo "   Log file : ${LOG_FILE}"
+  if [[ -f "${LOG_FILE}" ]]; then
+    echo ""
+    echo "--- Last 10 log lines ---"
+    tail -n 10 "${LOG_FILE}"
   fi
 }
 
-logs() {
-  if [[ ! -f "${LOG_FILE}" ]]; then
-    touch "${LOG_FILE}"
-  fi
-  echo "📋 Loglar canlı izleniyor (Çıkmak için Ctrl+C)..."
-  tail -f "${LOG_FILE}"
+cmd_logs() {
+  mkdir -p "$(dirname "${LOG_FILE}")"
+  touch "${LOG_FILE}"
+  echo "📋 Following ${LOG_FILE} (Ctrl+C to quit)..."
+  tail -n 20 -f "${LOG_FILE}"
+}
+
+usage() {
+  cat << EOF
+Usage: $0 {install [path]|uninstall|start|stop|restart|status|logs|run}
+
+Commands:
+  install [path]  Configure auto-start on login/boot (Linux/macOS/Windows) and start now.
+                  Optionally pass the directory path to watch (saved to git-auto-sync.env).
+  uninstall       Stop the daemon and remove the auto-start service/launcher
+  start           Start the daemon in the background
+  stop            Stop the running daemon
+  restart         Restart the daemon (run this after changing git-auto-sync.env)
+  status          Show running state, watched path, unpushed commits, and recent logs
+  logs            Follow the log file live
+  run             Run the daemon in the foreground
+
+See scripts/README.md for full documentation.
+EOF
 }
 
 case "${1:-}" in
-  start)
-    start
-    ;;
-  stop)
-    stop
-    ;;
-  status)
-    status
-    ;;
-  logs|log)
-    logs
-    ;;
-  run)
-    run_daemon
-    ;;
-  *)
-    echo "Kullanım: $0 {start|stop|status|logs|run}"
-    echo ""
-    echo "Komutlar:"
-    echo "  start   : Arka planda otomatik senkronizasyon servisini başlatır"
-    echo "  stop    : Çalışan servisi durdurur"
-    echo "  status  : Servisin durumunu ve son logları gösterir"
-    echo "  logs    : Canlı log akışını terminale basar"
-    echo "  run     : Ön planda (foreground) çalıştırır"
-    exit 1
-    ;;
+  install)    cmd_install "${2:-}" ;;
+  uninstall)  cmd_uninstall ;;
+  start)      cmd_start ;;
+  stop)       cmd_stop ;;
+  restart)    cmd_restart ;;
+  status)     cmd_status ;;
+  logs | log) cmd_logs ;;
+  run)        run_daemon ;;
+  *)          usage; exit 1 ;;
 esac
