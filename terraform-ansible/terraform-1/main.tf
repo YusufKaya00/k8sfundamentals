@@ -117,3 +117,16 @@ output "public_ip_address" {
   value       = azurerm_public_ip.vm_pip.ip_address
   description = "Sunucunun Dis IP Adresi"
 }
+
+
+# 9. OTOMASYON: Ansible için hosts.ini dosyasını otomatik üret
+resource "local_file" "ansible_inventory" {
+  filename = "${path.module}/hosts.ini"
+  content  = <<-EOT
+[k8s_nodes]
+node1 ansible_host=${azurerm_public_ip.vm_pip.ip_address}
+EOT
+
+  # Bu dosyanın sunucu tamamen olustuktan sonra yazilmasini garantiye alıyoruz
+  depends_on = [azurerm_linux_virtual_machine.k8s_vm]
+}
