@@ -95,3 +95,16 @@
         sh -
       args:
         creates: /usr/local/bin/k3s-agent
+
+
+    # Helm CLI Kurulumu
+    - name: Download and install Helm CLI
+      shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Configure KUBECONFIG env for Helm
+      lineinfile:
+        path: /etc/environment
+        line: 'KUBECONFIG=/etc/rancher/k3s/k3s.yaml'
+        state: present
