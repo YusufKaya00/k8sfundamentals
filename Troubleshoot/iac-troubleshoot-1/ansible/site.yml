@@ -1,0 +1,47 @@
+---
+# [FAULT 3A] Host group name uses hyphen ('payment-nodes'), but hosts.ini defines '[payment_nodes]'
+- name: Configure ChronoPay Edge Gateway & Payment Engine
+  hosts: payment-nodes
+  gather_facts: false
+  vars:
+    runtime_root: "/tmp/chronopay-lab1"
+    # [FAULT 5A] Upstream port set to 19099, but payment backend actually listens on 19090 (backend_service_port)
+    upstream_backend_port: 19099
+
+  tasks:
+    - name: Verify HMAC secret key permissions are strictly 0600
+      stat:
+        path: "{{ runtime_root }}/etc/chronopay/hmac.key"
+      register: hmac_stat
+
+    - name: Fail if HMAC key file is missing or permissions are too open (must be 0600)
+      fail:
+        msg: "CRITICAL SECURITY FAULT: {{ runtime_root }}/etc/chronopay/hmac.key must exist with mode 0600 (found: {{ hmac_stat.stat.mode | default('missing') }})"
+      when: not hmac_stat.stat.exists or hmac_stat.stat.mode != '0600'
+
+    # [FAULT 4B] Non-idempotent raw 'command: mkdir' fails when directory already exists!
+    - name: Create ChronoPay audit log directory
+      command: mkdir {{ runtime_root }}/var/log/chronopay/audit
+
+    - name: Start ChronoPay Internal Payment Backend Daemon
+      shell: |
+        pkill -f "chronopay_backend_lab1.py" 2>/dev/null || true
+        nohup python3 {{ playbook_dir }}/files/chronopay_backend_lab1.py {{ backend_service_port }} > {{ runtime_root }}/var/log/chronopay/backend.log 2>&1 &
+        sleep 1
+      changed_when: false
+
+    # [FAULT 4A] gateway.conf.j2 references '{{ gateway_port_number }}', which is undefined (inventory defines 'gateway_listen_port')
+    # [FAULT 5B] Task notifies 'Restart Edge Proxy', which does not match handler name 'Reload ChronoPay Edge Proxy'
+    - name: Render ChronoPay Edge Gateway configuration
+      template:
+        src: templates/gateway.conf.j2
+        dest: "{{ runtime_root }}/etc/chronopay/gateway.json"
+        mode: '0644'
+      notify: Restart Edge Proxy
+
+  handlers:
+    - name: Reload ChronoPay Edge Proxy
+      shell: |
+        pkill -f "chronopay_proxy_lab1.py" 2>/dev/null || true
+        nohup python3 {{ playbook_dir }}/files/chronopay_proxy_lab1.py {{ runtime_root }}/etc/chronopay/gateway.json > {{ runtime_root }}/var/log/chronopay/proxy.log 2>&1 &
+        sleep 1
