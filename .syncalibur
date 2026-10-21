@@ -1,0 +1,3 @@
+# Syncalibur per-repository configuration
+MODE="commit-generator"
+BURST_COOLDOWN=10
