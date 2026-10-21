@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stream-worker-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: stream-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: aethermesh
+data:
+  worker.py: |
+    import json
+    import os
+    import socket
+    import time
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PORT = int(os.environ.get("PORT", "9090"))
+    DB_HOST = os.environ.get("DB_HOST", "aether-db")
+    DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+    CACHE_HOST = os.environ.get("CACHE_HOST", "aether-cache")
+    CACHE_PORT = int(os.environ.get("CACHE_PORT", "6379"))
+
+    print("[stream-worker] Allocating 64 MiB in-memory event buffer cache...", flush=True)
+    STREAM_BUFFER = bytearray(64 * 1024 * 1024)
+    for i in range(0, len(STREAM_BUFFER), 4096):
+        STREAM_BUFFER[i] = 1
+    print("[stream-worker] Warming up pipeline model structures (7 seconds)...", flush=True)
+    time.sleep(7)
+    print("[stream-worker] Event stream warmup complete (64 MiB pinned).", flush=True)
+
+    class StreamWorkerHandler(BaseHTTPRequestHandler):
+        def _send_json(self, code, payload):
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path == "/healthz":
+                try:
+                    with socket.create_connection((DB_HOST, DB_PORT), timeout=2):
+                        pass
+                    with socket.create_connection((CACHE_HOST, CACHE_PORT), timeout=2):
+                        pass
+                    self._send_json(200, {
+                        "status": "healthy",
+                        "service": "stream-worker",
+                        "buffer_mib": 64,
+                        "db": f"{DB_HOST}:{DB_PORT}",
+                        "cache": f"{CACHE_HOST}:{CACHE_PORT}"
+                    })
+                except Exception as exc:
+                    self._send_json(503, {
+                        "status": "unhealthy",
+                        "error": str(exc)
+                    })
+                return
+
+            self._send_json(404, {"error": "not_found", "path": self.path})
+
+    def run():
+        server_address = ("0.0.0.0", PORT)
+        httpd = HTTPServer(server_address, StreamWorkerHandler)
+        print(f"[stream-worker] Serving on 0.0.0.0:{PORT}...", flush=True)
+        httpd.serve_forever()
+
+    if __name__ == "__main__":
+        run()
