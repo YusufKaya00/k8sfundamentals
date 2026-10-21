@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-telemetry
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: node-telemetry
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: node-telemetry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: node-telemetry
+        app.kubernetes.io/part-of: aethermesh
+    spec:
+      tolerations:
+        # [INC-1706: 6A] Bug: Node-3 has taint workload=database:NoSchedule. Key is 'workload', not 'dedicated'!
+        - key: dedicated
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: collector
+          image: docker.io/library/python:3.11-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -u
+            - -c
+            - |
+              import os, time
+              log_dir = "/var/log/aether"
+              log_file = os.path.join(log_dir, "telemetry.log")
+              print(f"[node-telemetry] Initializing node telemetry on {os.environ.get('NODE_NAME', 'unknown')}...", flush=True)
+              os.makedirs(log_dir, exist_ok=True)
+              while True:
+                  with open(log_file, "a") as f:
+                      f.write(f"{time.time()} node={os.environ.get('NODE_NAME')} status=HEALTHY\n")
+                  print(f"[node-telemetry] Heartbeat recorded on {os.environ.get('NODE_NAME')}", flush=True)
+                  time.sleep(15)
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: log-dir
+              mountPath: /var/log/aether
+              readOnly: true # [INC-1706: 6B] Bug: readOnly: true triggers 'Read-only file system' CrashLoopBackOff!
+      volumes:
+        - name: log-dir
+          emptyDir: {}
