@@ -28,7 +28,7 @@ resource "local_file" "node_metadata" {
     environment = var.environment
     threads     = var.worker_threads
     # [FAULT 1B] Undeclared variable reference (var.region_name does not exist in variables.tf)
-    region      = var.region.name
+    region      = var.region
   })
 }
 
