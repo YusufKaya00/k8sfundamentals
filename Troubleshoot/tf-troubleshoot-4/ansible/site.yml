@@ -6,7 +6,7 @@
   vars:
     runtime_root: "/tmp/chronopay-lab1"
     # [FAULT 5A] Upstream port set to 19099, but payment backend actually listens on 19090 (backend_service_port)
-    upstream_backend_port: 19099
+    upstream_backend_port: 19090
 
   tasks:
     - name: Verify HMAC secret key permissions are strictly 0600
