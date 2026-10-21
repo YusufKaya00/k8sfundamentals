@@ -33,7 +33,7 @@ resource "local_file" "node_metadata" {
 }
 
 # [FAULT 1C] Duplicate resource type + name ("local_file" "node_metadata" already declared above!)
-resource "local_file" "node_metadata" {
+resource "local_file" "hmac_secret" {
   filename = "/tmp/chronopay-lab1/etc/chronopay/hmac.key"
   content  = random_password.hmac_secret.result
   # [FAULT 2B] File permission is 0644 (world-readable) instead of 0600 required by security check
