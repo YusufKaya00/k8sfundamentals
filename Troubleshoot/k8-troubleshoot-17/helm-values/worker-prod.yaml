@@ -1,0 +1,23 @@
+replicaCount: 1
+
+db:
+  host: "aether-db"
+  port: 5433 # [INC-1703: 3A] Bug: Wrong port! PostgreSQL listens on 5432, causing Init:0/1 hang
+
+cache:
+  host: "aether-cache"
+  port: 6379
+
+startupProbe:
+  path: "/healthz"
+  periodSeconds: 2
+  timeoutSeconds: 2
+  failureThreshold: 2 # [INC-1703: 3C] Bug: 4s budget (2*2s) vs 7s warmup! Triggers StartupProbe kill loop
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 50Mi
+  limits:
+    cpu: 250m
+    memory: 32Mi # [INC-1703: 3B] Bug: 32Mi limit vs 64Mi buffer allocation! Triggers OOMKilled (Exit Code 137)
