@@ -8,7 +8,7 @@ variable "environment" {
 variable "worker_threads" {
   description = "Number of gateway worker threads"
   type        = number
-  default     = "two"
+  default     = 2
 }
 
 variable "gateway_listen_port" {
