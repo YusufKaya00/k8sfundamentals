@@ -52,3 +52,8 @@ resource "local_file" "backend" {
     api_key       = ${random_password.api_key.result}
   EOT
 }
+
+resource "local_file" "environment" {
+  filename = "${path.module}/output/readme.txt"
+  content  = "Environment: ${var.environment}"
+}
