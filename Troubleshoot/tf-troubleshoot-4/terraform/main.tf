@@ -28,7 +28,7 @@ resource "local_file" "node_metadata" {
     environment = var.environment
     threads     = var.worker_threads
     # [FAULT 1B] Undeclared variable reference (var.region_name does not exist in variables.tf)
-    region      = var.region_name
+    region      = var.region.name
   })
 }
 
@@ -37,7 +37,7 @@ resource "local_file" "node_metadata" {
   filename = "/tmp/chronopay-lab1/etc/chronopay/hmac.key"
   content  = random_password.hmac_secret.result
   # [FAULT 2B] File permission is 0644 (world-readable) instead of 0600 required by security check
-  file_permission = "0644"
+  file_permission = "0600"
 }
 
 # Auto-generate Ansible Inventory from Terraform state
@@ -45,7 +45,7 @@ resource "local_file" "ansible_inventory" {
   filename = "${path.module}/../ansible/hosts.ini"
   content = templatefile("${path.module}/templates/hosts.tftpl", {
     # [FAULT 2A] Unreachable host address passed to Ansible instead of 127.0.0.1
-    target_host       = "192.0.2.99"
+    target_host       = "127.0.0.1"
     gateway_port      = var.gateway_listen_port
     backend_port      = var.backend_internal_port
     deployment_id     = random_id.deployment_id.hex
