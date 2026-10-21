@@ -1,0 +1,195 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aether-db-secret
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: aether-db
+    app.kubernetes.io/part-of: aethermesh
+type: Opaque
+stringData:
+  db-password: "AetherSecretSettlement2026!"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-db
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: aether-db
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: aether-db
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: aether-db
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: aether-db
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  serviceName: aether-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aether-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aether-db
+        app.kubernetes.io/part-of: aethermesh
+    spec:
+      nodeSelector:
+        tier: database
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: storage # [INC-1701: 1A] Bug: Node-3 has taint workload=database:NoSchedule, not storage!
+          effect: NoSchedule
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: aether_settlement
+            - name: POSTGRES_USER
+              value: aether_admin
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aether-db-secret
+                  key: db-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U aether_admin -d aether_settlement
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U aether_admin -d aether_settlement
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data # [INC-1701: 1B] Bug: Missing subPath: pgdata, ext4 lost+found aborts initdb
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-cache
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: aether-cache
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6380 # [INC-1701: 1C] Bug: Redis listens on 6379, targetPort is set to 6380!
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: aether-cache
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aether-cache
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: aether-cache
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aether-cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aether-cache
+        app.kubernetes.io/part-of: aethermesh
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: redis
+          image: docker.io/library/redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - redis-server
+            - --protected-mode
+            - "no"
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
