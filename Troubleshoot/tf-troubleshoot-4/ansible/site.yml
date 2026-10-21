@@ -1,7 +1,7 @@
 ---
 # [FAULT 3A] Host group name uses hyphen ('payment-nodes'), but hosts.ini defines '[payment_nodes]'
 - name: Configure ChronoPay Edge Gateway & Payment Engine
-  hosts: payment-nodes
+  hosts: payment_nodes
   gather_facts: false
   vars:
     runtime_root: "/tmp/chronopay-lab1"
