@@ -44,7 +44,7 @@ resource "local_file" "frontend" {
 }
 
 # ...backend config'i de frontend'in adresini bilmek istiyor.
-resource "local_file" "backend" {
+resource "local_file-1" "backend" {
   filename = "${path.module}/output/backend.conf"
   content  = <<-EOT
     frontend_conf = ${local_file.frontend.filename}
