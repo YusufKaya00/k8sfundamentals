@@ -1,0 +1,13 @@
+replicaCount: 1
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8081 # [INC-1707: 7A] Bug: Nginx container listens on 8080, targetPort is set to 8081!
+
+gateway:
+  authToken: "invalid-token" # [INC-1707: 7B] Bug: Invalid token! Must be aether-prod-access-2026
+
+upstream:
+  host: "settlement-api"
+  port: 8000
