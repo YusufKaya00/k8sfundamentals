@@ -11,17 +11,26 @@ terraform {
   }
 }
 
-# Bu lab tamamen LOKALDE çalışır (maliyet 0).
-# Bu dosya BİLEREK bozuk yazıldı. İçinde 5 hata var.
+provider "random" {}
+provider "local" {}
 
 variable "replicas" {
   type    = number
-  default = "3"
+  default = 3
 }
 
 variable "environment" {
   type    = string
   default = "dev"
+}
+
+variable "app" {
+  type = object({
+    port = number
+  })
+  default = {
+    port = 8080
+  }
 }
 
 resource "random_pet" "app" {
