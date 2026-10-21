@@ -22,3 +22,7 @@ variable "backend_internal_port" {
   type        = number
   default     = 19090
 }
+variable "region" {
+  type    = string
+  default = "denmarkeast"
+}
