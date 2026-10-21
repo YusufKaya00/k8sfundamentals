@@ -2,7 +2,7 @@
   "service_name": "chronopay-edge-gateway",
   "deploy_id": "{{ deploy_id }}",
   "listen_host": "127.0.0.1",
-  "listen_port": {{ gateway_port_number }},
+  "listen_port": {{ gateway_listen_port }},
   "upstream_url": "http://127.0.0.1:{{ upstream_backend_port }}/internal/status",
   "required_header": "X-Chrono-Auth"
 }
