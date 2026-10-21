@@ -33,6 +33,11 @@ resource "random_password" "api_key" {
   special = false
 }
 
+
+locals {
+  backend_content  = templatefile("${path.module}/templates/backend.tpl", { host = "backend.example" })
+  frontend_content = templatefile("${path.module}/templates/frontend.tpl", { host = "frontend.example" })
+}
 # Frontend config'i backend'in adresini bilmek istiyor...
 resource "local_file" "frontend" {
   filename = "${path.module}/output/frontend.conf"
