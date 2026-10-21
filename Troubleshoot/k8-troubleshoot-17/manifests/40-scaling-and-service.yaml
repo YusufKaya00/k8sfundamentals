@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: settlement-api
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: settlement-api
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8080 # [INC-1705: 5B] Bug: Pod listens on 8000, targetPort is set to 8080!
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: settlement-api
+    role: core-engine # [INC-1705: 5A] Bug: Over-specified selector label! No pods match, causing Endpoints: <none>
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: settlement-api-hpa
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: settlement-api
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: settlement-service # [INC-1705: 5C] Bug: Target deployment name typo! Should be settlement-api
+  minReplicas: 3
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

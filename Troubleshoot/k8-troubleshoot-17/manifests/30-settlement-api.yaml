@@ -1,0 +1,200 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settlement-api-config
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: settlement-api
+    app.kubernetes.io/part-of: aethermesh
+data:
+  PORT: "8000"
+  DB_HOST: "aether-db"
+  DB_PORT: "5432"
+  CACHE_HOST: "aether-cache"
+  CACHE_PORT: "6379"
+  WORKER_HOST: "stream-worker"
+  WORKER_PORT: "9090"
+  REQUIRED_TOKEN: "aether-prod-access-2026"
+  server.py: |
+    import json
+    import os
+    import socket
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PORT = int(os.environ.get("PORT", "8000"))
+    DB_HOST = os.environ.get("DB_HOST", "aether-db")
+    DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+    CACHE_HOST = os.environ.get("CACHE_HOST", "aether-cache")
+    CACHE_PORT = int(os.environ.get("CACHE_PORT", "6379"))
+    WORKER_HOST = os.environ.get("WORKER_HOST", "stream-worker")
+    WORKER_PORT = int(os.environ.get("WORKER_PORT", "9090"))
+    REQUIRED_TOKEN = os.environ.get("REQUIRED_TOKEN", "aether-prod-access-2026")
+
+    class SettlementHandler(BaseHTTPRequestHandler):
+        def _send_json(self, status_code, data):
+            payload = json.dumps(data).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            if self.path == "/healthz":
+                self._send_json(200, {"status": "alive", "service": "settlement-api"})
+                return
+
+            if self.path == "/ready":
+                try:
+                    with socket.create_connection((DB_HOST, DB_PORT), timeout=2):
+                        pass
+                    with socket.create_connection((CACHE_HOST, CACHE_PORT), timeout=2):
+                        pass
+                    worker_url = f"http://{WORKER_HOST}:{WORKER_PORT}/healthz"
+                    with urllib.request.urlopen(worker_url, timeout=2) as resp:
+                        if resp.status != 200:
+                            raise RuntimeError(f"stream-worker returned HTTP {resp.status}")
+                    self._send_json(200, {
+                        "status": "ready",
+                        "database": f"{DB_HOST}:{DB_PORT}",
+                        "cache": f"{CACHE_HOST}:{CACHE_PORT}",
+                        "worker": f"{WORKER_HOST}:{WORKER_PORT}"
+                    })
+                except Exception as exc:
+                    self._send_json(503, {
+                        "status": "not_ready",
+                        "error": str(exc),
+                        "checked_cache_host": CACHE_HOST
+                    })
+                return
+
+            if self.path.startswith("/api/v1/settlements"):
+                token = self.headers.get("X-Aether-Token")
+                if token != REQUIRED_TOKEN:
+                    self._send_json(403, {
+                        "error": "forbidden",
+                        "message": "Invalid or missing security token X-Aether-Token",
+                        "received_token": token or "none"
+                    })
+                    return
+
+                self._send_json(200, {
+                    "platform": "AetherMesh Global Settlement Platform",
+                    "status": "UPSTREAM_OK",
+                    "accounts": [
+                        {"id": "ACC-101", "balance": 50000.00, "status": "VERIFIED"},
+                        {"id": "ACC-102", "balance": 125000.50, "status": "VERIFIED"},
+                        {"id": "ACC-103", "balance": 9400.00, "status": "VERIFIED"},
+                        {"id": "ACC-104", "balance": 382100.75, "status": "VERIFIED"}
+                    ],
+                    "settlement_cycle": "REALTIME_T0"
+                })
+                return
+
+            self._send_json(404, {"error": "not_found", "path": self.path})
+
+    def run():
+        server_address = ("0.0.0.0", PORT)
+        httpd = HTTPServer(server_address, SettlementHandler)
+        print(f"[settlement-api] Serving on 0.0.0.0:{PORT}...", flush=True)
+        httpd.serve_forever()
+
+    if __name__ == "__main__":
+        run()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settlement-api
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: settlement-api
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: settlement-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: settlement-api
+        app.kubernetes.io/part-of: aethermesh
+    spec:
+      nodeSelector:
+        tier: web
+      # [INC-1704: 4A] Bug: Hard anti-affinity with 3 replicas on a 2-node web tier forces 1 pod into Pending!
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - settlement-api
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: api
+          image: docker.io/library/python:3.11-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -u
+            - /app/server.py
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: settlement-api-config
+          env:
+            # [INC-1704: 4C] Bug: Inline env overrides envFrom! CACHE_HOST=127.0.0.1 fails connection to Redis!
+            - name: CACHE_HOST
+              value: "127.0.0.1"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # [INC-1704: 4B] Bug: Readiness probe points to port 8080, but application listens on 8000!
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # [INC-1705: 5C] Note: Missing resources.requests.cpu, causing HPA metric starvation!
+          resources:
+            limits:
+              cpu: 300m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app/server.py
+              subPath: server.py
+      volumes:
+        - name: code
+          configMap:
+            name: settlement-api-config
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: settlement-api-pdb
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: settlement-api
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  minAvailable: 3 # [INC-1704: 4D] Bug: 3 replicas required, but only 2 can schedule under hard anti-affinity!
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: settlement-api
