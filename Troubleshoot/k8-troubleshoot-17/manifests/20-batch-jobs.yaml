@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: schema-migrator
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: schema-migrator
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: schema-migrator
+        app.kubernetes.io/part-of: aethermesh
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        tier: web
+      containers:
+        - name: migrator
+          image: docker.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Connecting to PostgreSQL at ${PGHOST}:${PGPORT}..."
+              until pg_isready -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}"; do
+                echo "Waiting for PostgreSQL database engine..."
+                sleep 2
+              done
+              echo "Applying Aether settlement schema migration and seeding initial accounts..."
+              PGPASSWORD="${PGPASSWORD}" psql -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PGDATABASE}" <<'EOF'
+              CREATE TABLE IF NOT EXISTS settlements (
+                id SERIAL PRIMARY KEY,
+                account_id VARCHAR(64) UNIQUE NOT NULL,
+                balance NUMERIC(14, 2) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+              );
+              INSERT INTO settlements (account_id, balance, status)
+              VALUES 
+                ('ACC-101', 50000.00, 'VERIFIED'),
+                ('ACC-102', 125000.50, 'VERIFIED'),
+                ('ACC-103', 9400.00, 'VERIFIED'),
+                ('ACC-104', 382100.75, 'VERIFIED')
+              ON CONFLICT (account_id) DO UPDATE SET balance = EXCLUDED.balance, status = EXCLUDED.status;
+              EOF
+              echo "Schema migration and settlement seed completed successfully."
+          env:
+            - name: PGHOST
+              value: "aether-postgres" # [INC-1702: 2B] Bug: Wrong host! Should be aether-db (and Job spec is immutable)
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: "aether_settlement"
+            - name: PGUSER
+              value: "aether_admin"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aether-db-secret
+                  key: db_pass # [INC-1702: 2A] Bug: Secret key is db-password, not db_pass! Triggers CreateContainerConfigError
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cluster-heartbeat
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: cluster-heartbeat
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  schedule: "*/1 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: true # [INC-1702: 2C] Bug: CronJob is suspended! Controller will never spawn jobs until set to false
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: cluster-heartbeat
+            app.kubernetes.io/part-of: aethermesh
+        spec:
+          restartPolicy: OnFailure
+          nodeSelector:
+            tier: web
+          containers:
+            - name: heartbeat
+              image: docker.io/library/redis:7-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  echo "Sending heartbeat ping to Redis cache..."
+                  # [INC-1702: 2C] Bug: Host redis-service does not exist! Should be aether-cache
+                  redis-cli -h redis-service -p 6379 SET aether:cluster:heartbeat "ONLINE_$(date +%s)" EX 120
+                  echo "Heartbeat registered successfully."
