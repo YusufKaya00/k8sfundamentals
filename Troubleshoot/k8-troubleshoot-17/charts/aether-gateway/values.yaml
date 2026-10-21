@@ -1,0 +1,26 @@
+replicaCount: 1
+
+image:
+  repository: docker.io/library/nginx
+  tag: 1.25-alpine
+  pullPolicy: IfNotPresent
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8080
+
+gateway:
+  authToken: "aether-prod-access-2026"
+
+upstream:
+  host: "settlement-api"
+  port: 8000
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
