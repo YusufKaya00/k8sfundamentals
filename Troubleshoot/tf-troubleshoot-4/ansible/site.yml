@@ -22,9 +22,9 @@
     # [FAULT 4B] Non-idempotent raw 'command: mkdir' fails when directory already exists!
     - name: Create ChronoPay audit log directory
       file:
-      path: "{{ runtime_root }}/var/log/chronopay/audit"
-      state: directory
-      mode: '0755'
+       path: "{{ runtime_root }}/var/log/chronopay/audit"
+       state: directory
+       mode: '0755'
 
     - name: Start ChronoPay Internal Payment Backend Daemon
       shell: |
