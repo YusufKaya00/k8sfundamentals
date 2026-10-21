@@ -40,8 +40,7 @@
         src: templates/gateway.conf.j2
         dest: "{{ runtime_root }}/etc/chronopay/gateway.json"
         mode: '0644'
-      notify: 
-        - Reload ChronoPay Edge Proxy
+      notify: Reload ChronoPay Edge Proxy
 
   handlers:
     - name: Reload ChronoPay Edge Proxy
