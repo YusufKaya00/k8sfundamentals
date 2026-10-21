@@ -66,9 +66,9 @@ resource "azurerm_network_security_group" "nsg" {
 # ADIM 3'te (break.sh çalıştıktan SONRA) aşağıdaki bloğun yorumunu kaldır.
 # Senaryo: Ekipten biri "subnet-db"yi portaldan elle açtı, sen de koda ekliyorsun.
 # ---------------------------------------------------------------
-# resource "azurerm_subnet" "db" {
-#   name                 = "subnet-db"
-#   resource_group_name  = azurerm_resource_group.rg.name
-#   virtual_network_name = azurerm_virtual_network.vnet.name
-#   address_prefixes     = ["10.10.2.0/24"]
-# }
+resource "azurerm_subnet" "db" {
+  name                 = "subnet-db"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = ["10.10.2.0/24"]
+}
