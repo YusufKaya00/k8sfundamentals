@@ -28,7 +28,7 @@
 
     - name: Start ChronoPay Internal Payment Backend Daemon
       shell: |
-        pkill -f "chronopay_backend_lab1.py" 2>/dev/null || true
+        pkill -f "[c]hronopay_backend_lab1.py" 2>/dev/null || true
         nohup python3 {{ playbook_dir }}/files/chronopay_backend_lab1.py {{ backend_service_port }} > {{ runtime_root }}/var/log/chronopay/backend.log 2>&1 &
         sleep 1
       changed_when: false
