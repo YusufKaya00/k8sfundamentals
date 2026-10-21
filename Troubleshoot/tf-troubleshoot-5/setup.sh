@@ -67,7 +67,7 @@ output "vault_cluster_id" {
 }
 
 output "api_token_sha256" {
-  value = sha256(random_password.api_token.result)
+  value = nonsensitive(sha256(random_password.api_token.result))
 }
 EOF
 
@@ -142,7 +142,7 @@ output "vault_cluster_id" {
 }
 
 output "api_token_sha256" {
-  value = sha256(random_password.api_token.result)
+  value = nonsensitive(sha256(random_password.api_token.result))
 }
 EOF
 
