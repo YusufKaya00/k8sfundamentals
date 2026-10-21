@@ -301,4 +301,4 @@ EOF
 nohup python3 "${LAB_DIR}/ansible/files/chronopay_proxy_lab1.py" "${RUNTIME_DIR}/etc/chronopay/gateway.json" > "${RUNTIME_DIR}/var/log/chronopay/proxy.log" 2>&1 &
 sleep 1
 
-echo "✅ Outage simulation ready! Follow README.md from [INC-101] to [INC-105]."
+echo "✅ Outage simulation ready! Follow README.md from [INC-401] to [INC-405]."
