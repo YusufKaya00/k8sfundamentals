@@ -54,5 +54,5 @@ resource "time_sleep" "long_operation" {
 }
 
 output "server_name" {
-  value = random_pet.server_name.id
+  value = random_pet.primary_server.id
 }
