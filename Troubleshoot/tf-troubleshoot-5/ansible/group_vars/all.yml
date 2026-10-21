@@ -1,0 +1,3 @@
+---
+vault_listen_port: 18200
+vault_environment: "production"

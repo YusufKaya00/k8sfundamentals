@@ -1,0 +1,3 @@
+---
+# Stale legacy debug port accidentally left in role vars (overrides group_vars and defaults!)
+vault_listen_port: 19999
