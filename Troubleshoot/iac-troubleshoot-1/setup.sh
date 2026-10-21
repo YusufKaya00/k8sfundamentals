@@ -16,6 +16,7 @@ mkdir -p "${RUNTIME_DIR}/etc/chronopay" "${RUNTIME_DIR}/var/log/chronopay" "${RU
 
 # 2. Pre-create a stale directory so the non-idempotent 'command: mkdir' in INC-104 fails!
 mkdir -p "${RUNTIME_DIR}/var/log/chronopay/audit"
+mkdir -p "${LAB_DIR}/terraform/templates" "${LAB_DIR}/ansible/templates" "${LAB_DIR}/ansible/files"
 
 # 3. Reset faulty Terraform files
 cat << 'EOF' > "${LAB_DIR}/terraform/variables.tf"
