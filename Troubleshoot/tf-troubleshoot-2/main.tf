@@ -53,8 +53,11 @@ resource "time_sleep" "long_operation" {
   create_duration = var.sleep_duration
 }
 
+output "server_name" {
+  value = random_pet.server_name.id
+}
+
 moved {
   from = random_pet.server_name
   to   = random_pet.primary_server
 }
-
