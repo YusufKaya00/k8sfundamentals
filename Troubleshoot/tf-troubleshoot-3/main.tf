@@ -16,7 +16,7 @@ terraform {
 
 variable "replicas" {
   type    = number
-  default = "3"
+  default = ""
 }
 
 variable "environment" {
@@ -44,16 +44,11 @@ resource "local_file" "frontend" {
 }
 
 # ...backend config'i de frontend'in adresini bilmek istiyor.
-resource "local_file-1" "backend" {
+resource "local_file" "backend" {
   filename = "${path.module}/output/backend.conf"
   content  = <<-EOT
     frontend_conf = ${local_file.frontend.filename}
     replicas      = ${var.replicas}
     api_key       = ${random_password.api_key.result}
   EOT
-}
-
-resource "local_file-2" "frontend" {
-  filename = "${path.module}/output/readme.txt"
-  content  = "Environment: ${var.environment}"
 }
