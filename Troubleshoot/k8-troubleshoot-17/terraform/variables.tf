@@ -29,7 +29,13 @@ variable "dns_prefix" {
 }
 
 variable "vm_size" {
-  description = "Virtual machine size for worker nodes (2 vCPUs, 4GB RAM)"
+  description = "Virtual machine size for web worker nodes (2 vCPUs, 4GB RAM)"
   type        = string
   default     = "Standard_B2s"
+}
+
+variable "db_vm_size" {
+  description = "Virtual machine size for database node pool (from Standard DSv4 Family with 4 vCPUs quota available)"
+  type        = string
+  default     = "Standard_D2s_v4"
 }

@@ -63,7 +63,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
 resource "azurerm_kubernetes_cluster_node_pool" "database" {
   name                  = "dbpool"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.aks.id
-  vm_size               = var.vm_size
+  vm_size               = var.db_vm_size
   node_count            = 1
 
   node_labels = {
