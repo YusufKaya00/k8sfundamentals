@@ -53,7 +53,7 @@ resource "local_file" "backend" {
   EOT
 }
 
-resource "local_file" "frontend" {
+resource "local_file-2" "frontend" {
   filename = "${path.module}/output/readme.txt"
   content  = "Environment: ${var.environment}"
 }
