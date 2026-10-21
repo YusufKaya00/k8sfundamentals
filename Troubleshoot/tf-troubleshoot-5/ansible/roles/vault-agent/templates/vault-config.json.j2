@@ -1,0 +1,6 @@
+{
+  "cluster_id": "{{ vault_cluster_id }}",
+  "listen_port": {{ vault_listen_port }},
+  "storage_backend": "{{ vault_storage_backend }}",
+  "sealed": {{ vault_remain_sealed | default(true) | lower }}
+}
