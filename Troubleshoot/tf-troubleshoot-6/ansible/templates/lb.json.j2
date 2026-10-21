@@ -1,0 +1,8 @@
+{
+  "listen_port": {{ lb_listen_port }},
+  "upstreams": [
+{% for host in groups['master'] %}
+    "http://127.0.0.1:{{ hostvars[host]['worker_port'] | default(19999) }}/work"{% if not loop.last %},{% endif %}
+{% endfor %}
+  ]
+}

@@ -40,7 +40,10 @@ k8sfundamentals/
     ├── k8-troubleshoot-16/   # OmniCore Grand Finale Capstone (7-Layer 18-Fault Master Review)
     ├── tf-troubleshoot-1/    # Terraform Lab 1 (Azure): State Drift, Import (already exists), prevent_destroy
     ├── tf-troubleshoot-2/    # Terraform Lab 2 (local): State Lock, Lost State recovery, Refactor (moved / state mv)
-    └── tf-troubleshoot-3/    # Terraform Lab 3 (local): Broken code (5 errors incl. Cycle), -replace / secret rotation
+    ├── tf-troubleshoot-3/    # Terraform Lab 3 (local): Broken code (5 errors incl. Cycle), -replace / secret rotation
+    ├── tf-troubleshoot-4/    # IaC Incident Lab 4: ChronoPay — Terraform Schema/Secret Mode, Inventory Handoff, Ansible Group/Become & Idempotency
+    ├── tf-troubleshoot-5/    # IaC Incident Lab 5: NexusVault — State Wipe Recovery, Protected Rename (moved), -replace & Ansible Precedence
+    └── tf-troubleshoot-6/    # IaC Incident Lab 6: AegisCloud — Multi-Tier Cluster (Dependency Cycle, Cross-Host hostvars, lineinfile & L7 LB)
 ```
 
 ---
@@ -117,6 +120,9 @@ k8sfundamentals/
 * [**tf-troubleshoot-1:** Drift, Import & Destroy Protection (Azure, free resources)](./Troubleshoot/tf-troubleshoot-1/README.md) — Manual portal changes (NSG rule & tag drift), `-refresh-only`, unmanaged subnet `already exists` → `import {}` block, and `lifecycle.prevent_destroy`.
 * [**tf-troubleshoot-2:** State Disasters (local)](./Troubleshoot/tf-troubleshoot-2/README.md) — State lock contention & `force-unlock`, deleted `terraform.tfstate` recovery from backup, resource rename refactor with `moved {}` / `terraform state mv`.
 * [**tf-troubleshoot-3:** Broken Code, Cycles & Replace (local)](./Troubleshoot/tf-troubleshoot-3/README.md) — 5 validate/plan errors (type mismatch, undeclared variable, unsupported attribute, duplicate resource, dependency cycle) and targeted secret rotation with `-replace`.
+* [**tf-troubleshoot-4:** ChronoPay Pipeline Outage (Terraform + Ansible)](./Troubleshoot/tf-troubleshoot-4/README.md) — 5 sequential tickets: Terraform variable types, duplicate resource & undeclared outputs, inventory handoff & `0600` secret permissions, Ansible host group matching, raw command idempotency vs `file:` module, Jinja2 undefined variable, and handler notification name mismatch (`502 Bad Gateway`).
+* [**tf-troubleshoot-5:** NexusVault Stateful Outage (State Disasters & Precedence)](./Troubleshoot/tf-troubleshoot-5/README.md) — 5 sequential tickets: Missing `terraform.tfstate` recovery from `.backup`, protected resource refactoring (`prevent_destroy` + `moved {}`), targeted secret rotation with `-replace`, Ansible role variable precedence trap (`vars/` vs `group_vars/` vs `defaults/`), and conditional `when:` string-vs-int evaluation (`503 Vault Sealed`).
+* [**tf-troubleshoot-6:** AegisCloud Multi-Tier Cluster Outage (Advanced Capstone)](./Troubleshoot/tf-troubleshoot-6/README.md) — 5 sequential tickets: Cross-resource dependency cycle (`Error: Cycle`), dynamic inventory group mismatch, cross-host `slurp:` Base64 join token decoding (`| b64decode | trim`), `lineinfile` missing `regexp:` duplicate config bug, and Jinja2 LoadBalancer upstream loop routing to workers.
 
 ---
 
@@ -163,3 +169,6 @@ Tüm projeler ve sorun giderme laboratuvarları hem yerel kümelerde (**Minikube
 * [**tf-troubleshoot-1:** Drift, Import ve Silme Koruması (Azure, ücretsiz kaynaklar)](./Troubleshoot/tf-troubleshoot-1/README.md) — Portaldan elle yapılan NSG kural/etiket sapması, `-refresh-only`, yönetilmeyen subnet `already exists` → `import {}` bloğu ve `lifecycle.prevent_destroy`.
 * [**tf-troubleshoot-2:** State Felaketleri (lokal)](./Troubleshoot/tf-troubleshoot-2/README.md) — State lock çakışması ve `force-unlock`, silinen `terraform.tfstate` dosyasının backup ile kurtarılması, `moved {}` / `terraform state mv` ile yeniden adlandırma.
 * [**tf-troubleshoot-3:** Bozuk Kod, Cycle ve Replace (lokal)](./Troubleshoot/tf-troubleshoot-3/README.md) — 5 validate/plan hatası (tip uyuşmazlığı, tanımsız değişken, olmayan attribute, çift kaynak, döngüsel bağımlılık) ve `-replace` ile hedefli şifre rotasyonu.
+* [**tf-troubleshoot-4:** ChronoPay Hattı Kesintisi (Terraform + Ansible)](./Troubleshoot/tf-troubleshoot-4/README.md) — 5 sıralı arıza: Terraform değişken tipleri, mükerrer kaynak ve tanımsız çıktılar, envanter aktarımı & `0600` dosya izinleri, Ansible grup eşleşmesi, komut idempotency ihlali vs `file:` modülü, Jinja2 tanımsız değişken ve handler isim uyuşmazlığı (`502 Bad Gateway`).
+* [**tf-troubleshoot-5:** NexusVault State ve Öncelik Kesintisi](./Troubleshoot/tf-troubleshoot-5/README.md) — 5 sıralı arıza: Silinen `terraform.tfstate` dosyasının `.backup` üzerinden kurtarılması, korumalı kaynak refactoring (`prevent_destroy` + `moved {}`), `-replace` ile hedefli gizli anahtar rotasyonu, Ansible rol değişkeni öncelik tuzağı (`vars/` vs `group_vars/` vs `defaults/`) ve `when:` koşulunda tip dönüşümü (`503 Vault Kilitli`).
+* [**tf-troubleshoot-6:** AegisCloud Çok Katmanlı Küme Kesintisi (İleri Seviye Bitirme)](./Troubleshoot/tf-troubleshoot-6/README.md) — 5 sıralı arıza: Kaynaklar arası döngüsel bağımlılık (`Error: Cycle`), dinamik envanter grubu uyuşmazlığı, sunucular arası `slurp:` Base64 join token çözümü (`| b64decode | trim`), `lineinfile` `regexp:` eksikliği kaynaklı mükerrer satır hatası ve Jinja2 LoadBalancer worker döngüsü yönlendirmesi.

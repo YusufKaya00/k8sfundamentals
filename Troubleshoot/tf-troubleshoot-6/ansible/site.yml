@@ -1,0 +1,66 @@
+---
+# PLAY 1: Read Cluster Join Token from Master Node
+- name: Master Control-Plane Token Extraction
+  hosts: master
+  gather_facts: false
+  tasks:
+    - name: Slurp cluster join token from Master
+      slurp:
+        src: "/tmp/aegiscloud-lab6/master/node-token"
+      register: raw_master_token
+
+    # [FAULT 603] slurp returns base64-encoded content! Missing '| b64decode | trim' filter!
+    - name: Export join_token fact on master1
+      set_fact:
+        join_token: "{{ raw_master_token.content }}"
+
+# PLAY 2: Join Worker Nodes to Master & Tune Limits
+- name: Worker Nodes Join and Tuning
+  hosts: workers
+  gather_facts: false
+  tasks:
+    # [FAULT 604] Missing 'regexp: ^MAX_CONNECTIONS=' causes lineinfile to append a duplicate line
+    # while leaving the original 'MAX_CONNECTIONS=0' active at the top of worker.env!
+    - name: Set MAX_CONNECTIONS=500 in worker.env
+      lineinfile:
+        path: "/tmp/aegiscloud-lab6/{{ inventory_hostname }}/worker.env"
+        line: "MAX_CONNECTIONS=500"
+
+    - name: Write worker runtime configuration
+      copy:
+        dest: "/tmp/aegiscloud-lab6/{{ inventory_hostname }}/config.json"
+        mode: '0600'
+        content: |
+          {
+            "node_name": "{{ inventory_hostname }}",
+            "listen_port": {{ worker_port }},
+            "worker_token": "{{ hostvars['master1']['join_token'] }}",
+            "expected_token_file": "/tmp/aegiscloud-lab6/master/node-token",
+            "env_file": "/tmp/aegiscloud-lab6/{{ inventory_hostname }}/worker.env"
+          }
+
+    - name: Start Worker Node Daemon
+      shell: |
+        pkill -f "aegis_worker_lab6.py {{ inventory_hostname }}" 2>/dev/null || true
+        nohup python3 {{ playbook_dir }}/files/aegis_worker_lab6.py {{ inventory_hostname }} /tmp/aegiscloud-lab6/{{ inventory_hostname }}/config.json > /tmp/aegiscloud-lab6/logs/{{ inventory_hostname }}.log 2>&1 &
+        sleep 1
+      changed_when: false
+
+# PLAY 3: Configure Edge LoadBalancer
+- name: Configure Edge LoadBalancer
+  hosts: lb
+  gather_facts: false
+  tasks:
+    # [FAULT 605] templates/lb.json.j2 loops over groups['master'] instead of groups['workers']!
+    - name: Render LoadBalancer upstream config
+      template:
+        src: templates/lb.json.j2
+        dest: "/tmp/aegiscloud-lab6/lb/lb.json"
+        mode: '0644'
+
+    - name: Start Edge LoadBalancer Daemon
+      shell: |
+        pkill -f "aegis_lb_lab6.py" 2>/dev/null || true
+        nohup python3 {{ playbook_dir }}/files/aegis_lb_lab6.py /tmp/aegiscloud-lab6/lb/lb.json > /tmp/aegiscloud-lab6/logs/lb.log 2>&1 &
+        sleep 1
+      changed_when: false
