@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aether-ingress
+  namespace: aether-prod
+  labels:
+    app.kubernetes.io/name: aether-ingress
+    app.kubernetes.io/part-of: aethermesh
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  ingressClassName: nginx-internal # [INC-1707: 7C] Bug: Ingress controller uses class 'nginx', not 'nginx-internal'!
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aether-gateway
+                port:
+                  number: 8080 # [INC-1707: 7C] Bug: Gateway Service listens on port 80, not 8080!
