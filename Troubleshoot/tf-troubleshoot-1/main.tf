@@ -29,7 +29,7 @@ resource "azurerm_virtual_network" "vnet" {
 
   # Kritik kaynak: kazara silinmesin
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
