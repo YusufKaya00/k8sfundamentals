@@ -1,7 +1,7 @@
 output "deployment_id" {
   description = "Hex identifier of the ChronoPay deployment"
   # [FAULT 1D] random_id does not have a '.value' attribute (should be '.hex')
-  value       = random_id.deployment_id.value
+  value       = random_id.deployment_id.hex
 }
 
 output "gateway_url" {
