@@ -39,7 +39,7 @@ resource "local_file" "frontend" {
   content  = <<-EOT
     app_name     = ${random_pet.app.value}
     backend_conf = ${local_file.backend.filename}
-    port         = ${var.app_port}
+    port         = ${var.app.port}
   EOT
 }
 
