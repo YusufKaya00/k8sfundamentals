@@ -16,7 +16,7 @@ terraform {
 
 variable "replicas" {
   type    = number
-  default = "three"
+  default = "3"
 }
 
 variable "environment" {
