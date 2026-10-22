@@ -11,7 +11,7 @@ service:
   targetPort: 8080
 
 gateway:
-  authToken: "aether-prod-access-2026"
+  authToken: "token"
 
 upstream:
   host: "settlement-api"
@@ -23,4 +23,4 @@ resources:
     memory: 64Mi
   limits:
     cpu: 200m
-    memory: 128Mi
+    memory: 250Mi
