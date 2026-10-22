@@ -53,7 +53,7 @@ spec:
       tolerations:
         - key: workload
           operator: Equal
-          value: storage # [INC-1701: 1A] Bug: Node-3 has taint workload=database:NoSchedule, not storage!
+          value: database # [INC-1701: 1A] Bug: Node-3 has taint workload=database:NoSchedule, not storage!
           effect: NoSchedule
       containers:
         - name: postgres
