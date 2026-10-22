@@ -17,7 +17,6 @@ spec:
         app.kubernetes.io/part-of: aethermesh
     spec:
       tolerations:
-        # [INC-1706: 6A] Bug: Node-3 has taint workload=database:NoSchedule. Key is 'workload', not 'dedicated'!
         - key: dedicated
           operator: Exists
           effect: NoSchedule
@@ -55,7 +54,7 @@ spec:
           volumeMounts:
             - name: log-dir
               mountPath: /var/log/aether
-              readOnly: true # [INC-1706: 6B] Bug: readOnly: true triggers 'Read-only file system' CrashLoopBackOff!
+              readOnly: true
       volumes:
         - name: log-dir
           emptyDir: {}
