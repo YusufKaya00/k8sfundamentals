@@ -172,7 +172,7 @@ spec:
           resources:
             limits:
               cpu: 300m
-              memory: 128Mi
+              memory: 512Mi
           volumeMounts:
             - name: code
               mountPath: /app/server.py
