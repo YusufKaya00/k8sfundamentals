@@ -29,7 +29,7 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: settlement-service
+    name: settlement-api
   minReplicas: 3
   maxReplicas: 6
   metrics:
