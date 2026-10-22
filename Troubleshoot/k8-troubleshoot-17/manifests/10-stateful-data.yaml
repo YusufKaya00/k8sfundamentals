@@ -53,7 +53,7 @@ spec:
       tolerations:
         - key: workload
           operator: Equal
-          value: database # [INC-1701: 1A] Bug: Node-3 has taint workload=database:NoSchedule, not storage!
+          value: storage
           effect: NoSchedule
       containers:
         - name: postgres
@@ -103,7 +103,7 @@ spec:
               memory: 512Mi
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql/data # [INC-1701: 1B] Bug: Missing subPath: pgdata, ext4 lost+found aborts initdb
+              mountPath: /var/lib/postgresql/data
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -127,7 +127,7 @@ spec:
   ports:
     - name: redis
       port: 6379
-      targetPort: 6380 # [INC-1701: 1C] Bug: Redis listens on 6379, targetPort is set to 6380!
+      targetPort: 6380
       protocol: TCP
   selector:
     app.kubernetes.io/name: aether-cache
