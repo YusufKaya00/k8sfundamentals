@@ -17,9 +17,9 @@ spec:
         app.kubernetes.io/part-of: aethermesh
     spec:
       tolerations:
-        - key: dedicated
+
           operator: Exists
-          effect: NoSchedule
+       
       containers:
         - name: collector
           image: docker.io/library/python:3.11-alpine
