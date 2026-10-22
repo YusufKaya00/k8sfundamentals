@@ -35,7 +35,7 @@ variable "vm_size" {
 }
 
 variable "db_vm_size" {
-  description = "Virtual machine size for database node pool (from Standard DSv4 Family with 4 vCPUs quota available)"
+  description = "Virtual machine size for database node pool (from Standard Bsv2 Family with 10 vCPUs quota available)"
   type        = string
-  default     = "Standard_D2s_v4"
+  default     = "Standard_B2s_v2"
 }
