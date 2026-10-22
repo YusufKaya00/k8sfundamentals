@@ -124,7 +124,6 @@ spec:
     spec:
       nodeSelector:
         tier: web
-      # [INC-1704: 4A] Bug: Hard anti-affinity with 3 replicas on a 2-node web tier forces 1 pod into Pending!
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -151,7 +150,6 @@ spec:
             - configMapRef:
                 name: settlement-api-config
           env:
-            # [INC-1704: 4C] Bug: Inline env overrides envFrom! CACHE_HOST=127.0.0.1 fails connection to Redis!
             - name: CACHE_HOST
               value: "127.0.0.1"
           livenessProbe:
@@ -162,7 +160,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 3
-          # [INC-1704: 4B] Bug: Readiness probe points to port 8080, but application listens on 8000!
           readinessProbe:
             httpGet:
               path: /ready
@@ -171,7 +168,6 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
-          # [INC-1705: 5C] Note: Missing resources.requests.cpu, causing HPA metric starvation!
           resources:
             limits:
               cpu: 300m
@@ -194,7 +190,7 @@ metadata:
     app.kubernetes.io/name: settlement-api
     app.kubernetes.io/part-of: aethermesh
 spec:
-  minAvailable: 3 # [INC-1704: 4D] Bug: 3 replicas required, but only 2 can schedule under hard anti-affinity!
+  minAvailable: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: settlement-api
