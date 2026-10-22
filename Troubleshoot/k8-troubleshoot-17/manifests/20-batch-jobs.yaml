@@ -100,5 +100,5 @@ spec:
                 - |
                   set -e
                   echo "Sending heartbeat ping to Redis cache..."
-                  redis-cli -h redis-server -p 6379 SET aether:cluster:heartbeat "ONLINE_$(date +%s)" EX 120
+                  redis-cli -h aether-cache -p 6379 SET aether:cluster:heartbeat "ONLINE_$(date +%s)" EX 120
                   echo "Heartbeat registered successfully."
