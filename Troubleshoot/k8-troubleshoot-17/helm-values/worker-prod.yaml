@@ -11,8 +11,8 @@ cache:
 startupProbe:
   path: "/healthz"
   periodSeconds: 2
-  timeoutSeconds: 2
-  failureThreshold: 2
+  timeoutSeconds: 5
+  failureThreshold: 10
 
 resources:
   requests:
