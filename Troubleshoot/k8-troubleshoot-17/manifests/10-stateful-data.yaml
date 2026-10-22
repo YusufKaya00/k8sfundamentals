@@ -53,7 +53,7 @@ spec:
       tolerations:
         - key: workload
           operator: Equal
-          value: storage
+          value: database
           effect: NoSchedule
       containers:
         - name: postgres
