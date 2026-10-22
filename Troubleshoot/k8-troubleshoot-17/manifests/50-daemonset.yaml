@@ -54,7 +54,7 @@ spec:
           volumeMounts:
             - name: log-dir
               mountPath: /var/log/aether
-              readOnly: true
+              readOnly: false
       volumes:
         - name: log-dir
           emptyDir: {}
