@@ -51,7 +51,7 @@ spec:
               echo "Schema migration and settlement seed completed successfully."
           env:
             - name: PGHOST
-              value: "aether-postgres"
+              value: "aether-db"
             - name: PGPORT
               value: "5432"
             - name: PGDATABASE
