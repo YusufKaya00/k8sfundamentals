@@ -1,3 +1,3 @@
 # Syncalibur per-repository configuration
-MODE="instant-push"
+MODE="autopilot"
 BURST_COOLDOWN=5
