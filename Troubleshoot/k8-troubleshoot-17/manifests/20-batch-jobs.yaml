@@ -62,7 +62,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: aether-db-secret
-                  key: db_password
+                  key: db-password
 ---
 apiVersion: batch/v1
 kind: CronJob
