@@ -152,9 +152,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: settlement-api-config
-          env:
-            - name: CACHE_HOST
-              value: "127.0.0.1"
+          
           livenessProbe:
             httpGet:
               path: /healthz
