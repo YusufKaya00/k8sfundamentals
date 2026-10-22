@@ -51,7 +51,7 @@ spec:
               echo "Schema migration and settlement seed completed successfully."
           env:
             - name: PGHOST
-              value: "aether-postgres" # [INC-1702: 2B] Bug: Wrong host! Should be aether-db (and Job spec is immutable)
+              value: "aether-postgres"
             - name: PGPORT
               value: "5432"
             - name: PGDATABASE
@@ -62,7 +62,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: aether-db-secret
-                  key: db_pass # [INC-1702: 2A] Bug: Secret key is db-password, not db_pass! Triggers CreateContainerConfigError
+                  key: db_pass
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -77,7 +77,7 @@ spec:
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
-  suspend: true # [INC-1702: 2C] Bug: CronJob is suspended! Controller will never spawn jobs until set to false
+  suspend: true
   jobTemplate:
     spec:
       backoffLimit: 2
@@ -100,6 +100,5 @@ spec:
                 - |
                   set -e
                   echo "Sending heartbeat ping to Redis cache..."
-                  # [INC-1702: 2C] Bug: Host redis-service does not exist! Should be aether-cache
                   redis-cli -h redis-service -p 6379 SET aether:cluster:heartbeat "ONLINE_$(date +%s)" EX 120
                   echo "Heartbeat registered successfully."
