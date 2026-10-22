@@ -9,7 +9,7 @@ metadata:
   annotations:
     kubernetes.io/ingress.class: nginx
 spec:
-  ingressClassName: nginx-internal # [INC-1707: 7C] Bug: Ingress controller uses class 'nginx', not 'nginx-internal'!
+  ingressClassName: nginx-internal
   rules:
     - http:
         paths:
@@ -19,4 +19,4 @@ spec:
               service:
                 name: aether-gateway
                 port:
-                  number: 8080 # [INC-1707: 7C] Bug: Gateway Service listens on port 80, not 8080!
+                  number: 8080
