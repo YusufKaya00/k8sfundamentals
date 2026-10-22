@@ -6,7 +6,7 @@ service:
   targetPort: 8080
 
 gateway:
-  authToken: "invalid-token"
+  authToken: "aether-prod-access-2026"
 
 upstream:
   host: "settlement-api"
