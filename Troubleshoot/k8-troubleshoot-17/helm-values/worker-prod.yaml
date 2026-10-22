@@ -2,7 +2,7 @@ replicaCount: 1
 
 db:
   host: "aether-db"
-  port: 5433
+  port: 5432
 
 cache:
   host: "aether-cache"
