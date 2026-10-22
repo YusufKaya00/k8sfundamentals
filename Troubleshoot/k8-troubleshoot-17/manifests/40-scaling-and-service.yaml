@@ -15,7 +15,7 @@ spec:
       protocol: TCP
   selector:
     app.kubernetes.io/name: settlement-api
-    role: core-engine
+ 
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
