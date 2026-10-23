@@ -35,9 +35,11 @@
           --set hostname=rancher.{{ master_public_ip }}.nip.io \
           --set bootstrapPassword=AdminPassword2026! \
           --set replicas=1 \
-          --set tolerations[0].key=CriticalAddonsOnly \
-          --set tolerations[0].operator=Exists \
-          --set nodeSelector."kubernetes\.io/hostname"=vm-master
+          --set extraTolerations[0].key=CriticalAddonsOnly \
+          --set extraTolerations[0].operator=Exists \
+          --set extraNodeSelectorTerms[0].key="kubernetes\.io/hostname" \
+          --set extraNodeSelectorTerms[0].operator=In \
+          --set extraNodeSelectorTerms[0].values[0]=vm-master
 
     - name: "Master sunucusunda helm-values ve my-app klasörlerini hazırla"
       file:
