@@ -33,8 +33,8 @@ master_private_ip=10.10.1.4
 master_public_ip=${azurerm_public_ip.pip_master.ip_address}
 app_worker_public_ip=${azurerm_public_ip.pip_app.ip_address}
 
-# Private Worker'lara Master (Bastion) Üzerinden ProxyJump ile Bağlan
+# Private Worker'lara Master (Bastion) Üzerinden ProxyCommand ile Bağlan
 [workers:vars]
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyJump=${var.admin_username}@${azurerm_public_ip.pip_master.ip_address}'
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -i ../terraform/id_rsa -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${var.admin_username}@${azurerm_public_ip.pip_master.ip_address}"'
 EOF
 }
