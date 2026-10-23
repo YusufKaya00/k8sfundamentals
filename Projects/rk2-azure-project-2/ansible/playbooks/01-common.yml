@@ -1,0 +1,54 @@
+---
+- name: "Tüm Sunucularda Ön Hazırlık (Swap, Kernel Modülleri, Paketler)"
+  hosts: k8s_cluster
+  become: true
+  tasks:
+    - name: "Swap alanını kapat"
+      command: swapoff -a
+      changed_when: false
+
+    - name: "fstab içindeki swap satırını devre dışı bırak"
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+.*)$'
+        replace: '# \1'
+
+    - name: "Kernel modüllerini yapılandır (/etc/modules-load.d/k8s.conf)"
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: "Kernel modüllerini yükle"
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: "Sysctl ağ parametrelerini ayarla (/etc/sysctl.d/k8s.conf)"
+      copy:
+        dest: /etc/sysctl.d/k8s.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+        mode: '0644'
+
+    - name: "Sysctl ayarlarını uygula"
+      command: sysctl --system
+      changed_when: false
+
+    - name: "Gerekli temel paketleri kur"
+      apt:
+        name:
+          - curl
+          - wget
+          - git
+          - apt-transport-https
+          - ca-certificates
+        state: present
+        update_cache: true
