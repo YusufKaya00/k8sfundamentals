@@ -5,6 +5,8 @@
   tasks:
     - name: "RKE2 Server yükleme betiğini indir ve çalıştır"
       shell: "curl -sfL https://get.rke2.io | sh -"
+      environment:
+        INSTALL_RKE2_VERSION: "v1.31.2+rke2r1"
       args:
         creates: /usr/local/bin/rke2
 

@@ -18,7 +18,10 @@
         mode: '0600'
 
     - name: "RKE2 Agent yükleme betiğini indir ve çalıştır"
-      shell: "curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=\"agent\" sh -"
+      shell: "curl -sfL https://get.rke2.io | sh -"
+      environment:
+        INSTALL_RKE2_TYPE: "agent"
+        INSTALL_RKE2_VERSION: "v1.31.2+rke2r1"
       args:
         creates: /usr/local/bin/rke2
 
