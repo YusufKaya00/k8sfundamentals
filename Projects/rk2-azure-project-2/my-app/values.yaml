@@ -1,0 +1,40 @@
+replicaCount: 1
+
+image:
+  repository: yusufk00/rke2-multi-app # Örn: yusufkaya/rke2-multi-app
+  tag: "v2"
+  pullPolicy: IfNotPresent
+
+# Eğer GitLab private registry kullandıysan:
+
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+# KRİTİK: Uygulama sadece vm-worker-app üzerinde koşsun!
+nodeSelector:
+  tier: app
+
+# Veritabanı bağlantı bilgileri (Step 6'da kurduğun şifreler ve CoreDNS adresleri)
+env:
+  REDIS_HOST: "redis-master.data.svc.cluster.local"
+  REDIS_PASS: "RedisStrongPassword123!"
+  PG_HOST: "postgres-postgresql.data.svc.cluster.local"
+  PG_PASS: "AppDbPassword123!"
+  PG_USER: "appuser"
+  PG_DB: "appdb"
+  MONGO_HOST: "mongodb.data.svc.cluster.local"
+  MONGO_PASS: "AppMongoPassword123!"
+  MONGO_USER: "appuser"
+  MONGO_DB: "appdb"
+
+ingress:
+  enabled: true
+  className: "traefik"
+  hosts:
+    - host: app.9.205.169.185.nip.io
+      paths:
+        - path: /
+          pathType: Prefix
