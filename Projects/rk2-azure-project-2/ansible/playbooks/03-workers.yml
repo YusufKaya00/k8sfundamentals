@@ -1,0 +1,29 @@
+---
+- name: "RKE2 Worker (Agent) Kurulumu ve Master'a Bağlama"
+  hosts: workers
+  become: true
+  tasks:
+    - name: "RKE2 yapılandırma dizinini oluştur"
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+
+    - name: "RKE2 Agent config.yaml dosyasını oluştur"
+      copy:
+        dest: /etc/rancher/rke2/config.yaml
+        content: |
+          server: https://{{ master_private_ip }}:9345
+          token: {{ hostvars['TOKEN_HOLDER']['token'] }}
+        mode: '0600'
+
+    - name: "RKE2 Agent yükleme betiğini indir ve çalıştır"
+      shell: "curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=\"agent\" sh -"
+      args:
+        creates: /usr/local/bin/rke2
+
+    - name: "rke2-agent servisini etkinleştir ve başlat"
+      systemd:
+        name: rke2-agent
+        enabled: true
+        state: started

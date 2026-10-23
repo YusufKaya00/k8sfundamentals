@@ -1,0 +1,67 @@
+---
+- name: "RKE2 Control Plane (Master) Kurulumu"
+  hosts: master
+  become: true
+  tasks:
+    - name: "RKE2 Server yükleme betiğini indir ve çalıştır"
+      shell: "curl -sfL https://get.rke2.io | sh -"
+      args:
+        creates: /usr/local/bin/rke2
+
+    - name: "rke2-server servisini etkinleştir ve başlat"
+      systemd:
+        name: rke2-server
+        enabled: true
+        state: started
+
+    - name: "Kubeconfig dizinini oluştur"
+      file:
+        path: "/home/{{ ansible_user }}/.kube"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: "Kubeconfig dosyasını kullanıcı profiline kopyala"
+      copy:
+        src: /etc/rancher/rke2/rke2.yaml
+        dest: "/home/{{ ansible_user }}/.kube/config"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+
+    - name: "RKE2 binary yolunu bashrc içine ekle"
+      lineinfile:
+        path: "/home/{{ ansible_user }}/.bashrc"
+        line: 'export PATH=$PATH:/var/lib/rancher/rke2/bin'
+        state: present
+
+    - name: "RKE2 binary yolunu root ortamına da ekle"
+      lineinfile:
+        path: /etc/profile.d/rke2.sh
+        line: 'export PATH=$PATH:/var/lib/rancher/rke2/bin'
+        create: true
+        mode: '0755'
+
+    - name: "Master node Ready olana kadar bekle"
+      shell: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes | grep -w 'Ready'"
+      register: master_ready
+      until: master_ready.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: "RKE2 Node Token'ı oku"
+      slurp:
+        src: /var/lib/rancher/rke2/server/node-token
+      register: node_token_b64
+
+    - name: "Node Token'ı tüm playbook için kaydet"
+      set_fact:
+        rke2_node_token: "{{ node_token_b64.content | b64decode | trim }}"
+
+    - name: "Token'ı global envantere aktar"
+      add_host:
+        name: "TOKEN_HOLDER"
+        token: "{{ rke2_node_token }}"
