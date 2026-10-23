@@ -35,7 +35,7 @@ ingress:
   enabled: true
   className: "nginx"
   hosts:
-    - host: app.<VM_WORKER_APP_PUBLIC_IP>.nip.io
+    - host: app.9.205.169.185.nip.io
       paths:
         - path: /
           pathType: Prefix
