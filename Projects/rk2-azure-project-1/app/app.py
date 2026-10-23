@@ -62,7 +62,7 @@ def dashboard():
         results["mongodb"] = {"status": "FAILED", "error": str(e)}
 
     return {
-        "platform": "RKE2 5-Node High-Isolation Enterprise Architecture",
+        "platform": "RKE2 5-Node High-Isolation Enterprise Architecture V2  (Infra + App + DB + Audit)",
         "app_node": "vm-worker-app",
         "services": results
     }
