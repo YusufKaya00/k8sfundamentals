@@ -1,0 +1,88 @@
+---
+- name: "Rancher Dashboard, Cert-Manager, Veritabanları ve Uygulamanın Dağıtımı"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+  tasks:
+    - name: "Gerekli Helm repolarını ekle ve güncelle"
+      shell: |
+        {{ helm_cmd }} repo add jetstack https://charts.jetstack.io
+        {{ helm_cmd }} repo add rancher-latest https://releases.rancher.com/server-charts/latest
+        {{ helm_cmd }} repo add bitnami https://charts.bitnami.com/bitnami
+        {{ helm_cmd }} repo update
+      changed_when: true
+
+    - name: "cert-manager kur (Rancher TLS sertifikaları için zorunlu)"
+      shell: |
+        {{ helm_cmd }} upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --set installCRDs=true
+
+    - name: "cert-manager pod'larının hazır olmasını bekle"
+      shell: |
+        {{ kubectl_cmd }} rollout status deployment/cert-manager -n cert-manager --timeout=150s
+        {{ kubectl_cmd }} rollout status deployment/cert-manager-webhook -n cert-manager --timeout=150s
+      changed_when: false
+
+    - name: "Rancher Dashboard'u kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install rancher rancher-latest/rancher \
+          --namespace cattle-system \
+          --create-namespace \
+          --set hostname=rancher.{{ app_worker_public_ip }}.nip.io \
+          --set bootstrapPassword=AdminPassword2026! \
+          --set replicas=1
+
+    - name: "Master sunucusunda helm-values ve my-app klasörlerini hazırla"
+      file:
+        path: "/home/{{ ansible_user }}/{{ item }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      loop:
+        - helm-values
+        - my-app
+
+    - name: "helm-values dosyalarını master sunucusuna aktar"
+      copy:
+        src: "{{ playbook_dir }}/../../helm-values/"
+        dest: "/home/{{ ansible_user }}/helm-values/"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+
+    - name: "my-app Helm Chart'ını master sunucusuna aktar"
+      copy:
+        src: "{{ playbook_dir }}/../../my-app/"
+        dest: "/home/{{ ansible_user }}/my-app/"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: "my-app values.yaml içindeki Ingress Host'u ve ClassName'i güncelle"
+      replace:
+        path: "/home/{{ ansible_user }}/my-app/values.yaml"
+        regexp: 'host: .*nip\.io'
+        replace: "host: app.{{ app_worker_public_ip }}.nip.io"
+
+    - name: "'data' namespace'ini oluştur"
+      shell: "{{ kubectl_cmd }} create namespace data --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -"
+
+    - name: "Redis'i kur (vm-worker-infra)"
+      shell: "{{ helm_cmd }} upgrade --install redis bitnami/redis -f /home/{{ ansible_user }}/helm-values/redis-values.yaml -n data"
+
+    - name: "PostgreSQL'i kur (vm-worker-pg)"
+      shell: "{{ helm_cmd }} upgrade --install postgres bitnami/postgresql -f /home/{{ ansible_user }}/helm-values/postgres-values.yaml -n data"
+
+    - name: "MongoDB'yi kur (vm-worker-mongo)"
+      shell: "{{ helm_cmd }} upgrade --install mongodb bitnami/mongodb -f /home/{{ ansible_user }}/helm-values/mongo-values.yaml -n data"
+
+    - name: "'app' namespace'ini oluştur"
+      shell: "{{ kubectl_cmd }} create namespace app --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -"
+
+    - name: "my-app uygulamasını kur (vm-worker-app)"
+      shell: "{{ helm_cmd }} upgrade --install my-app /home/{{ ansible_user }}/my-app -n app"
