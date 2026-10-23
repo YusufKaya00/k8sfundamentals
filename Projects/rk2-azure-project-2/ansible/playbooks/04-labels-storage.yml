@@ -1,0 +1,51 @@
+---
+- name: "Node Etiketleri, Taintler ve Kalıcı Depolama (StorageClass) Kurulumu"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+  tasks:
+    - name: "5 Node'un tamamının Ready olmasını bekle"
+      shell: "{{ kubectl_cmd }} get nodes --no-headers | wc -l"
+      register: node_count
+      until: node_count.stdout | int >= 5
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: "Tüm node'ların Ready durumuna geçmesini bekle"
+      shell: "{{ kubectl_cmd }} wait --for=condition=ready nodes --all --timeout=180s"
+      changed_when: false
+
+    - name: "Master node için NoSchedule taint ekle"
+      shell: "{{ kubectl_cmd }} taint nodes vm-master CriticalAddonsOnly=true:NoSchedule --overwrite=true"
+      ignore_errors: true
+
+    - name: "Worker Node etiketlerini ve taintlerini uygula"
+      shell: |
+        # 1. Infra Worker (Redis)
+        {{ kubectl_cmd }} label nodes vm-worker-infra tier=infra --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-infra dedicated=infra:NoSchedule --overwrite=true
+
+        # 2. Postgres Worker
+        {{ kubectl_cmd }} label nodes vm-worker-pg tier=db-sql --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-pg dedicated=db-sql:NoSchedule --overwrite=true
+
+        # 3. Mongo Worker
+        {{ kubectl_cmd }} label nodes vm-worker-mongo tier=db-nosql --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-mongo dedicated=db-nosql:NoSchedule --overwrite=true
+
+        # 4. App Worker (Taint yok, sadece etiket)
+        {{ kubectl_cmd }} label nodes vm-worker-app tier=app --overwrite=true
+      changed_when: true
+
+    - name: "Rancher Local-Path Provisioner kur"
+      shell: "{{ kubectl_cmd }} apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.28/deploy/local-path-storage.yaml"
+
+    - name: "Local-Path StorageClass'ı varsayılan (default) yap"
+      shell: "{{ kubectl_cmd }} patch storageclass local-path -p '{\"metadata\": {\"annotations\":{\"storageclass.kubernetes.io/is-default-class\":\"true\"}}}'"
+
+    - name: "Helm 3 aracını indir ve kur"
+      shell: "curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+      args:
+        creates: /usr/local/bin/helm
