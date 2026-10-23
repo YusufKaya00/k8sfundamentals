@@ -27,14 +27,17 @@
         {{ kubectl_cmd }} rollout status deployment/cert-manager-webhook -n cert-manager --timeout=150s
       changed_when: false
 
-    - name: "Rancher Dashboard'u kur"
+    - name: "Rancher Dashboard'u kur (vm-master üzerinde 8 GB RAM ile)"
       shell: |
         {{ helm_cmd }} upgrade --install rancher rancher-latest/rancher \
           --namespace cattle-system \
           --create-namespace \
-          --set hostname=rancher.{{ app_worker_public_ip }}.nip.io \
+          --set hostname=rancher.{{ master_public_ip }}.nip.io \
           --set bootstrapPassword=AdminPassword2026! \
-          --set replicas=1
+          --set replicas=1 \
+          --set tolerations[0].key=CriticalAddonsOnly \
+          --set tolerations[0].operator=Exists \
+          --set nodeSelector."kubernetes\.io/hostname"=vm-master
 
     - name: "Master sunucusunda helm-values ve my-app klasörlerini hazırla"
       file:
