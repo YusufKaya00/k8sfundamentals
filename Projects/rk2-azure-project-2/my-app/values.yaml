@@ -1,8 +1,8 @@
 replicaCount: 1
 
 image:
-  repository: yusufk00/rke-multi-app
-  tag: "v1"
+  repository: yusufk00/rke2-multi-app
+  tag: "v2"
   pullPolicy: IfNotPresent
 
 # Eğer GitLab private registry kullandıysan:
