@@ -32,7 +32,7 @@ env:
 
 ingress:
   enabled: true
-  className: "nginx"
+  className: "traefik"
   hosts:
     - host: app.9.205.169.185.nip.io
       paths:
