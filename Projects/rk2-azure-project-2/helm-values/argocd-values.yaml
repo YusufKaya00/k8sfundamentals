@@ -1,0 +1,15 @@
+global:
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+server:
+  extraArgs:
+    - --insecure
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.9.205.31.219.nip.io
+    path: /
+    pathType: Prefix
