@@ -19,6 +19,7 @@ k8sfundamentals/
 │   ├── k8-project-5/         # GitOps & Progressive Delivery (ArgoCD, Argo Rollouts, Automated Canary Rollbacks)
 │   ├── k8-project-6/         # Cloud-Native CI/CD & DevSecOps (GitLab Runner, Rootless Buildah, Trivy, SBOM)
 │   ├── rk2-azure-project-1/  # 5-Node RKE2 High-Isolation Architecture on Azure (Master + Infra + PG + Mongo + App)
+│   ├── rk2-azure-project-2/  # Automated 5-Node RKE2 + Rancher Dashboard (Terraform + Ansible + Multi-DB)
 │   ├── terraform-ansible-1/  # IaC Intro: Azure single VM (Terraform) + K3s bootstrap (Ansible), auto-generated inventory
 │   └── terraform-ansible-2/  # IaC Multi-Node: Azure 1 Master + 1 Worker (Terraform) + K3s cluster join (Ansible) + Helm
 │
