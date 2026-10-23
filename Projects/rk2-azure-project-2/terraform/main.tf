@@ -167,9 +167,8 @@ locals {
   }
 }
 
-resource "azurerm_public_ip" "pip_worker" {
-  for_each            = local.workers
-  name                = "pip-${each.key}"
+resource "azurerm_public_ip" "pip_app" {
+  name                = "pip-vm-worker-app"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   allocation_method   = "Static"
@@ -187,7 +186,7 @@ resource "azurerm_network_interface" "nic_worker" {
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Static"
     private_ip_address            = each.value.private_ip
-    public_ip_address_id          = azurerm_public_ip.pip_worker[each.key].id
+    public_ip_address_id          = each.key == "vm-worker-app" ? azurerm_public_ip.pip_app.id : null
   }
 }
 
