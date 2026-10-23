@@ -18,6 +18,7 @@ k8sfundamentals/
 │   ├── k8-project-4/         # Observability & Batch Processing (Helm, Prometheus-Stack, Grafana, CronJobs)
 │   ├── k8-project-5/         # GitOps & Progressive Delivery (ArgoCD, Argo Rollouts, Automated Canary Rollbacks)
 │   ├── k8-project-6/         # Cloud-Native CI/CD & DevSecOps (GitLab Runner, Rootless Buildah, Trivy, SBOM)
+│   ├── rk2-azure-project-1/  # 5-Node RKE2 High-Isolation Architecture on Azure (Master + Infra + PG + Mongo + App)
 │   ├── terraform-ansible-1/  # IaC Intro: Azure single VM (Terraform) + K3s bootstrap (Ansible), auto-generated inventory
 │   └── terraform-ansible-2/  # IaC Multi-Node: Azure 1 Master + 1 Worker (Terraform) + K3s cluster join (Ansible) + Helm
 │
@@ -38,6 +39,8 @@ k8sfundamentals/
     ├── k8-troubleshoot-14/   # AegisGrid (5 Secret/Job Immutability, Helm Init, Readiness, Toleration & L7 Gateway)
     ├── k8-troubleshoot-15/   # QuantFlow (5 Job/CronJob, Helm OOM/Liveness, Env Precedence & HPA, DaemonSet & L7)
     ├── k8-troubleshoot-16/   # OmniCore Grand Finale Capstone (7-Layer 18-Fault Master Review)
+    ├── k8-troubleshoot-17/   # AetherMesh Production Capstone on AKS (7-Layer 18-Fault Review)
+    ├── k8-troubleshoot-18/   # NovaStore v2.4 Storefront Live Crisis (6-Fault Cascading Production Outage on AKS)
     ├── tf-troubleshoot-1/    # Terraform Lab 1 (Azure): State Drift, Import (already exists), prevent_destroy
     ├── tf-troubleshoot-2/    # Terraform Lab 2 (local): State Lock, Lost State recovery, Refactor (moved / state mv)
     ├── tf-troubleshoot-3/    # Terraform Lab 3 (local): Broken code (5 errors incl. Cycle), -replace / secret rotation
