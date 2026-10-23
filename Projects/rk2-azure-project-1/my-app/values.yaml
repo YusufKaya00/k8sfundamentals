@@ -6,8 +6,7 @@ image:
   pullPolicy: IfNotPresent
 
 # Eğer GitLab private registry kullandıysan:
-imagePullSecrets:
-  - name: gitlab-registry-secret
+
 
 service:
   type: ClusterIP
