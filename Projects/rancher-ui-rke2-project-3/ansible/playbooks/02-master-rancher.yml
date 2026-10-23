@@ -1,0 +1,139 @@
+---
+- name: "Master Sunucusunda RKE2 Server ve Rancher Dashboard Kurulumu"
+  hosts: master
+  become: true
+  vars:
+    rke2_version: "v1.31.2+rke2r1"
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+
+  tasks:
+    - name: "RKE2 konfigürasyon dizinini oluştur"
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+
+    - name: "RKE2 Server konfigürasyon dosyasını (config.yaml) hazırla"
+      copy:
+        dest: /etc/rancher/rke2/config.yaml
+        content: |
+          tls-san:
+            - "{{ master_public_ip }}"
+            - "10.10.1.4"
+            - "vm-master"
+          cni: canal
+          write-kubeconfig-mode: "0644"
+        mode: '0644'
+
+    - name: "RKE2 kurulum betiğini çalıştır (v1.31.2)"
+      shell: "curl -sfL https://get.rke2.io | INSTALL_RKE2_VERSION={{ rke2_version }} sh -"
+      args:
+        creates: /usr/local/bin/rke2
+
+    - name: "rke2-server servisini etkinleştir ve başlat"
+      systemd:
+        name: rke2-server
+        state: started
+        enabled: true
+
+    - name: "Kubernetes API Server'ın hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} get nodes"
+      register: nodes_ready
+      until: nodes_ready.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: "kubectl ve rke2 araçlarını /usr/local/bin altına sembolik bağla"
+      file:
+        src: "/var/lib/rancher/rke2/bin/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        state: link
+        force: true
+      loop:
+        - kubectl
+
+    - name: "Kullanıcı için ~/.kube dizinini oluştur"
+      file:
+        path: "/home/{{ ansible_user }}/.kube"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: "Kubeconfig dosyasını kullanıcının ev dizinine kopyala"
+      copy:
+        src: /etc/rancher/rke2/rke2.yaml
+        dest: "/home/{{ ansible_user }}/.kube/config"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+
+    - name: "Helm 3 binary'sini indir ve kur"
+      shell: |
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        chmod 700 get_helm.sh
+        ./get_helm.sh
+        rm -f get_helm.sh
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: "Helm repolarını ekle (jetstack ve rancher-latest)"
+      shell: |
+        {{ helm_cmd }} repo add jetstack https://charts.jetstack.io
+        {{ helm_cmd }} repo add rancher-latest https://releases.rancher.com/server-charts/latest
+        {{ helm_cmd }} repo update
+      changed_when: true
+
+    - name: "cert-manager kur (Rancher TLS için)"
+      shell: |
+        {{ helm_cmd }} upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --set installCRDs=true
+
+    - name: "cert-manager pod'larının hazır olmasını bekle"
+      shell: |
+        {{ kubectl_cmd }} rollout status deployment/cert-manager -n cert-manager --timeout=150s
+        {{ kubectl_cmd }} rollout status deployment/cert-manager-webhook -n cert-manager --timeout=150s
+      changed_when: false
+
+    - name: "Rancher Dashboard'u kur (vm-master 8 GB RAM üzerine)"
+      shell: |
+        {{ helm_cmd }} upgrade --install rancher rancher-latest/rancher \
+          --namespace cattle-system \
+          --create-namespace \
+          --set hostname=rancher.{{ master_public_ip }}.nip.io \
+          --set bootstrapPassword=AdminPassword2026! \
+          --set replicas=1 \
+          --set extraTolerations[0].key=CriticalAddonsOnly \
+          --set extraTolerations[0].operator=Exists \
+          --set extraNodeSelectorTerms[0].key="kubernetes\.io/hostname" \
+          --set extraNodeSelectorTerms[0].operator=In \
+          --set extraNodeSelectorTerms[0].values[0]=vm-master
+
+    - name: "Rancher Server pod'unun hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} rollout status deployment/rancher -n cattle-system --timeout=300s"
+      changed_when: false
+
+    - name: "Worker'ların katılımı için node-token'ı oku"
+      slurp:
+        src: /var/lib/rancher/rke2/server/node-token
+      register: node_token_b64
+
+    - name: "Token'ı yerel değişkene kaydet"
+      set_fact:
+        rke2_token: "{{ node_token_b64.content | b64decode | trim }}"
+
+    - name: "Token ve Katılım Bilgilerini ekrana yazdır"
+      debug:
+        msg:
+          - "=========================================================="
+          - "🎉 RANCHER DASHBOARD BAŞARIYLA KURULDU!"
+          - "Web Arayüz Linki: https://rancher.{{ master_public_ip }}.nip.io"
+          - "Kullanıcı Adı: admin"
+          - "Şifre: AdminPassword2026!"
+          - "RKE2 Server Join Token: {{ rke2_token }}"
+          - "=========================================================="
