@@ -1,0 +1,43 @@
+namespace: omnipulse-prod
+
+webapp:
+  replicas: 3
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.27-alpine"
+  containerPort: 8080
+  servicePort: 80
+  probePath: /healthz
+  resources:
+    limits:
+      cpu: "200m"
+      memory: "4Mi"
+
+cache:
+  image:
+    repository: redis
+    tag: "7.2-alpine"
+  port: 6379
+  storageClassName: "managed-csi-ultra"
+  storageSize: 2Gi
+  passwordPlain: "OmniPulse#2026!"
+
+sharedStorage:
+  storageClassName: "managed-csi"
+  accessMode: "ReadWriteOnce"
+  size: 1Gi
+
+cronjob:
+  schedule: "*/1 * * * *"
+  suspend: true
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  minAvailable: 3
+
+ingress:
+  className: traefik
