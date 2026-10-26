@@ -41,8 +41,8 @@ spec:
             httpGet:
               path: {{ .Values.webapp.probePath }}
               port: {{ .Values.webapp.containerPort }}
-            initialDelaySeconds: 2
-            periodSeconds: 5
+            initialDelaySeconds: 5
+            periodSeconds: 10
           livenessProbe:
             httpGet:
               path: {{ .Values.webapp.probePath }}
