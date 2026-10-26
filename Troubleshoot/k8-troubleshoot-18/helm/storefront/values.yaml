@@ -14,7 +14,7 @@ cache:
     repository: redis
     tag: "7.2-alpine"
   port: 6379
-  storageClassName: "managed-csi-fast"
+  storageClassName: "managed-csi"
   storageSize: 2Gi
   passwordPlain: "ProdCache#2026!"
 
