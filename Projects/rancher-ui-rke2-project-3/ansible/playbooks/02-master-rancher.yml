@@ -109,6 +109,19 @@
       delay: 10
       changed_when: false
 
+    - name: "Rancher Local-Path Provisioner (Varsayılan StorageClass) kur"
+      shell: |
+        {{ kubectl_cmd }} apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
+        {{ kubectl_cmd }} patch deployment local-path-provisioner -n local-path-storage --type='json' \
+          -p='[{"op": "add", "path": "/spec/template/spec/tolerations", "value": [{"operator": "Exists"}]}]' || true
+        {{ kubectl_cmd }} patch configmap local-path-config -n local-path-storage --type merge -p '{
+          "data": {
+            "helperPod.yaml": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: helper-pod\nspec:\n  tolerations:\n  - operator: Exists\n  containers:\n  - name: helper-pod\n    image: busybox\n    imagePullPolicy: IfNotPresent\n"
+          }
+        }'
+        {{ kubectl_cmd }} patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      changed_when: true
+
     - name: "Rancher Dashboard'u kur (vm-master 8 GB RAM üzerine)"
       shell: |
         {{ helm_cmd }} upgrade --install rancher rancher-latest/rancher \
