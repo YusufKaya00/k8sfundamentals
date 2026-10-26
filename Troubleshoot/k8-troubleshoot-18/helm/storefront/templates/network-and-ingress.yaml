@@ -7,7 +7,7 @@ spec:
   type: ClusterIP
   selector:
     app: {{ .Release.Name }}-web
-    tier: web-ui
+    tier: frontend
   ports:
     - name: http
       port: {{ .Values.webapp.servicePort }}
