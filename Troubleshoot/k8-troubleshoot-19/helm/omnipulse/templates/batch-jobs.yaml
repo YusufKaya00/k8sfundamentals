@@ -1,0 +1,101 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-seed
+  namespace: {{ .Values.namespace }}
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-seed
+        tier: batch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: seed-initializer
+          image: "{{ .Values.cache.image.repository }}:{{ .Values.cache.image.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+          env:
+            - name: REDIS_HOST
+              value: "127.0.0.1"
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: REDIS_PASSWORD
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              until redis-cli -h {{ .Release.Name }}-cache-0.${REDIS_HOST} -p ${REDIS_PORT} ping | grep -q PONG; do
+                echo "Waiting for StatefulSet master pod DNS ({{ .Release.Name }}-cache-0.${REDIS_HOST}:${REDIS_PORT})..."
+                sleep 2
+              done
+              redis-cli -h {{ .Release.Name }}-cache-0.${REDIS_HOST} -p ${REDIS_PORT} SET omnipulse:schema:status "INITIALIZED_V3"
+              cat << 'EOF' > /shared-html/index.html
+              <!DOCTYPE html>
+              <html>
+              <head>
+                <title>OmniPulse v3.0 - Live</title>
+                <style>
+                  body { font-family: sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding-top: 8%; }
+                  .badge { background: #22c55e; color: #052e16; padding: 6px 14px; border-radius: 999px; font-weight: bold; }
+                </style>
+              </head>
+              <body>
+                <h1>OmniPulse Production Gateway</h1>
+                <p><span class="badge">STATUS: ONLINE (v3.0.0)</span></p>
+                <p>Stateful Cache Identity: <strong>{{ .Release.Name }}-cache-0.{{ .Release.Name }}-cache:6379</strong></p>
+                <p>Shared Volume Mode: <strong>ReadWriteMany (AzureFile CSI)</strong></p>
+              </body>
+              </html>
+              EOF
+              echo "Seed and shared HTML generation completed."
+          volumeMounts:
+            - name: shared-html
+              mountPath: /shared-html
+      volumes:
+        - name: shared-html
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-shared-html
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-heartbeat
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  suspend: {{ .Values.cronjob.suspend }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{ .Release.Name }}-heartbeat
+            tier: batch
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: heartbeat-sync
+              image: "{{ .Values.cache.image.repository }}:{{ .Values.cache.image.tag }}"
+              envFrom:
+                - configMapRef:
+                    name: {{ .Release.Name }}-config
+              env:
+                - name: REDISCLI_AUTH
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-secret
+                      key: REDIS_PASSWORD
+              command:
+                - sh
+                - -c
+                - |
+                  redis-cli -h ${REDIS_HOST} -p ${REDIS_PORT} SET omnipulse:cluster:heartbeat "ONLINE"
+                  redis-cli -h ${REDIS_HOST} -p ${REDIS_PORT} INCR omnipulse:heartbeat:count
+          volumes: []
