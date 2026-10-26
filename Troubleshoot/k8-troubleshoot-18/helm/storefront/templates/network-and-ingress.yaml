@@ -11,7 +11,7 @@ spec:
   ports:
     - name: http
       port: {{ .Values.webapp.servicePort }}
-      targetPort: 80
+      targetPort: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
