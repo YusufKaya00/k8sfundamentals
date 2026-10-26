@@ -51,7 +51,6 @@ spec:
         name: cache-data
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: {{ .Values.cache.storageClassName | quote }}
         resources:
           requests:
             storage: {{ .Values.cache.storageSize }}
