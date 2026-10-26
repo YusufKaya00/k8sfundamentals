@@ -1,0 +1,35 @@
+# ==========================================
+# Proje 3 (Rancher UI Lab) SSH Konfigürasyonu
+# ==========================================
+Host vm-master 9.205.159.85
+    HostName 9.205.159.85
+    User ysf
+    IdentityFile ~/.ssh/id_rsa
+    StrictHostKeyChecking accept-new
+
+Host vm-worker-app 9.205.159.29
+    HostName 9.205.159.29
+    User ysf
+    IdentityFile ~/.ssh/id_rsa
+    StrictHostKeyChecking accept-new
+
+Host vm-worker-infra 10.10.1.5
+    HostName 10.10.1.5
+    User ysf
+    ProxyJump vm-master
+    IdentityFile ~/.ssh/id_rsa
+    StrictHostKeyChecking accept-new
+
+Host vm-worker-pg 10.10.1.6
+    HostName 10.10.1.6
+    User ysf
+    ProxyJump vm-master
+    IdentityFile ~/.ssh/id_rsa
+    StrictHostKeyChecking accept-new
+
+Host vm-worker-mongo 10.10.1.7
+    HostName 10.10.1.7
+    User ysf
+    ProxyJump vm-master
+    IdentityFile ~/.ssh/id_rsa
+    StrictHostKeyChecking accept-new
