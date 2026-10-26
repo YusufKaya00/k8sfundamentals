@@ -100,6 +100,15 @@
         {{ kubectl_cmd }} rollout status deployment/cert-manager-webhook -n cert-manager --timeout=150s
       changed_when: false
 
+    - name: "RKE2 Ingress NGINX Controller ve Admission Webhook'un hazır olmasını bekle"
+      shell: |
+        {{ kubectl_cmd }} rollout status daemonset/rke2-ingress-nginx-controller -n kube-system --timeout=180s
+      register: ingress_ready
+      until: ingress_ready.rc == 0
+      retries: 15
+      delay: 10
+      changed_when: false
+
     - name: "Rancher Dashboard'u kur (vm-master 8 GB RAM üzerine)"
       shell: |
         {{ helm_cmd }} upgrade --install rancher rancher-latest/rancher \
