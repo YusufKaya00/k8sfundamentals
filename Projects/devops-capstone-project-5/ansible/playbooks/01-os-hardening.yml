@@ -1,0 +1,141 @@
+---
+# ==============================================================================
+# FAZ 1: İŞLETİM SİSTEMİ SERTLEŞTİRME VE LINUX KERNEL OPTİMİZASYONU
+# Dosya: playbooks/01-os-hardening.yml
+# Hedef: Tüm Düğümler (hosts: all -> 1 Master + 2 Worker)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Ham bir Ubuntu Linux sunucusu varsayılan çekirdek (kernel) ayarlarıyla üretim
+# seviyesinde bir Kubernetes (RKE2), Apache Cassandra, Apache Kafka, Prometheus
+# TSDB ve Chaos Mesh NetworkChaos (`sch_netem`) yükünü kaldıramaz.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI?
+# 1. Swap Kapatma: Kubelet QoS garantisi ve Cassandra JVM'in swap thrashing
+#    yüzünden GC (Garbage Collection) duraksamasına girmemesi için prod'da ve
+#    lab'da Swap %100 kapatılır.
+# 2. `vm.max_map_count = 262144`: Hem Kafka log segmentleri hem de Cassandra
+#    SSTable dosyaları `mmap()` kullanır. Varsayılan 65530 sınırı aşıldığında
+#    veritabanları `OutOfMemoryError: Map failed` ile çöker.
+# 3. `sch_netem` Kernel Modülü: Chaos Mesh'in `NetworkChaos` (300ms gecikme,
+#    paket kaybı) deneylerini Linux Traffic Control (`tc qdisc netem`) ile
+#    uygulayabilmesi için `sch_netem` çekirdek modülü tüm düğümlerde yüklü olmalıdır!
+# ==============================================================================
+
+- name: "Faz 1: Tüm Sunucularda İşletim Sistemi Sertleştirme ve Kernel Tuning"
+  hosts: all
+  become: true
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: SWAP (TAKAS ALANI) BELLEĞİNİN DEVRE DIŞI BIRAKILMASI
+    # --------------------------------------------------------------------------
+    - name: "Aktif Swap alanını çalışma zamanında (runtime) anında kapat"
+      command: swapoff -a
+      changed_when: false
+
+    - name: "Sunucu yeniden başlatıldığında Swap'ın açılmaması için /etc/fstab'dan kaldır"
+      replace:
+        path: /etc/fstab
+        regexp: '^(\s*[^#\s]+\s+[^#\s]+\s+swap\s+.*)$'
+        replace: '# \1'
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: CONTAINER RUNTIME, CNI VE CHAOS MESH NETEM İÇİN KERNEL MODÜLLERİ
+    # --------------------------------------------------------------------------
+    # - overlay      : Containerd OverlayFS sürücüsü
+    # - br_netfilter : CNI sanal köprü trafiğinin iptables'tan geçmesi için
+    # - sch_netem    : Chaos Mesh NetworkChaos (gecikme/paket kaybı) emülasyonu için!
+    - name: "Gerekli Linux çekirdek modüllerini (overlay, br_netfilter, sch_netem) belleğe yükle"
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+        - sch_netem
+
+    - name: "Kernel modüllerinin her reboot sonrasında otomatik yüklenmesi için kalıcı yap"
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          # RKE2 Containerd (OverlayFS), Canal CNI (Bridge Netfilter) ve Chaos Mesh (Netem)
+          overlay
+          br_netfilter
+          sch_netem
+        mode: '0644'
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: KUBERNETES, KAFKA, CASSANDRA VE PROMETHEUS İÇİN SYSCTL TUNING
+    # --------------------------------------------------------------------------
+    - name: "Kubernetes CNI, Kafka, Cassandra ve Prometheus için sysctl çekirdek parametrelerini uygula"
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+        sysctl_file: /etc/sysctl.d/99-k8s-resiliencestream.conf
+      loop:
+        - { name: 'net.ipv4.ip_forward', value: '1' }
+        - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { name: 'fs.inotify.max_user_instances', value: '8192' }
+        - { name: 'fs.inotify.max_user_watches', value: '524288' }
+        - { name: 'vm.max_map_count', value: '262144' }
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: TEMEL SİSTEM, AĞ, DEPOLAMA VE KAOS PAKETLERİNİN KURULUMU
+    # --------------------------------------------------------------------------
+    # iproute2: Chaos Mesh'in `tc` (traffic control) komutuyla ağ gecikmesi enjekte etmesi için.
+    - name: "Gerekli temel sistem, ağ ve depolama yönetim paketlerini kur"
+      apt:
+        name:
+          - curl
+          - wget
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - iptables
+          - ipset
+          - iproute2
+          - socat
+          - conntrack
+          - open-iscsi
+          - nfs-common
+          - jq
+        state: present
+        update_cache: true
+
+    # --------------------------------------------------------------------------
+    # 5. ADIM: SMOKE TEST & DOĞRULAMA BLOĞU (BLOCK / RESCUE)
+    # --------------------------------------------------------------------------
+    - name: "Faz 1 Doğrulama (Smoke Test): Swap, Kernel Modülleri ve sysctl Kontrolü"
+      block:
+        - name: "Swap alanının 0 olduğunu ve vm.max_map_count >= 262144 olduğunu doğrula"
+          shell: |
+            set -e
+            SWAP_USED=$(free | awk '/Swap:/ {print $2}')
+            if [ "$SWAP_USED" != "0" ]; then
+              echo "HATA: Swap hala aktif ($SWAP_USED)!"
+              exit 1
+            fi
+            MAP_COUNT=$(sysctl -n vm.max_map_count)
+            if [ "$MAP_COUNT" -lt 262144 ]; then
+              echo "HATA: vm.max_map_count yetersiz ($MAP_COUNT)!"
+              exit 1
+            fi
+            lsmod | grep -q overlay
+            lsmod | grep -q br_netfilter
+          changed_when: false
+      rescue:
+        - name: "Faz 1 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 1 (OS HARDENING) DOĞRULAMASI BAŞARISIZ OLDU!"
+              - "Lütfen ilgili sunucuda şu teşhis komutlarını çalıştırın:"
+              - "  1. Swap durumu        : free -h && cat /proc/swaps"
+              - "  2. Kernel modülleri   : lsmod | grep -E 'overlay|br_netfilter|sch_netem'"
+              - "  3. Sysctl değerleri   : sysctl net.ipv4.ip_forward vm.max_map_count fs.inotify.max_user_instances"
+              - "  4. Apt paket kilidi   : sudo fuser /var/lib/dpkg/lock-frontend"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 1 OS Hardening doğrulaması başarısız oldu. Yukarıdaki teşhis komutlarını inceleyin."
