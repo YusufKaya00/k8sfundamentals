@@ -1,0 +1,295 @@
+---
+# ==============================================================================
+# FAZ 5: PLATFORM SERVİSLERİ, POLYGLOT VERİTABANLARI, KAFKA VE GITOPS DAĞITIMI
+# Dosya: playbooks/05-platform-services.yml
+# Hedef: vm-master (Helm 3 & kubectl ile tüm platform katmanlarının kurulumu)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Altyapı, RKE2 çekirdeği, Local-Path CSI depolama ve 5 düğümlü Taint/Label
+# izolasyonu tamamlandıktan sonra bu playbook tüm kurumsal yazılım yığınını
+# deterministik bir sırayla ayağa kaldırır:
+#   1. Resmi Helm Kataloglarının (`jetstack`, `rancher-latest`, `argo`,
+#      `prometheus-community`, `bitnami`) eklenmesi.
+#   2. Yerel proje dosyalarının (`helm-values/`, `app/`, `gitops/`) `vm-master`
+#      üzerindeki `/home/ysf/` dizinine kopyalanması ve `MASTER_IP` ile `APP_IP`
+#      yer tutucularının (placeholders) gerçek Azure Public IP'leriyle dinamik
+#      olarak değiştirilmesi.
+#   3. `cert-manager` kurulumu ve Webhook hazırlık kontrolü.
+#   4. `vm-master` (8 GB RAM) üzerine Yönetim ve Gözlemlenebilirlik katmanının
+#      (`Rancher`, `ArgoCD`, `kube-prometheus-stack`) dağıtılması + oluşturulan
+#      Namespace'lerin Rancher `Default Project` içerisine otomatik bağlanması.
+#   5. `data` namespace'i altında 3 izole worker düğümüne **Redis**, **Kafka (KRaft)**,
+#      **PostgreSQL 16** ve **MongoDB 7** veri katmanının kurulması.
+#   6. `app` namespace'i altında `omnistream-app` uygulamasının Helm ile kurulması
+#      ve `gitops/argocd-application.yaml` manifestosunun uygulanarak yönetimin
+#      ArgoCD GitOps motoruna devredilmesi.
+# ==============================================================================
+
+- name: "Faz 5: Kurumsal Platform Servisleri, Veri Katmanı (Kafka + 3 DB) ve Uygulama Dağıtımı"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+    target_user: "{{ ansible_user | default('ysf') }}"
+    target_home: "/home/{{ ansible_user | default('ysf') }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: HELM REPO KATALOGLARININ EKLENMESİ VE GÜNCELLENMESİ
+    # --------------------------------------------------------------------------
+    # - jetstack             : cert-manager (TLS sertifika otomasyonu)
+    # - rancher-latest       : Rancher Server (Çoklu küme yönetim arayüzü)
+    # - argo                 : ArgoCD (GitOps sürekli teslimat motoru)
+    # - prometheus-community : kube-prometheus-stack (Prometheus + Grafana + Exporters)
+    # - bitnami              : Kafka (KRaft), Redis, PostgreSQL, MongoDB
+    - name: "Resmi Helm Chart depolarını ekle ve indeksleri güncelle"
+      shell: |
+        {{ helm_cmd }} repo add jetstack https://charts.jetstack.io --force-update
+        {{ helm_cmd }} repo add rancher-latest https://releases.rancher.com/server-charts/latest --force-update
+        {{ helm_cmd }} repo add argo https://argoproj.github.io/argo-helm --force-update
+        {{ helm_cmd }} repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+        {{ helm_cmd }} repo add bitnami https://charts.bitnami.com/bitnami --force-update
+        {{ helm_cmd }} repo update
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: HELM-VALUES, APP VE GITOPS DİZİNLERİNİN VM-MASTER'A AKTARILMASI
+    # --------------------------------------------------------------------------
+    # Yönetici sunucusunda (/home/ysf/) tüm manifestoların ve Helm değerlerinin
+    # elimin altında bulunması, hem Ansible kurulumu hem de sonradan yapılacak
+    # manuel incelemeler (troubleshooting) için büyük kolaylık sağlar.
+    - name: "vm-master üzerinde /home/ysf/{helm-values,app,gitops} dizinlerini oluştur"
+      file:
+        path: "{{ target_home }}/{{ item }}"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0755'
+      loop:
+        - helm-values
+        - app
+        - gitops
+
+    - name: "helm-values/ dosyalarını vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../helm-values/"
+        dest: "{{ target_home }}/helm-values/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+
+    - name: "app/ dizinini (FastAPI kaynak kodu ve omnistream-chart) vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../app/"
+        dest: "{{ target_home }}/app/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0755'
+      failed_when: false
+
+    - name: "gitops/ dizinini (ArgoCD Application manifestosu) vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../gitops/"
+        dest: "{{ target_home }}/gitops/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: DİNAMİK IP ENJEKSİYONU (MASTER_IP VE APP_IP PLACEHOLDER DEĞİŞİMİ)
+    # --------------------------------------------------------------------------
+    # Terraform her çalıştığında Azure'dan yeni dinamik Public IP'ler alır.
+    # Statik IP yazmak yerine, kopyalanan YAML dosyalarındaki `MASTER_IP` ve `APP_IP`
+    # yer tutucularını gerçek `{{ master_public_ip }}` ve `{{ app_worker_public_ip }}`
+    # değerleriyle değiştiriyoruz. Böylece nip.io wildcard DNS adresleri anında çalışır!
+    - name: "Kopyalanan YAML dosyalarında MASTER_IP ve APP_IP yer tutucularını gerçek Public IP'lerle değiştir"
+      shell: |
+        find {{ target_home }}/helm-values {{ target_home }}/app {{ target_home }}/gitops -type f \( -name "*.yaml" -o -name "*.yml" \) -exec sed -i \
+          -e "s/MASTER_IP/{{ master_public_ip }}/g" \
+          -e "s/<MASTER_IP>/{{ master_public_ip }}/g" \
+          -e "s/APP_IP/{{ app_worker_public_ip }}/g" \
+          -e "s/<APP_IP>/{{ app_worker_public_ip }}/g" {} +
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: CERT-MANAGER KURULUMU VE WEBHOOK HAZIRLIK KONTROLÜ
+    # --------------------------------------------------------------------------
+    # NEDEN CERT-MANAGER WEBHOOK BEKLENMELİDİR?
+    # Rancher Server, kendi HTTPS TLS sertifikalarını üretmek için `cert-manager.io/v1`
+    # API grubundaki `Issuer` ve `Certificate` kaynaklarını oluşturur. Eğer
+    # `cert-manager-webhook` pod'u tamamen `Running` olup TLS doğrulama uç noktasını
+    # açmadan Rancher Helm komutu çalıştırılırsa, API Server `failed calling webhook "webhook.cert-manager.io"`
+    # hatası döndürür. Bu yüzden rollout status ile tam hazırlık beklenir.
+    - name: "cert-manager'ı (CRD'ler ile birlikte) cert-manager namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --set crds.enabled=true \
+          --set global.leaderElection.namespace=cert-manager \
+          --wait --timeout=180s
+      changed_when: true
+
+    - name: "cert-manager ve cert-manager-webhook pod'larının tamamen hazır olmasını bekle"
+      shell: |
+        {{ kubectl_cmd }} rollout status deployment/cert-manager -n cert-manager --timeout=150s
+        {{ kubectl_cmd }} rollout status deployment/cert-manager-cainjector -n cert-manager --timeout=150s
+        {{ kubectl_cmd }} rollout status deployment/cert-manager-webhook -n cert-manager --timeout=150s
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 5. ADIM: RANCHER SERVER KURULUMU VE NAMESPACE'LERİN DEFAULT PROJECT'E BAĞLANMASI
+    # --------------------------------------------------------------------------
+    - name: "Rancher Yönetim Panelini vm-master (cattle-system) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install rancher rancher-latest/rancher \
+          --namespace cattle-system \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/rancher-values.yaml \
+          --set hostname=rancher.{{ master_public_ip }}.nip.io \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "Rancher Server deployment'ının hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} rollout status deployment/rancher -n cattle-system --timeout=300s"
+      changed_when: false
+
+    # RANCHER DEFAULT PROJECT ANNOTATION YAMASI:
+    # Rancher ayağa kalktığında `local` kümesi için bir `Default` Project (`p-...`)
+    # oluşturur. Bu görevi çalıştırarak `data`, `app`, `argocd` ve `monitoring`
+    # namespace'lerine `field.cattle.io/projectId: local:<DEFAULT_PROJECT_ID>`
+    # anotasyonunu otomatik basıyoruz. Böylece kullanıcı Rancher UI'a girdiğinde
+    # tüm namespace'ler doğrudan Default Project altında görünür!
+    - name: "data, app, argocd ve monitoring Namespace'lerini Rancher Default Project'e bağla"
+      shell: |
+        DEFAULT_PROJ=$({{ kubectl_cmd }} get projects.management.cattle.io -n local -o jsonpath='{.items[?(@.spec.displayName=="Default")].metadata.name}' 2>/dev/null || true)
+        if [ -n "$DEFAULT_PROJ" ]; then
+          for ns in data app argocd monitoring; do
+            {{ kubectl_cmd }} annotate namespace $ns field.cattle.io/projectId="local:${DEFAULT_PROJ}" --overwrite=true || true
+            {{ kubectl_cmd }} label namespace $ns field.cattle.io/projectId="${DEFAULT_PROJ}" --overwrite=true || true
+          done
+        fi
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 6. ADIM: ARGOCD (GITOPS MOTORU) KURULUMU (VM-MASTER)
+    # --------------------------------------------------------------------------
+    - name: "ArgoCD GitOps platformunu argocd namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install argocd argo/argo-cd \
+          --namespace argocd \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/argocd-values.yaml \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "ArgoCD Server pod'unun hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} rollout status deployment/argocd-server -n argocd --timeout=180s"
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 7. ADIM: KUBE-PROMETHEUS-STACK (PROMETHEUS & GRAFANA) KURULUMU (VM-MASTER)
+    # --------------------------------------------------------------------------
+    - name: "Prometheus ve Grafana (kube-prometheus-stack) gözlemlenebilirlik yığınını monitoring namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+          --namespace monitoring \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/monitoring-values.yaml \
+          --wait --timeout=360s
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 8. ADIM: DATA KATMANI KURULUMU (REDIS, KAFKA KRAFT, POSTGRESQL, MONGODB)
+    # --------------------------------------------------------------------------
+    # Her bir veri servisi kendi `helm-values/*.yaml` dosyasındaki `nodeSelector`
+    # ve `tolerations` kuralları sayesinde doğrudan kendi özel worker sunucusuna
+    # (`vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`) yerleşir ve
+    # `local-path` StorageClass ile disk hacimlerini (PVC) otomatik bağlar.
+    - name: "Redis 7 önbellek sunucusunu vm-worker-stream (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install redis bitnami/redis \
+          --namespace data \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/redis-values.yaml \
+          --wait --timeout=240s
+      changed_when: true
+
+    - name: "Apache Kafka (KRaft - ZooKeeper'sız) olay akış motorunu vm-worker-stream (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install kafka bitnami/kafka \
+          --namespace data \
+          -f {{ target_home }}/helm-values/kafka-values.yaml \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "PostgreSQL 16 ilişkisel veritabanını vm-worker-sql (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install postgres bitnami/postgresql \
+          --namespace data \
+          -f {{ target_home }}/helm-values/postgres-values.yaml \
+          --wait --timeout=240s
+      changed_when: true
+
+    - name: "MongoDB 7 NoSQL doküman veritabanını vm-worker-nosql (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install mongodb bitnami/mongodb \
+          --namespace data \
+          -f {{ target_home }}/helm-values/mongo-values.yaml \
+          --wait --timeout=240s
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 9. ADIM: OMNISTREAM UYGULAMASININ HELM VE ARGOCD GITOPS İLE DAĞITIMI
+    # --------------------------------------------------------------------------
+    # Önce yerel Helm chart (`omnistream-chart`) ile ilk dağıtımı gerçekleştiriyoruz,
+    # hemen ardından `gitops/argocd-application.yaml` manifestosunu uygulayarak
+    # uygulamanın yaşam döngüsünü (Self-Heal & Auto-Prune) ArgoCD'ye bağlıyoruz.
+    - name: "omnistream-app Helm Chart'ını app namespace'i içine dağıt (vm-worker-app)"
+      shell: |
+        if [ -d "{{ target_home }}/app/omnistream-chart" ]; then
+          {{ helm_cmd }} upgrade --install omnistream-app {{ target_home }}/app/omnistream-chart \
+            --namespace app \
+            --create-namespace \
+            --set ingress.host=app.{{ app_worker_public_ip }}.nip.io \
+            --wait --timeout=180s
+        fi
+      changed_when: true
+
+    - name: "ArgoCD GitOps Application manifestosunu (gitops/argocd-application.yaml) kümeye uygula"
+      shell: |
+        if [ -f "{{ target_home }}/gitops/argocd-application.yaml" ]; then
+          {{ kubectl_cmd }} apply -f {{ target_home }}/gitops/argocd-application.yaml
+        fi
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 10. ADIM: ARGOCD ADMIN ŞİFRESİNİ OKUMA VE KURULUM ÖZETİNİ YAZDIRMA
+    # --------------------------------------------------------------------------
+    - name: "ArgoCD başlangıç admin şifresini (argocd-initial-admin-secret) oku"
+      shell: |
+        {{ kubectl_cmd }} -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+      register: argocd_admin_password
+      changed_when: false
+      failed_when: false
+
+    - name: "OmniStream Platformu Erişim Adreslerini ve Kimlik Bilgilerini Göster"
+      debug:
+        msg:
+          - "=========================================================================="
+          - "🚀 OMNISTREAM ENTERPRISE DEVSECOPS & GITOPS PLATFORMU HAZIR!"
+          - "=========================================================================="
+          - "1. Rancher UI       : https://rancher.{{ master_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre: admin / AdminPassword2026!"
+          - "--------------------------------------------------------------------------"
+          - "2. ArgoCD UI        : http://argocd.{{ master_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre: admin / {{ argocd_admin_password.stdout | default('Secret üzerinden kontrol edin') }}"
+          - "--------------------------------------------------------------------------"
+          - "3. Grafana UI       : http://grafana.{{ master_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre: admin / AdminPassword2026!"
+          - "--------------------------------------------------------------------------"
+          - "4. OmniStream App   : http://app.{{ app_worker_public_ip }}.nip.io"
+          - "   Prometheus Metrik: http://app.{{ app_worker_public_ip }}.nip.io/metrics"
+          - "=========================================================================="
