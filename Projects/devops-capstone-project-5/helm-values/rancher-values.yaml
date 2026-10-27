@@ -1,0 +1,82 @@
+# ==============================================================================
+# RANCHER SERVER (v2.9/v2.10) — ÜRETİM ORTAMI HELM DEĞERLERİ (rancher-values.yaml)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Rancher Server; RKE2 kümemizin çoklu-küme (multi-cluster) yönetim panelini, RBAC
+# (Rol Tabanlı Erişim Kontrolü) politikalarını, proje/namespace izolasyonunu ve
+# görsel iş yükü izleme katmanını sağlayan merkezi yönetim düzlemidir (Management Plane).
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI?
+# - Prod'da: Rancher kendi adanmış 3 düğümlü yönetim kümesinde (`replicas: 3`) ve
+#   Let's Encrypt / Kurumsal PKI sertifikalarıyla çalışır.
+# - Lab'da: Azure for Students 6 vCPU kotamızda `vm-worker-data` ve `vm-worker-app`
+#   düğümlerimiz 4 GB RAM (`Standard_B2s`) boyutundadır ve Cassandra, Kafka,
+#   PostgreSQL, RabbitMQ, Redis ile FastAPI iş yüklerini çalıştırmaktadır.
+#   Rancher Server ~800 MB - 1.2 GB RAM tükettiği için 8 GB RAM'e sahip `vm-master`
+#   (`tier: platform`) sunucusuna kesin olarak sabitlenmiştir (`replicas: 1`).
+#   Ayrıca Proje 4 Ders 1 gereği, master düğümünde "Insufficient cpu" hatası
+#   yaşanmaması için CPU request değeri `20m` (10-25m bütçesi) olarak ayarlanmıştır.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. KOPYA SAYISI (REPLICAS) VE YÜKSEK ERİŞİLEBİLİRLİK OPTİMİZASYONU
+# ------------------------------------------------------------------------------
+replicas: 1
+
+# ------------------------------------------------------------------------------
+# 2. İLK KURULUM (BOOTSTRAP) YÖNETİCİ ŞİFRESİ
+# ------------------------------------------------------------------------------
+bootstrapPassword: "AdminPassword2026!"
+
+# ------------------------------------------------------------------------------
+# 3. INGRESS VE TLS SERTİFİKA YÖNETİMİ (CERT-MANAGER ENTEGRASYONU)
+# ------------------------------------------------------------------------------
+# hostname değeri Ansible playbook (05-platform-services.yml) tarafından dinamik
+# olarak "rancher.<MASTER_IP>.nip.io" şeklinde enjekte edilir.
+hostname: rancher.MASTER_IP.nip.io
+
+ingress:
+  ingressClassName: nginx
+  tls:
+    source: rancher
+
+# ------------------------------------------------------------------------------
+# 4. DÜĞÜM SEÇİCİ (NODE SELECTOR) — SADECE VM-MASTER ÜZERİNDE ÇALIŞTIRMA
+# ------------------------------------------------------------------------------
+nodeSelector:
+  kubernetes.io/hostname: vm-master
+
+extraNodeSelectorTerms:
+  - key: kubernetes.io/hostname
+    operator: In
+    values:
+      - vm-master
+
+# ------------------------------------------------------------------------------
+# 5. TAINT TOLERASYONU (CRITICAL ADDONS ONLY İZOLASYONU)
+# ------------------------------------------------------------------------------
+tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+extraTolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+# ------------------------------------------------------------------------------
+# 6. KAYNAK KISITLAMALARI (PROJE 4 DERS 1: MASTER CPU REQUEST BÜTÇESİ 10-25m)
+# ------------------------------------------------------------------------------
+resourcesPreset: "none"
+
+resources:
+  requests:
+    # Başlangıçta yalnızca 20 milicore (0.02 vCPU) ve 512 MB RAM rezerve edilir.
+    # Bu sayede 2 vCPU / 8 GB RAM'li vm-master üzerinde RKE2 Control Plane,
+    # ArgoCD, Monitoring ve Chaos Mesh ile "Insufficient cpu" çakışması yaşanmaz.
+    cpu: 20m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1536Mi

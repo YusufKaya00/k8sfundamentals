@@ -1,0 +1,30 @@
+# ==============================================================================
+# PROMETHEUS OPERATOR SERVICEMONITOR ŞABLONU (templates/servicemonitor.yaml)
+# ==============================================================================
+# Proje 5 Sözleşmesi:
+# - Etiket: `release: monitoring` (Prometheus Operator bu etiketle ServiceMonitor'u keşfeder)
+# - Kazıma aralığı: `interval: 5s` (Kaos deneylerinde alarmların <15 sn içinde tetiklenmesi için)
+# - `order-api`, `analytics-consumer` ve `payment-worker` servislerinin tamamını
+#   `app.kubernetes.io/name: resiliencestream` etiketi üzerinden kazır.
+# ==============================================================================
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+  endpoints:
+    - port: http
+      path: {{ .Values.serviceMonitor.path | default "/metrics" }}
+      interval: {{ .Values.serviceMonitor.interval | default "5s" }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout | default "4s" }}
+{{- end }}
