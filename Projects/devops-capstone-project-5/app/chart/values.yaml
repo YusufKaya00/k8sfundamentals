@@ -1,0 +1,115 @@
+# ==============================================================================
+# RESILIENCESTREAM HELM CHART VARSAYILAN DEĞERLERİ (values.yaml)
+# ==============================================================================
+# Sözleşme Kuralları:
+# - Tek repo, tek imaj: `yusufk00/resiliencestream`
+# - Üç bileşen (`APP_ROLE = api | analytics | payment`):
+#   1. `order-api`          : 2 replica, PDB (`minAvailable: 1`), HPA, Ingress
+#   2. `analytics-consumer` : 1 replica, Kafka `orders.events` -> Cassandra `resilience.order_events`
+#   3. `payment-worker`     : 1 replica, RabbitMQ `payments` -> Postgres `payments` (3 retry -> `payments.dlq`)
+# - Tüm uygulama pod'ları `vm-worker-app` (`nodeSelector: tier=app`) üzerinde çalışır.
+# - ServiceMonitor etiketi: `release: monitoring`, kazıma aralığı: `interval: 5s`.
+# ==============================================================================
+
+# order-api kopya sayısı (Proje 5 Sözleşmesi: PodChaos pod-kill deneyinde sıfır kesinti için 2 replica)
+replicaCount: 2
+
+# Konteyner İmaj Ayarları (GitLab CI `gitops_promote` aşaması buradaki `image.tag` değerini günceller)
+image:
+  repository: yusufk00/resiliencestream
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Alt işçi (worker) bileşenleri için kopya sayıları
+workers:
+  analyticsConsumer:
+    enabled: true
+    replicaCount: 1
+  paymentWorker:
+    enabled: true
+    replicaCount: 1
+
+# Düğüm Seçici: Uygulama pod'ları sadece `vm-worker-app` (tier=app) üzerinde çalışır
+nodeSelector:
+  tier: app
+
+tolerations: []
+
+# Kubernetes Service Ayarları
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+# NGINX Ingress Ayarları (Proje 4 Dersi #7: Küçük harfli, geçerli nip.io adresi; Ansible kurulumda gerçek APP_IP ile günceller)
+ingress:
+  enabled: true
+  className: nginx
+  host: app.127.0.0.1.nip.io
+
+# PodDisruptionBudget (PDB): Bakım (`kubectl drain`) sırasında en az 1 `order-api` pod'unun ayakta kalmasını garanti eder
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# HorizontalPodAutoscaler (HPA): Deney 05 (`StressChaos`) veya Black Friday yükünde otomatik ölçekleme
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 75
+
+# Prometheus Operator ServiceMonitor Ayarları (Sözleşme: `release: monitoring`, `interval: 5s`)
+serviceMonitor:
+  enabled: true
+  interval: 5s
+  scrapeTimeout: 4s
+  path: /metrics
+  additionalLabels:
+    release: monitoring
+
+# Kaynak Sınırları: `vm-worker-app` (Standard_B2s: 2 vCPU / 4 GB RAM) bütçesine uygun
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+workerResources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 192Mi
+
+# Sözleşmedeki CoreDNS Servis Adları ve Kimlik Bilgileri
+env:
+  KAFKA_BOOTSTRAP: "kafka.data.svc.cluster.local:9092"
+  KAFKA_TOPIC: "orders.events"
+  KAFKA_GROUP: "analytics-consumer"
+  CASSANDRA_HOSTS: "cassandra.data.svc.cluster.local"
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_USER: "resilience"
+  CASSANDRA_PASSWORD: "AdminPassword2026!"
+  CASSANDRA_KEYSPACE: "resilience"
+  POSTGRES_HOST: "postgres-postgresql.data.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "resilience"
+  POSTGRES_PASSWORD: "AdminPassword2026!"
+  POSTGRES_DB: "resilience"
+  RABBITMQ_HOST: "rabbitmq.messaging.svc.cluster.local"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: "resilience"
+  RABBITMQ_PASSWORD: "AdminPassword2026!"
+  RABBITMQ_QUEUE: "payments"
+  RABBITMQ_DLQ: "payments.dlq"
+  RABBITMQ_MAX_RETRIES: "3"
+  REDIS_HOST: "redis-master.messaging.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "AdminPassword2026!"
+  DEP_TIMEOUT_SECONDS: "2"
+  HEALTH_PROBE_INTERVAL: "5"
+  PAYMENT_FAILURE_RATE: "0.05"
