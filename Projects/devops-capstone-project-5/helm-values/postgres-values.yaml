@@ -1,0 +1,66 @@
+# ==============================================================================
+# POSTGRESQL 16 (bitnami/postgresql) — İLİŞKİSEL (ACID SQL) VERİTABANI KATMANI
+# ==============================================================================
+# MİMARİ AMAÇ:
+# PostgreSQL, ResilienceStream platformumuzda:
+#   1. `order-api` için kritik senkron bağımlılıktır (`/readyz` readiness probe
+#      doğrudan PostgreSQL bağlantısını kontrol eder ve `orders` tablosuna yazar).
+#   2. `payment-worker` için ödeme kayıtlarının (`payments` tablosu) idempotent
+#      olarak işlendiği ACID veritabanıdır.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI?
+# - Prod'da: PostgreSQL; Patroni / CloudNativePG veya Azure Database for PostgreSQL
+#   Flexible Server üzerinde Primary + Synchronous Standby Replica + PgBouncer
+#   bağlantı havuzu ile çalışır.
+# - Lab'da: `vm-worker-data` (`tier: data`, taint `dedicated=data:NoSchedule`)
+#   üzerinde tek bir `primary` StatefulSet (`postgres-postgresql-0`) olarak çalışır.
+#   6. Kaos Deneyi (`IOChaos` disk gecikmesi) doğrudan bu pod'un `/bitnami/postgresql`
+#   disk yoluna uygulanarak yazma gecikmesi ve circuit breaker davranışları test edilir.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. PROJE 4 DERS 2: BITNAMI LEGACY İMAJ DEPOSU VE GÜVENLİK İZNİ
+# ------------------------------------------------------------------------------
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  repository: bitnamilegacy/postgresql
+
+# ------------------------------------------------------------------------------
+# 2. KİMLİK DOĞRULAMA VE VERİTABANI ŞEMASI (SÖZLEŞME STANDARTLARI)
+# ------------------------------------------------------------------------------
+# Küme içi DNS: `postgres-postgresql.data.svc.cluster.local:5432`
+auth:
+  postgresPassword: "AdminPassword2026!"
+  username: "resilience"
+  password: "AdminPassword2026!"
+  database: "resilience"
+
+# ------------------------------------------------------------------------------
+# 3. BİRİNCİL (PRIMARY) VERİTABANI SUNUCUSU YAPILANDIRMASI (VM-WORKER-DATA)
+# ------------------------------------------------------------------------------
+primary:
+  resourcesPreset: "none"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  nodeSelector:
+    tier: data
+
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: data
+      effect: NoSchedule
+
+  persistence:
+    enabled: true
+    size: 4Gi

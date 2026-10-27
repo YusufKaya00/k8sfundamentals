@@ -1,0 +1,243 @@
+# ==============================================================================
+# GÖZLEMLENEBİLİRLİK VE ALARM YIĞINI (prometheus-community/kube-prometheus-stack)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu dosya; Prometheus Operator, Prometheus Zaman Serisi Veritabanı (TSDB),
+# Alertmanager (SLO & Kaos Alarm Yönlendiricisi), Grafana Görselleştirme Paneli,
+# Kube-State-Metrics ve Node Exporter bileşenlerini yapılandırır.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI (PROJE 4 DERS 5)?
+# 1. Yüksek Çözünürlüklü Kaos Gözlemi (`scrapeInterval: 5s`, `evaluationInterval: 5s`):
+#    Standart 30s-60s scrape aralığında 30 saniyelik bir `PodChaos` veya `NetworkChaos`
+#    deneyi grafiklerde görünmez bile! Kaos mühendisliğinde arıza enjekte edildiği anı
+#    ve Circuit Breaker'ın `OPEN` durumuna geçişini <15 saniye içinde yakalamak için
+#    hem Prometheus tarama/değerlendirme aralığını hem de Grafana veri kaynağı
+#    `timeInterval` değerini **5s** yapıyoruz.
+# 2. Grafana Sidecar Kilidi Çözümü (`sidecar.dashboards.enabled: false`):
+#    Proje 4'te onlarca dev Kubernetes ConfigMap dashboard'unu izleyen `kiwigrid/k8s-sidecar`
+#    konteyneri Grafana'nın başlangıçta CPU/RAM'ini tüketip SQLite veritabanını
+#    kilitliyordu. Bu yüzden sidecar'ı tamamen kapatıp (`enabled: false`), kendi
+#    SLO, Messaging ve Chaos Game Day panolarımızı doğrudan Grafana'nın yerleşik
+#    `dashboardProviders` mekanizmasıyla yüklüyoruz. Ayrıca Grafana'ya `50m/256Mi`
+#    requests ve `800m/1Gi` limits vererek sıfır takılma sağlıyoruz.
+# 3. Alertmanager Aktif (`alertmanager.enabled: true`):
+#    Kaos deneylerimizde hipotez doğrulaması (Steady State bozulduğunda alarmın
+#    otomatik tetiklenmesi) için Alertmanager bu projede açıktır ve örnek bir
+#    webhook/Slack alıcı şablonu içerir.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. RKE2 İÇ BİLEŞENLERİNDEKİ GEREKSİZ SCRAPE HEDEFLERİNİ KAPATMA
+# ------------------------------------------------------------------------------
+kubeEtcd:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+# ------------------------------------------------------------------------------
+# 2. PROMETHEUS OPERATOR YAPILANDIRMASI (VM-MASTER SABİTLEME)
+# ------------------------------------------------------------------------------
+prometheusOperator:
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 384Mi
+
+# ------------------------------------------------------------------------------
+# 3. PROMETHEUS SUNUCUSU (TSDB — 5s SCRAPE & EVALUATION INTERVAL)
+# ------------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    resourcesPreset: "none"
+    nodeSelector:
+      kubernetes.io/hostname: "vm-master"
+    tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+    # PROJE 4 DERS 5: Kaos deneylerinde <15s alarm tepkisi için 5 saniyelik tarama!
+    scrapeInterval: "5s"
+    evaluationInterval: "5s"
+
+    # Tüm namespace'lerdeki (`app`, `data`, `messaging`, `chaos-mesh`) ServiceMonitor,
+    # PodMonitor ve PrometheusRule nesnelerini etiket kısıtlaması olmadan keşfet:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+    retention: 2d
+
+    resources:
+      requests:
+        cpu: 25m
+        memory: 256Mi
+      limits:
+        cpu: 600m
+        memory: 1024Mi
+
+# ------------------------------------------------------------------------------
+# 4. ALERTMANAGER (SLO & KAOS DENEYİ ALARM YÖNETİCİSİ — AKTİF)
+# ------------------------------------------------------------------------------
+# Prod ortamında PagerDuty, Slack veya Microsoft Teams'e bildirim gönderen katmandır.
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resourcesPreset: "none"
+    replicas: 1
+    nodeSelector:
+      kubernetes.io/hostname: "vm-master"
+    tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 150m
+        memory: 256Mi
+  config:
+    global:
+      resolve_timeout: 1m
+    route:
+      group_by: ['alertname', 'namespace', 'severity']
+      group_wait: 5s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'resilience-webhook'
+      routes:
+        - matchers:
+            - severity = "critical"
+          receiver: 'resilience-webhook'
+    receivers:
+      - name: 'resilience-webhook'
+        # Prod'da buraya Slack incoming webhook veya PagerDuty routing key girilir.
+        # Lab'da alarmların kesintisiz işlenmesi için yerel echo/webhook alıcısı tanımlıdır:
+        webhook_configs:
+          - url: 'http://order-api.app.svc.cluster.local:8000/healthz'
+            send_resolved: true
+
+# ------------------------------------------------------------------------------
+# 5. GRAFANA GÖRSELLEŞTİRME PANELİ (PROJE 4 DERS 5 UYUMLU)
+# ------------------------------------------------------------------------------
+grafana:
+  enabled: true
+  resourcesPreset: "none"
+  adminPassword: "AdminPassword2026!"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+  # PROJE 4 DERS 5: Grafana'nın yüksek sorgu yükünde donmaması için 50m/256Mi
+  # requests ve 800m/1Gi limits veriyoruz:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 800m
+      memory: 1Gi
+
+  # PROJE 4 DERS 5: Prometheus datasource üzerinde 5s çözünürlük (`timeInterval: 5s`)
+  # ayarlanarak `rate(metric[15s])` veya `rate(metric[30s])` sorgularının boş dönmesi önlenir:
+  sidecar:
+    datasources:
+      enabled: true
+      defaultDatasourceEnabled: true
+    # ÇOK KRİTİK: Sidecar dashboard izleyicisi KAPALI! (Grafana kilitlemesini önler)
+    dashboards:
+      enabled: false
+
+  additionalDataSources:
+    - name: Prometheus-Fast-5s
+      type: prometheus
+      uid: prometheus-5s
+      url: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
+      access: proxy
+      isDefault: false
+      jsonData:
+        timeInterval: "5s"
+        httpMethod: POST
+
+  # Dashboard'ları sidecar yerine doğrudan Helm `dashboardProviders` ile bağlıyoruz:
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: 'resiliencestream'
+          orgId: 1
+          folder: 'ResilienceStream'
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/resiliencestream
+
+  # Observability klasöründeki özel JSON panoları ConfigMap olarak bağlandığında
+  # veya özet yerleşik pano ile anında yüklenir:
+  dashboardsConfigMaps:
+    resiliencestream: "resiliencestream-dashboards"
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.MASTER_IP.nip.io
+    path: /
+    pathType: Prefix
+
+# ------------------------------------------------------------------------------
+# 6. KUBE-STATE-METRICS (KUBERNETES OBJE DURUM METRİKLERİ)
+# ------------------------------------------------------------------------------
+kube-state-metrics:
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 7. PROMETHEUS NODE EXPORTER (DONANIM METRİKLERİ — 3 DÜĞÜMÜN TAMAMINDA)
+# ------------------------------------------------------------------------------
+prometheus-node-exporter:
+  resourcesPreset: "none"
+  tolerations:
+    - operator: "Exists"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+nodeExporter:
+  enabled: true

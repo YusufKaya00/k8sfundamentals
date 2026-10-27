@@ -1,0 +1,137 @@
+# ==============================================================================
+# RESILIENCESTREAM SRE & KAOS MÜHENDİSLİĞİ ALARM KURALLARI (PrometheusRule CRD)
+# ==============================================================================
+# Neden prod'da böyle tasarlanır?
+# 1. `metadata.labels.release: monitoring`: `kube-prometheus-stack` (Prometheus
+#    Operator) yalnızca kendi release etiketiyle eşleşen `PrometheusRule`
+#    objelerini otomatik olarak yükler.
+# 2. `interval: 5s` ve `for: 0s`: Kaos deneylerinde (Game Day) bir arıza enjekte
+#    edildiğinde alarmın dakikalar sonra değil, <15 saniye içinde `Firing`
+#    durumuna geçmesini sağlar.
+# 3. Semptom Odaklı (SLO) + Neden Odaklı (Bağımlılık/Altyapı) Alarmlar:
+#    - SLO Error Budget Burn Rate (5xx hata oranı > %1)
+#    - HTTP p99 Gecikme SLO ihlali (> 1.0 sn)
+#    - Bağımlılık Çökmesi (`rs_dependency_up == 0`, `for: 0s`)
+#    - Circuit Breaker Açılması (`rs_circuit_breaker_state == 2`)
+#    - Kafka Consumer Lag birikmesi (`rs_kafka_consumer_lag > 50`)
+#    - RabbitMQ Dead-Letter Queue (DLQ) büyümesi (`result="dlq"`)
+#    - Kubernetes Pod Restart fırtınası
+#    - RKE2 Düğüm (Node) Bellek Kullanımı > %85 (OOMKilled erken uyarısı)
+# ==============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: resiliencestream-sre-rules
+  namespace: monitoring
+  labels:
+    release: monitoring
+    app.kubernetes.io/name: resiliencestream
+spec:
+  groups:
+    - name: resiliencestream.slo.rules
+      interval: 5s
+      rules:
+        # 1. SLO ERROR BUDGET BURN RATE ALARMI (5xx > %1)
+        - alert: ResilienceStreamHighErrorRateSLO
+          expr: |
+            (
+              sum(rate(rs_http_requests_total{status=~"5.."}[1m]))
+              /
+              clamp_min(sum(rate(rs_http_requests_total[1m])), 0.001)
+            ) > 0.01
+          for: 15s
+          labels:
+            severity: critical
+            team: sre
+            category: slo
+          annotations:
+            summary: "KRİTİK SLO İHLALİ: HTTP 5xx hata oranı %1 bütçesini aştı!"
+            description: "Son 1 dakikada 5xx hata oranı {{ $value | humanizePercentage }} seviyesine çıktı (SLO hedefi < %1). Hata bütçesi (Error Budget) hızla tükeniyor."
+
+        # 2. HTTP P99 GECİKME (LATENCY) SLO ALARMI (> 1.0s)
+        - alert: ResilienceStreamHighLatencyP99
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (le, endpoint) (rate(rs_http_request_duration_seconds_bucket{endpoint="/api/orders"}[1m]))
+            ) > 1.0
+          for: 15s
+          labels:
+            severity: warning
+            team: sre
+            category: slo
+          annotations:
+            summary: "UYARI: /api/orders p99 gecikmesi 1 saniye SLO sınırını aştı!"
+            description: "Endpoint {{ $labels.endpoint }} için p99 yanıt süresi {{ $value | printf \"%.2f\" }} sn (Deney 02/06 ağ veya disk gecikmesi olabilir)."
+
+        # 3. BAĞIMLILIK ÇÖKME ALARMI (for: 0s -> Kaos deneyinde anında Firing!)
+        - alert: ResilienceStreamDependencyDown
+          expr: min by (dependency) (rs_dependency_up) == 0
+          for: 0s
+          labels:
+            severity: critical
+            team: platform-sre
+            category: dependency
+          annotations:
+            summary: "KRİTİK: {{ $labels.dependency }} bağımlılığına ulaşılamıyor (DOWN)!"
+            description: "Arka plan health probe thread'i {{ $labels.dependency }} servisini erişilemez (rs_dependency_up == 0) olarak raporladı."
+
+        # 4. DEVRE KESİCİ (CIRCUIT BREAKER) AÇIK ALARMI (state == 2)
+        - alert: ResilienceStreamCircuitBreakerOpen
+          expr: max by (dependency) (rs_circuit_breaker_state) == 2
+          for: 0s
+          labels:
+            severity: warning
+            team: app-sre
+            category: resilience
+          annotations:
+            summary: "DEVRE KESİCİ AÇILDI: {{ $labels.dependency }} için Circuit Breaker OPEN (2) modunda!"
+            description: "{{ $labels.dependency }} ardışık hatalar nedeniyle fail-fast moduna geçti. Çağrılar beklemeden reddediliyor veya degraded çalışıyor."
+
+        # 5. KAFKA CONSUMER LAG ALARMI
+        - alert: ResilienceStreamKafkaConsumerLagHigh
+          expr: max(rs_kafka_consumer_lag) > 50
+          for: 15s
+          labels:
+            severity: warning
+            team: streaming-sre
+            category: messaging
+          annotations:
+            summary: "UYARI: Kafka analytics-consumer kuyruk geriliği (lag) büyüyor!"
+            description: "orders.events topic'inde işlenmemiş mesaj sayısı (lag) {{ $value }} oldu. Cassandra yazma gecikmesi veya consumer darboğazı kontrol edilmeli."
+
+        # 6. RABBITMQ DEAD-LETTER QUEUE (DLQ) ARTIŞ ALARMI
+        - alert: ResilienceStreamRabbitMQDLQGrowth
+          expr: increase(rs_rabbitmq_messages_processed_total{result="dlq"}[2m]) > 0
+          for: 0s
+          labels:
+            severity: critical
+            team: messaging-sre
+            category: messaging
+          annotations:
+            summary: "KRİTİK: RabbitMQ payments.dlq (Dead-Letter Queue) içine mesaj düştü!"
+            description: "Son 2 dakikada 3 kez yeniden denenen ödeme mesajları başarısız olarak payments.dlq kuyruğuna taşındı."
+
+        # 7. POD YENİDEN BAŞLATMA (RESTART / CRASHLOOP) ALARMI
+        - alert: ResilienceStreamPodRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace=~"app|data|messaging"}[5m]) > 0
+          for: 0s
+          labels:
+            severity: warning
+            team: infra-sre
+            category: kubernetes
+          annotations:
+            summary: "UYARI: {{ $labels.namespace }}/{{ $labels.pod }} konteyneri yeniden başladı!"
+            description: "Son 5 dakikada pod restart algılandı (PodChaos deneyi, OOMKilled veya liveness probe hatası olabilir)."
+
+        # 8. RKE2 DÜĞÜM (NODE) YÜKSEK BELLEK KULLANIMI ALARMI (> %85)
+        - alert: ResilienceStreamNodeHighMemory
+          expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+          for: 30s
+          labels:
+            severity: warning
+            team: infra-sre
+            category: infrastructure
+          annotations:
+            summary: "UYARI: RKE2 düğümü ({{ $labels.instance }}) RAM kullanımı %85 üzerinde!"
+            description: "Anlık bellek kullanımı %{{ $value | printf \"%.1f\" }}. Cassandra/Kafka veya StressChaos kaynaklı OOMKilled riski!"
