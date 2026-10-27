@@ -1,0 +1,26 @@
+# =====================================================================
+# Deney 07 — DNSChaos: Redis DNS çözümlemesi hata versin
+# Hipotez: Redis (cache) çözümlenemezse order-api cache'i atlayıp doğrudan
+#          Postgres'e gider (graceful degradation); 5xx oranı artmaz,
+#          rs_dependency_up{dependency="redis"} 0'a düşer ve alarm çalar.
+# NOT: DNSChaos için Chaos Mesh kurulumunda dnsServer.create=true gerekir.
+# Game day: chaos/game-days/07-dns-chaos.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: DNSChaos
+metadata:
+  name: dns-chaos-redis
+  namespace: chaos-mesh
+  labels:
+    experiment: "07"
+spec:
+  action: error                  # NXDOMAIN/SERVFAIL döner ("random" = yanlış IP döner, daha sinsi)
+  mode: one
+  duration: "2m"
+  patterns:
+    - "redis-master.messaging.svc.cluster.local"  # Sadece Redis adı: kritik Postgres DNS'i etkilenmez
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
