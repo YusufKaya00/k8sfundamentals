@@ -1,6 +1,6 @@
 # 🚀 Proje 4: OmniStream — Kurumsal DevSecOps, GitOps (ArgoCD), Event-Driven (Kafka + 3 DB), Rancher UI ve Gözlemlenebilirlik (Prometheus & Grafana) Platformu
 
-Bu proje; gerçek dünyadaki kurumsal bir **Platform / DevSecOps Mühendisliği** mimarisinin uçtan uca tüm katmanlarını (**Terraform IaC**, **Ansible Konfigürasyon Yönetimi**, **RKE2 Kubernetes**, **Rancher UI**, **Apache Kafka (KRaft) + PostgreSQL + MongoDB + Redis**, **GitLab CI + Buildah + Trivy + Docker Hub**, **ArgoCD GitOps** ve **Prometheus + Grafana**) tek bir 5 sunuculu kümede birleştiren kapsamlı bir bitirme (capstone) projesidir.
+Bu proje; gerçek dünyadaki kurumsal bir **Platform / DevSecOps Mühendisliği** mimarisinin uçtan uca tüm katmanlarını (**Terraform IaC**, **Ansible Konfigürasyon Yönetimi**, **RKE2 Kubernetes**, **Rancher UI**, **Apache Kafka (KRaft) + PostgreSQL + MongoDB + Redis**, **Self-Hosted GitLab CI + Buildah + Trivy + Docker Hub**, **ArgoCD GitOps** ve **Prometheus + Grafana**) tek bir 5 sunuculu kümede birleştiren kapsamlı bir bitirme (capstone) projesidir.
 
 > [!TIP]
 > **Öğretici Kod Mimarisi:** Bu projedeki **tüm Terraform (`.tf`), Ansible (`.yml`), Helm (`values.yaml`), Uygulama (`app.py`, `Dockerfile`) ve CI/CD (`.gitlab-ci.yml`) dosyalarının içinde satır satır Türkçe mimari yorumlar** yer alır. Her bir parametrenin sektörde *neden* öyle yazıldığını dosyaları okurken doğrudan öğrenebilirsin.
@@ -11,7 +11,7 @@ Bu proje; gerçek dünyadaki kurumsal bir **Platform / DevSecOps Mühendisliği*
 
 Azure for Students kısıtlarına (**`denmarkeast`** bölgesi, toplam **`6 vCPU`** ve maksimum **`3 Public IP`**) %100 uyumlu olacak şekilde, hiçbir sunucuda `OOMKilled` (`137`) veya `Insufficient cpu` yaşanmaması için iş yükleri **Taint & Toleration** ve **NodeSelector** kurallarıyla 5 sunucuya matematiksel olarak dağıtılmıştır:
 
-```
+```text
                          [ İnternet / DevOps Mühendisi ]
                                         │
         ┌───────────────────────────────┴───────────────────────────────┐
@@ -42,17 +42,16 @@ Azure for Students kısıtlarına (**`denmarkeast`** bölgesi, toplam **`6 vCPU`
  └───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 🧠 Neyi Neden Böyle Tasarladık? (Sektör & Mülakat Mantığı)
+### 🧠 Neyi Neden Böyle Tasarladık ve Canlıda Hangi Mühendislik Düzeltmelerini Yaptık?
 
-| Katman | Mimari Karar | Sektörde Neden Böyle Yapılır? |
+| Katman | Mimari Karar / Düzeltme | Sektörde Neden Böyle Yapılır? |
 | :--- | :--- | :--- |
 | **Terraform Yapısı** | Tek bir `main.tf` yerine `versions.tf`, `variables.tf`, `network.tf`, `compute.tf`, `outputs.tf` | Üretim ortamlarında ekip içi çakışmaları (merge conflict) önlemek ve okunabilirliği artırmak için ağ, sunucu ve çıktılar ayrı dosyalara bölünür. |
 | **Ağ Güvenliği (Zero Public IP DBs)** | Veritabanı ve Kafka düğümlerine Public IP verilmez; `NAT Gateway` kullanılır | Veritabanları asla internete doğrudan açılmaz. İmaj indirmek için dışarı çıkarken `NAT Gateway` (SNAT) kullanırlar, dışarıdan içeriye doğrudan bağlantı imkansızdır. |
 | **SSH Bastion (`ProxyCommand`)** | Ansible özel ağdaki worker'lara `vm-master` üzerinden tünel kurarak girer | `hosts.ini.tftpl` içindeki `ProxyCommand="ssh -W %h:%p ..."` sayesinde tek bir komutla dış IP'si olmayan iç ağ sunucuları yönetilir. |
-| **Linux Kernel (`sysctl`)** | `vm.max_map_count=262144` ve `fs.inotify.max_user_watches=524288` | **Apache Kafka** log segmentlerini belleğe `mmap` ile eşler, **Prometheus** ise binlerce zaman serisi dosyasını izler. Bu kernel ayarları yapılmazsa Kafka ve Prometheus yüksek yükte çöker. |
-| **Apache Kafka (KRaft)** | ZooKeeper kapalı (`zookeeper.enabled: false`), **KRaft** açık | Kafka 3.x+ ile birlikte ZooKeeper emekliye ayrılmıştır. KRaft protokolü hem yarı yarıya RAM tasarrufu sağlar hem de mimariyi basitleştirir. |
-| **Bitnami `resourcesPreset: "none"`** | Tüm Helm chart'larında preset kapatılıp özel `requests/limits` verildi | Bitnami chart'ları varsayılan olarak yüksek CPU (`500m-1000m`) ister. 1 vCPU'luk bulut düğümlerinde `Insufficient cpu` hatası almamak için `resourcesPreset: "none"` zorunludur. |
-| **DevSecOps CI/CD** | Rootless `Buildah` -> `Trivy` -> `Docker Hub` -> GitOps `values.yaml` commit | Docker Daemon (`docker.sock`) güvenlik açığı yaratır; Kubernetes içinde **Buildah** ile root yetkisi olmadan imaj derlenir, **Trivy** ile taranır ve **ArgoCD** ile küme güncellenir. |
+| **Master CPU Bütçesi (`2000m`)** | `rancher`, `argocd` ve `monitoring` CPU `requests` değerleri `10m-25m` seviyesine çekildi | RKE2 sistem bileşenleri (`etcd`, `apiserver`, `canal`, `ingress-nginx`) `2000m` CPU'nun `1675m`'ini rezerve eder. Geriye kalan `325m` içine Rancher + ArgoCD + Prometheus + Grafana'nın sığması ve `Pending (Insufficient cpu)` olmaması için CPU request optimizasyonu şarttır. |
+| **Apache Kafka (KRaft & Bitnami Legacy)** | ZooKeeper kapalı (`zookeeper.enabled: false`), imaj deposu `bitnamilegacy/kafka` | Bitnami sürüm etiketli imajları `docker.io/bitnamilegacy/kafka` deposuna taşıdığı için `ImagePullBackOff` yaşanmaması adına `allowInsecureImages: true` ile birlikte legacy repo kullanıldı. |
+| **DevSecOps CI/CD** | Rootless `Buildah` (`vfs` + `chroot`) -> `Trivy` -> `Docker Hub` -> `yq` ile GitOps `values.yaml` commit | Docker Daemon (`docker.sock`) güvenlik açığı yaratır; Kubernetes içinde **Buildah** ile ayrıcalıksız (unprivileged) pod içinde imaj derlenir, **Trivy** ile taranır, **yq** ile `values.yaml` güncellenir ve **ArgoCD** ile küme güncellenir. |
 
 ---
 
@@ -60,7 +59,7 @@ Azure for Students kısıtlarına (**`denmarkeast`** bölgesi, toplam **`6 vCPU`
 
 ```text
 Projects/devops-capstone-project-4/
-├── README.md                                 # Bu kapsamlı mimari ve uygulama rehberi
+├── README.md                                 # Bu kapsamlı mimari, kurulum ve canlı test rehberi
 ├── .gitlab-ci.yml                            # 4 aşamalı DevSecOps hattı (Buildah -> Trivy -> DockerHub -> GitOps)
 ├── terraform/                                # Modüler Infrastructure-as-Code katmanı
 │   ├── versions.tf                           # Terraform ve Azure/Local provider versiyon kilitleri
@@ -99,51 +98,32 @@ Projects/devops-capstone-project-4/
 
 ---
 
-## 🛠️ 3. Adım Adım Kurulum ve Çalıştırma Rehberi
+## 🛠️ 3. Adım Adım Kurulum Rehberi
 
-### ADIM 1: Önceki Lab Ortamını Temizle (Kota Açma)
-Azure for Students hesabındaki `6 vCPU` ve `3 Public IP` kotasını boşaltmak için (eğer açıkta önceki lab varsa) sil:
-```bash
-cd ~/k8sfundamentals/Projects/rancher-ui-rke2-project-3/terraform
-terraform destroy -auto-approve
-```
-
-### ADIM 2: Terraform ile 5 Sunuculu Altyapıyı Kur
+### ADIM 1: Terraform ile 5 Sunuculu Altyapıyı Kur
 ```bash
 cd ~/k8sfundamentals/Projects/devops-capstone-project-4/terraform
 terraform init
 terraform apply -auto-approve
 ```
-> **Ne Yapar?**
-> * `rg-omnistream-capstone-4` kaynak grubunu, VNet/Subnet'i, NAT Gateway'i, NSG'yi ve 5 sunucuyu (`vm-master`, `vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`, `vm-worker-app`) kurar.
-> * `../ansible/hosts.ini` dosyasını gerçek IP adresleriyle otomatik üretir ve ekrana **Rancher, ArgoCD, Grafana ve App URL'lerini** basar!
+* `rg-omnistream-capstone-4` kaynak grubunu, VNet/Subnet'i, NAT Gateway'i, NSG'yi ve 5 sunucuyu (`vm-master`, `vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`, `vm-worker-app`) kurar.
+* `../ansible/hosts.ini` dosyasını gerçek IP adresleriyle otomatik üretir ve ekrana **Rancher, ArgoCD, Grafana ve App URL'lerini** basar!
 
-### ADIM 3: Ansible ile Tüm Platformu Tek Komutla Ayağa Kaldır
+### ADIM 2: Ansible ile Tüm Platformu Tek Komutla Ayağa Kaldır
 ```bash
 cd ~/k8sfundamentals/Projects/devops-capstone-project-4/ansible
 ansible-playbook -i hosts.ini site.yml
 ```
-> **Bu Playbook Sırasıyla Neleri Kurar?**
-> 1. **`01-os-hardening.yml`:** 5 sunucuda Swap'ı kapatır, `overlay`/`br_netfilter` modüllerini yükler, Kafka ve Prometheus için `vm.max_map_count` ve `inotify` kernel ayarlarını yapar.
-> 2. **`02-rke2-master.yml`:** `vm-master` üzerinde RKE2 Server'ı kurar, **Ingress NGINX Admission Webhook**'un hazır olmasını bekler, Helm 3'ü ve **Local-Path Provisioner**'ı (tüm Taint'leri aşan `helper-pod` yamasıyla birlikte) varsayılan `StorageClass` olarak kurar.
-> 3. **`03-rke2-workers.yml`:** Master'dan join token'ı alıp 4 worker sunucusunu kümeye katar.
-> 4. **`04-node-isolation.yml`:** 5 sunucuya mimari şemadaki **Label** ve **Taint** kurallarını basar.
-> 5. **`05-platform-services.yml`:**
->    * `vm-master` üzerine: **Cert-Manager**, **Rancher UI**, **ArgoCD** ve **Prometheus + Grafana (`kube-prometheus-stack`)** kurar.
->    * `data` namespace'ine: **Apache Kafka (KRaft)**, **Redis**, **PostgreSQL** ve **MongoDB** kurar.
->    * `app` namespace'ine: **OmniStream FastAPI** uygulamasını kurar ve **ArgoCD Application** tanımını bağlar!
 
 ---
 
 ## 🖥️ 4. Web Arayüzlerine (UI) Erişim Bilgileri
 
-Kurulum tamamlandığında Terraform çıktısındaki (veya Ansible sonundaki) adreslerden 4 farklı arayüze doğrudan tarayıcıdan girebilirsin:
-
 | Platform | URL | Kullanıcı Adı | Şifre |
 | :--- | :--- | :--- | :--- |
 | **1. Canlı Uygulama (OmniStream UI)** | `http://app.<APP_IP>.nip.io` | *(Herkese Açık)* | *(Yok)* |
-| **2. Rancher Dashboard UI** | `https://rancher.<MASTER_IP>.nip.io` | `admin` | `AdminPassword2026!` |
-| **3. Grafana Observability UI** | `http://grafana.<MASTER_IP>.nip.io` | `admin` | `AdminPassword2026!` |
+| **2. Grafana Özel OmniStream Dashboard** | `http://grafana.<MASTER_IP>.nip.io/d/omnistream-command-center` | `admin` | `AdminPassword2026!` |
+| **3. Rancher Dashboard UI** | `https://rancher.<MASTER_IP>.nip.io` | `admin` | `AdminPassword2026!` |
 | **4. ArgoCD GitOps UI** | `http://argocd.<MASTER_IP>.nip.io` | `admin` | *(Aşağıdaki komutla alınır)* |
 
 **ArgoCD İlk Giriş Şifresini Almak İçin (`vm-master` üzerinde):**
@@ -153,26 +133,23 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 
 ---
 
-## 🔄 5. GitLab Kredisi Kullanmadan Kendi Kümemizde CI/CD + Trivy + Docker Hub + ArgoCD Akışı (Self-Hosted Kubernetes Runner)
+## 🔄 5. Self-Hosted GitLab Runner + Buildah + Trivy + Docker Hub + ArgoCD Akışı
 
-GitLab'ın ücretsiz paylaşımlı (Shared/Instance) runner dakikaları dolduğunda (veya gerçek kurumsal şirket ortamlarında iç ağdaki kümeye erişmek gerektiğinde), **GitLab Runner'ı doğrudan RKE2 kümemizin içine (`vm-worker-app` düğümüne) bir Pod olarak kurarız.** Pipeline tetiklendiğinde kümede geçici bir Pod açar, Buildah ile imajı derler, Trivy ile tarar, Docker Hub'a pushlar, `values.yaml` dosyasını günceller ve işi bitince Pod'u siler!
+GitLab'ın ücretsiz paylaşımlı (Instance) runner dakikalarına bağımlı kalmadan, **GitLab Runner doğrudan RKE2 kümemizin içine (`vm-worker-app` düğümüne) kurulur.**
 
-### ADIM 1: GitLab Arayüzünden Runner Token (`glrt-...`) Al ve Paylaşımlı Runner'ı Kapat
-1. GitLab projenin sol menüsünden **Settings -> CI/CD -> Runners** kısmına git.
-2. Sağ taraftaki **Instance runners** (Paylaşımlı runner'lar) bölümündeki **"Enable instance runners for this project"** şalterini **KAPAT** *(Böylece GitLab kota/kredi hatası verip bekletmez, doğrudan senin RKE2 kümendeki runner'ı kullanır!)*.
-3. Üstteki **New project runner** butonuna tıkla:
-   * **Run untagged jobs** kutucuğunu **İŞARETLE** (Çok önemli!).
-   * **Create runner** butonuna tıkla ve ekranda çıkan **`glrt-...`** ile başlayan Token'ı kopyala.
+### 1. GitLab'da CI/CD Dosya Yolunu Tanımla (Alt Klasör İçin)
+Depoda birden fazla proje bulunduğu ve `.gitlab-ci.yml` dosyası bu projenin klasörü içinde yer aldığı için:
+* **Settings -> CI/CD -> General pipelines -> CI/CD configuration file** kutusuna şunu yazıp kaydet:
+  ```text
+  Projects/devops-capstone-project-4/.gitlab-ci.yml
+  ```
 
-### ADIM 2: GitLab CI/CD Değişkenlerini Tanımla (`Settings -> CI/CD -> Variables`)
-Pipeline'ın Docker Hub'a imaj atabilmesi ve GitOps commit'i yapabilmesi için **Settings -> CI/CD -> Variables** ekranından şu 3 değişkeni ekle (*Mask variable* kutucuğunu işaretleyebilirsin, *Protect variable* kutucuğunu işaretleme):
-* **`DOCKERHUB_USERNAME`**: Docker Hub kullanıcı adın (Örn: `yusufk00`)
+### 2. GitLab CI/CD Değişkenlerini Tanımla (`Settings -> CI/CD -> Variables`)
+* **`DOCKERHUB_USERNAME`**: Docker Hub kullanıcı adın (`yusufk00`)
 * **`DOCKERHUB_TOKEN`**: Docker Hub şifren veya Access Token'ın
-* **`GIT_PUSH_TOKEN`**: GitLab Personal Access Token (`write_repository` yetkili)
+* **`GITLAB_ACCESS_TOKEN`** *(veya `GIT_PUSH_TOKEN`)*: GitLab **Personal Access Token (`glpat-...`)** — oluşturulurken **`write_repository`** ve **`api`** kutucukları mutlaka işaretlenmeli ve Variable eklenirken **"Protect variable" işareti kaldırılmalıdır**.
 
-### ADIM 3: `vm-master` Üzerinden Helm ile GitLab Runner'ı Kümeye Kur
-Ansible zaten `gitlab` Helm reposunu ve `/home/ysf/helm-values/gitlab-runner-values.yaml` dosyasını (`vm-worker-app` üzerine yerleşecek ve `rbac.create=true` olacak şekilde) hazırladı. Tek yapman gereken `vm-master` sunucusunda şu komutu çalıştırmak:
-
+### 3. `vm-master` Üzerinden Helm ile GitLab Runner'ı Kümeye Kur
 ```bash
 helm upgrade --install gitlab-runner gitlab/gitlab-runner \
   --namespace gitlab-runner --create-namespace \
@@ -180,33 +157,81 @@ helm upgrade --install gitlab-runner gitlab/gitlab-runner \
   --set runnerToken="BURAYA_GLRT_TOKEN_YAPISTIR"
 ```
 
-Kontrol et:
+### 4. GitOps Bot Commit'inden Sonra Yerel Bilgisayardan Push Atma Kuralı
+Pipeline'daki 4. aşama (`gitops_promote`) çalıştığında `OmniStream GitOps Bot` senin adına GitLab deposuna yeni bir commit (`chore(gitops) promote omnistream-app image to <SHA> [skip ci]`) atar. Bu yüzden kendi bilgisayarından yeni bir değişiklik pushlamadan önce botun attığı commit'i bilgisayarına çekmelisin:
 ```bash
-kubectl get pods -n gitlab-runner -o wide
+git pull --rebase gitlab main
+git push all main
 ```
-Pod **`Running` (`1/1`)** olduğunda GitLab **Settings -> CI/CD -> Runners** ekranında runner'ının yanında **yeşil daire (Online)** yandığını göreceksin!
 
 ---
 
-### ADIM 4: Pipeline'ı Tetikle ve 4 Aşamalı DevSecOps + ArgoCD Şovunu İzle!
-Şimdi repo kök dizininde [`.gitlab-ci.yml`](file:///home/ysf/k8sfundamentals/Projects/devops-capstone-project-4/.gitlab-ci.yml) dosyasını aktif edip (veya `app/app.py` içinde ufak bir metin değiştirip) GitLab'a pushladığında:
+## 🧪 6. Kurulan Platformu Uçtan Uca Test Etme ve Deney Senaryoları (Grafana, Prometheus, ArgoCD, Rancher, Kafka)
 
-1. **`build_image` (Buildah):** `vm-worker-app` üzerinde geçici bir pod açılır, Docker Daemon olmadan (`vfs` + `chroot` ile) `app/Dockerfile` derlenir.
-2. **`trivy_security_scan` (Aqua Trivy):** Derlenen imaj `HIGH` ve `CRITICAL` zafiyetlere karşı taranır ve JSON güvenlik raporu üretilir.
-3. **`push_to_dockerhub`:** Doğrulanan imaj `docker.io/yusufk00/omnistream-app:<COMMIT_SHA>` ve `:latest` olarak Docker Hub'a yüklenir.
-4. **`gitops_promote`:** Pipeline otomatik olarak `app/omnistream-chart/values.yaml` içindeki `tag:` satırını yeni `<COMMIT_SHA>` ile günceller ve `[skip ci]` mesajıyla Git'e pushlar.
-5. **ArgoCD (`http://argocd.<MASTER_IP>.nip.io`):** Git'teki değişikliği yakalar ve `omnistream-app` podunu sıfır kesintiyle (RollingUpdate) günceller!
+Bu bölümde kurduğumuz her bir bileşeni (Grafana, Prometheus, ArgoCD Self-Heal, Rancher ve Kafka) bizzat test edebileceğin **5 gerçek dünya SRE / DevSecOps senaryosu** yer almaktadır:
+
+### Senaryo 1: Canlı Uygulamadan Kafka Yük Testi Yapıp Grafana'da İzleme 📊
+Sana özel olarak Grafana içine **"🚀 OmniStream — Kafka KRaft, Polyglot DBs & 5-Node RKE2 Command Center"** adında özel bir Dashboard kuruldu!
+
+1. Tarayıcıdan doğrudan şu adresi aç (`admin` / `AdminPassword2026!`):
+   👉 **`http://grafana.<MASTER_IP>.nip.io/d/omnistream-command-center`**
+2. Şimdi kendi bilgisayarının terminalinden aşağıdaki komutla canlı uygulamaya **20 adet ardışık Kafka + 3 Veritabanı işlemi** gönder (veya `http://app.<APP_IP>.nip.io` arayüzündeki **"⚡ PRODUCE KAFKA EVENT"** butonuna art arda bas):
+   ```bash
+   for i in {1..20}; do
+     curl -s -X POST http://app.<APP_IP>.nip.io/api/publish \
+       -H "Content-Type: application/json" \
+       -d "{\"event_type\":\"LOAD_TEST_$i\",\"amount\":$((RANDOM % 500)),\"user_id\":\"sre-tester\"}" > /dev/null
+     echo "Event #$i gonderildi!"
+   done
+   ```
+3. Grafana ekranına (`omnistream-command-center`) bak (her 5 saniyede bir otomatik yenilenir):
+   * **🟢 Polyglot Data & Streaming Health:** `kafka`, `redis`, `postgresql`, `mongodb` kutularının 4'ünün de yemyeşil **`UP ✅`** olduğunu,
+   * **📨 Kafka KRaft Toplam Yayınlanan Event Sayısı:** Sayacın anlık olarak yukarı fırladığını,
+   * **⏱️ Veritabanı & Kafka Gecikmesi (Latency):** Hangi veritabanının kaç milisaniyede yanıt verdiğini,
+   * **⚡ Namespace Bazlı Pod Bellek Kullanımı:** `data`, `app`, `monitoring`, `argocd` ve `cattle-system` katmanlarının ne kadar RAM tükettiğini canlı grafiklerde göreceksin!
 
 ---
 
-### C) Grafana'da Canlı Metrikleri İzleme (`http://grafana.<MASTER_IP>.nip.io`):
-1. Sol menüden **Dashboards** kısmına gir:
-   * **Node Exporter / Nodes:** 5 sunucunun (`vm-master`, `vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`, `vm-worker-app`) anlık CPU, RAM, Disk I/O ve Ağ trafiğini incele.
-   * **Explore (PromQL):** `omnistream_kafka_events_published_total` veya `omnistream_db_health_status` yazarak uygulamanın `/metrics` uç noktasından (`ServiceMonitor` ile) toplanan özel Kafka ve DB metriklerini sorgula!
+### Senaryo 2: Kaos Mühendisliği (Chaos Engineering) — Veritabanını Çökertip Grafana'da "DOWN ❌" Alarmını Görmek 💥
+Bir veritabanı çöktüğünde uygulamanın ve Grafana'nın nasıl tepki verdiğini test edelim:
+
+1. `vm-master` sunucusunda Redis veya MongoDB'yi geçici olarak `0` kopyaya düşür (durdur):
+   ```bash
+   kubectl scale statefulset mongodb -n data --replicas=0
+   ```
+2. Uygulama sayfasını (`http://app.<APP_IP>.nip.io`) yenile veya 15 saniye sonra Grafana Dashboard'una bak:
+   * Uygulama çökmez (**Graceful Degradation**); Kafka, Redis ve PostgreSQL çalışmaya devam ederken sadece MongoDB kartı kırmızıya döner.
+   * Grafana'daki **`omnistream_db_health_status`** panelinde `mongodb` kutusu anında kırmızı **`DOWN ❌ (0)`** olur!
+3. Şimdi MongoDB'yi tekrar ayağa kaldır:
+   ```bash
+   kubectl scale statefulset mongodb -n data --replicas=1
+   ```
+   Saniyeler içinde hem uygulama arayüzünün hem de Grafana'nın tekrar **`4/4 Systems Operational (UP ✅)`** durumuna geçtiğini göreceksin!
 
 ---
 
-## 🧹 6. Temizlik (Maliyet Kontrolü)
+### Senaryo 3: ArgoCD "Self-Heal" (Kendi Kendini İyileştirme / Drift Önleme) Testi 🛡️
+Bir kişinin kümeye `kubectl` ile girip yetkisiz bir değişiklik (Configuration Drift) yaptığında ArgoCD'nin bunu nasıl otomatik geri aldığını test et:
+
+1. ArgoCD arayüzünü (`http://argocd.<MASTER_IP>.nip.io`) aç ve `omnistream-app` kartına tıkla.
+2. `vm-master` terminalinden uygulamayı elle **3 kopyaya (replica)** çıkarmayı dene:
+   ```bash
+   kubectl scale deployment omnistream-app -n app --replicas=3
+   ```
+3. ArgoCD ekranını izle:
+   * ArgoCD Git deposundaki `values.yaml` dosyasında `replicaCount: 1` yazdığını bildiği için, senin elle yaptığın değişikliği **saniyeler içinde tespit eder (`OutOfSync`)** ve `selfHeal: true` politikası sayesinde fazla açılan 2 pod'u otomatik silip kümeyi tekrar Git'teki gerçek duruma (`1` pod) döndürür!
+
+---
+
+### Senaryo 4: Rancher UI Üzerinden 5-Node Taint/Toleration ve Canlı Pod Loglarını İnceleme 🐄
+1. Tarayıcıdan `https://rancher.<MASTER_IP>.nip.io` adresine gir (`admin` / `AdminPassword2026!`).
+2. **`local` kümesine -> Cluster -> Nodes** menüsüne tıkla:
+   * 5 sunucunun (`vm-master`, `vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`, `vm-worker-app`) her birinin üzerindeki **Taint** ve **Label** etiketlerini görsel olarak incele.
+3. **Workloads -> Pods** menüsüne girip `omnistream-app` podunun sağındaki **`⋮` -> View Logs** veya **Execute Shell** butonuna tıklayarak tarayıcı içinden doğrudan pod'un içine terminal aç!
+
+---
+
+## 🧹 7. Temizlik (Maliyet Kontrolü)
 
 Lab çalışman bittiğinde tüm Azure kaynaklarını tek komutla silmek için:
 ```bash
