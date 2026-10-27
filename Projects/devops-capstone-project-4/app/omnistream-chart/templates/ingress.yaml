@@ -16,23 +16,7 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingress.className | default "nginx" }}
   rules:
-    {{- if .Values.ingress.hosts }}
-    {{- range .Values.ingress.hosts }}
-    - host: {{ .host | quote }}
-      http:
-        paths:
-          {{- range .paths }}
-          - path: {{ .path | default "/" }}
-            pathType: {{ .pathType | default "Prefix" }}
-            backend:
-              service:
-                name: {{ $.Chart.Name }}
-                port:
-                  number: {{ $.Values.service.port | default 80 }}
-          {{- end }}
-    {{- end }}
-    {{- else }}
-    - host: {{ .Values.ingress.host | default "app.APP_IP.nip.io" | quote }}
+    - host: {{ .Values.ingress.host | default "app.9.205.30.202.nip.io" | quote }}
       http:
         paths:
           - path: /
@@ -42,5 +26,4 @@ spec:
                 name: {{ .Chart.Name }}
                 port:
                   number: {{ .Values.service.port | default 80 }}
-    {{- end }}
 {{- end }}
