@@ -1,0 +1,191 @@
+# ==============================================================================
+# GÖZLEMLENEBİLİRLİK YIĞINI (prometheus-community/kube-prometheus-stack)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu dosya; Prometheus Operator, Prometheus Zaman Serisi Veritabanı (TSDB),
+# Grafana Görselleştirme Paneli, Alertmanager, Kube-State-Metrics ve Node Exporter
+# bileşenlerini tek bir entegre paket olarak yapılandırır.
+#
+# NEDEN ÖZEL İNCE AYAR (TUNING) YAPILDI?
+# Standart kube-prometheus-stack kurulumu yüksek bellek tüketir ve RKE2 mimarisinde
+# dışarıya kapalı olan iç kontrol bileşenlerini (kube-etcd, kube-controller-manager,
+# kube-scheduler) izlemeye çalışırken sahte "TargetDown" alarmları üretir.
+# Ayrıca veritabanı düğümlerimizde "dedicated=*:NoSchedule" Taint'leri bulunduğu için
+# Node Exporter'a özel tolerasyon verilmezse o sunucuların CPU/RAM/Disk metrikleri
+# toplanamaz! Tüm bu üretim darboğazları aşağıda satır satır çözülmüştür.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. RKE2 İÇ BİLEŞENLERİNDEKİ GEREKSİZ SCRAPE HEDEFLERİNİ KAPATMA
+# ------------------------------------------------------------------------------
+# RKE2 güvenlik sertleştirmesi gereği etcd, controller-manager ve scheduler metriklerini
+# varsayılan olarak 127.0.0.1 üzerinde veya özel sertifikalarla korur. Küme kaynaklarını
+# yormamak ve sahte alarmları önlemek için bu 3 bileşeni devre dışı bırakıyoruz.
+kubeEtcd:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+# ------------------------------------------------------------------------------
+# 2. PROMETHEUS OPERATOR YAPILANDIRMASI (VM-MASTER SABİTLEME)
+# ------------------------------------------------------------------------------
+# ServiceMonitor ve PodMonitor CRD'lerini (Özel Kaynak Tanımlarını) dinleyip
+# Prometheus konfigürasyonunu dinamik olarak üreten operatördür.
+prometheusOperator:
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 384Mi
+
+# ------------------------------------------------------------------------------
+# 3. PROMETHEUS SUNUCUSU (TSDB — ZAMAN SERİSİ VERİTABANI)
+# ------------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    resourcesPreset: "none"
+    # Prometheus sunucusunu 8 GB RAM'li vm-master düğümüne sabitliyoruz:
+    nodeSelector:
+      kubernetes.io/hostname: "vm-master"
+    tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+    # ÇOK KRİTİK PRODUCTION AYARI (ServiceMonitor Keşfi):
+    # Varsayılan olarak (true olduğunda) Prometheus yalnızca üzerinde "release: monitoring"
+    # etiketi bulunan ServiceMonitor nesnelerini tarar! Bunu "false" yaparak
+    # Prometheus'un "app" ve "data" dahil TÜM namespace'lerdeki (ör. omnistream-app
+    # tarafından sunulan /metrics uç noktasındaki) ServiceMonitor ve PodMonitor'ları
+    # etiket kısıtlaması olmaksızın otomatik keşfetmesini sağlıyoruz!
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+    # Saklama süresi (Retention): Disk ve bellek şişmesini önlemek için metrikleri
+    # 2 gün boyunca saklıyoruz.
+    retention: 2d
+
+    # Kaynak Planlaması: 8 GB RAM'li vm-master üzerinde OOMKilled yaşanmaması için
+    # başlangıç isteği 256Mi, tavan sınırı 1024Mi (1 GB) olarak sınırlandırılmıştır.
+    resources:
+      requests:
+        cpu: 150m
+        memory: 256Mi
+      limits:
+        cpu: 600m
+        memory: 1024Mi
+
+# ------------------------------------------------------------------------------
+# 4. GRAFANA GÖRSELLEŞTİRME PANELİ VE INGRESS AYARLARI
+# ------------------------------------------------------------------------------
+# Toplanan altyapı (Node/Pod) ve uygulama (FastAPI/Kafka) metriklerini gerçek zamanlı
+# grafiklere dönüştüren arayüzdür.
+grafana:
+  enabled: true
+  resourcesPreset: "none"
+  # Giriş bilgileri: Kullanıcı "admin", Şifre "AdminPassword2026!"
+  adminPassword: "AdminPassword2026!"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+  ingress:
+    # Grafana arayüzüne "http://grafana.<MASTER_IP>.nip.io" üzerinden doğrudan erişim:
+    enabled: true
+    ingressClassName: nginx
+    # MASTER_IP yer tutucusu Ansible (05-platform-services.yml) tarafından dinamik
+    # olarak vm-master Public IP adresiyle değiştirilir.
+    hosts:
+      - grafana.MASTER_IP.nip.io
+    path: /
+    pathType: Prefix
+
+# ------------------------------------------------------------------------------
+# 5. ALERTMANAGER (ALARM YÖNLENDİRME MOTORU)
+# ------------------------------------------------------------------------------
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resourcesPreset: "none"
+    nodeSelector:
+      kubernetes.io/hostname: "vm-master"
+    tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 150m
+        memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 6. KUBE-STATE-METRICS (KUBERNETES OBJE DURUM METRİKLERİ)
+# ------------------------------------------------------------------------------
+# Kubernetes API'sini dinleyerek Deployment, Pod, PVC, Node durumları (Ready, Pending,
+# CrashLoopBackOff vb.) hakkında metrik üreten bileşendir.
+kube-state-metrics:
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 7. PROMETHEUS NODE EXPORTER (DONANIM METRİKLERİ — 5 DÜĞÜMÜN TAMAMINDA)
+# ------------------------------------------------------------------------------
+# ÇOK KRİTİK MİMARİ DETAY:
+# Node Exporter bir DaemonSet olarak çalışır ve kümedeki HER fiziksel/sanal sunucunun
+# (vm-master, vm-worker-stream, vm-worker-sql, vm-worker-nosql, vm-worker-app)
+# Linux çekirdeğinden CPU, RAM, Disk I/O ve Ağ istatistiklerini toplar.
+# Düğümlerimizde farklı Taint'ler (CriticalAddonsOnly, dedicated=stream, dedicated=db-sql,
+# dedicated=db-nosql) bulunduğu için "operator: Exists" joker tolerasyonu veriyoruz.
+# Böylece Node Exporter kümedeki tüm Taint'leri aşarak 5 sunucunun 5'ine de yerleşir!
+prometheus-node-exporter:
+  resourcesPreset: "none"
+  tolerations:
+    - operator: "Exists"
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+nodeExporter:
+  enabled: true

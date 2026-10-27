@@ -1,0 +1,124 @@
+# ==============================================================================
+# APACHE KAFKA (bitnami/kafka) — KRAFT MODU (ZOOKEEPER-LESS) HELM DEĞERLERİ
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Apache Kafka, OmniStream platformumuzun Olay Güdümlü (Event-Driven) omurgasıdır.
+# FastAPI uygulaması tarafından üretilen (Producer) olayları yüksek hızda kuyruğa alır
+# ve arka plandaki tüketici (Consumer) iş parçacıklarına asenkron olarak iletir.
+#
+# NEDEN KRAFT MODU (ZOOKEEPER OLMADAN) KULLANIYORUZ?
+# Geleneksel Kafka mimarisi, küme üstverilerini (metadata) ve lider seçimini yönetmek
+# için yanında ayrı bir Apache ZooKeeper kümesi çalıştırmayı zorunlu kılardı.
+# ZooKeeper tek başına en az 512 MB - 1 GB ekstra RAM ve CPU tüketir.
+# Kafka 3.3+ ile üretimde standart haline gelen KRaft (Kafka Raft Metadata) modu
+# sayesinde ZooKeeper bağımlılığını tamamen kaldırıyor, tek bir birleşik süreçte
+# (Controller + Broker) çok daha düşük bellek ayak izi ve çok daha hızlı başlangıç
+# süresi elde ediyoruz!
+#
+# HEDEF DÜĞÜM: vm-worker-stream (Standard_B1ms: 1 vCPU / 2 GB RAM)
+# Bu düğümde yalnızca Kafka ve Redis çalışır. Diğer iş yükleri Taint ile engellenmiştir.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. KRAFT PROTOKOLÜ VE ZOOKEEPER DEVRE DIŞI BIRAKMA
+# ------------------------------------------------------------------------------
+kraft:
+  # Raft tabanlı dahili konsensüs protokolünü etkinleştirir:
+  enabled: true
+
+# Eski ZooKeeper alt chart'ının kesinlikle kurulmamasını garanti altına alır:
+zookeeper:
+  enabled: false
+
+# ------------------------------------------------------------------------------
+# 2. DİNLEYİCİ (LISTENER) VE GÜVENLİK PROTOKOLÜ YAPILANDIRMASI
+# ------------------------------------------------------------------------------
+# Küme içi (ClusterIP: kafka.data.svc.cluster.local:9092) mikroservis iletişiminde
+# SASL veya TLS el sıkışmasının (handshake) getireceği CPU yükünü ve sertifika
+# karmaşasını önlemek için PLAINTEXT protokolünü kullanıyoruz. Ağ güvenliği zaten
+# Azure NSG ve RKE2 Canal CNI katmanında sağlanmaktadır.
+listeners:
+  client:
+    protocol: PLAINTEXT
+  controller:
+    protocol: PLAINTEXT
+  interbroker:
+    protocol: PLAINTEXT
+  external:
+    protocol: PLAINTEXT
+
+# ------------------------------------------------------------------------------
+# 3. BİRLEŞİK CONTROLLER + BROKER MİMARİSİ (SINGLE-NODE KRAFT)
+# ------------------------------------------------------------------------------
+# Bitnami Kafka chart'ında "controller" pod'ları varsayılan olarak hem Controller
+# hem de Broker (process.roles=controller,broker) rolünü üstlenir.
+# Bu yüzden controller.replicaCount=1 ve ayrı broker.replicaCount=0 yapılarak
+# tek bir StatefulSet pod'u (kafka-controller-0) ile tam işlevsel Kafka elde edilir.
+controller:
+  replicaCount: 1
+  # Sadece Controller değil, aynı zamanda veri taşıyan Broker olarak çalışmasını sağlar:
+  controllerOnly: false
+
+  # Bitnami'nin yüksek varsayılan kaynak şablonlarını (small/medium/large) kapatır:
+  resourcesPreset: "none"
+
+  # JVM (Java Virtual Machine) Yığın Belleği (Heap) Sınırlandırması:
+  # ÇOK KRİTİK: Java tabanlı Kafka, varsayılan olarak 1 GB+ Heap ayırmaya çalışır.
+  # 2 GB RAM'li vm-worker-stream düğümünde işletim sistemi, kubelet, Canal CNI ve
+  # Redis ile birlikte sorunsuz çalışması için JVM Heap belleğini başlangıçta 256 MB
+  # (-Xms256m) ve maksimum 400 MB (-Xmx400m) olarak sınırlandırıyoruz.
+  # Kalan bellek (450Mi-900Mi arası) Linux Page Cache ve JVM Off-Heap için kullanılır.
+  heapOpts: "-Xmx400m -Xms256m"
+
+  # Kubernetes Kaynak İstek ve Sınırları (Zero OOM / Zero CPU Starvation):
+  resources:
+    requests:
+      cpu: 100m
+      memory: 450Mi
+    limits:
+      cpu: 600m
+      memory: 900Mi
+
+  # Düğüm Sabitleme (Node Selector):
+  # Kafka pod'unun yalnızca "tier=stream" etiketine sahip vm-worker-stream
+  # sunucusunda çalışmasını zorunlu kılar.
+  nodeSelector:
+    tier: stream
+
+  # Taint Tolerasyonu (İzolasyon Anahtarı):
+  # vm-worker-stream sunucusundaki "dedicated=stream:NoSchedule" engelini aşabilmesi
+  # için Kafka'ya özel geçiş anahtarı (toleration) tanımlıyoruz.
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: stream
+      effect: NoSchedule
+
+  # Kalıcı Depolama (Persistence — Local-Path CSI):
+  # Mesaj kuyruğundaki (topic partitions) olay loglarının pod yeniden başlasa bile
+  # kaybolmaması için 4 GB büyüklüğünde PersistentVolumeClaim (PVC) bağlanır.
+  persistence:
+    enabled: true
+    size: 4Gi
+
+# ------------------------------------------------------------------------------
+# 4. HARİCİ BROKER HAVUZUNU KAPATMA
+# ------------------------------------------------------------------------------
+# Yukarıdaki controller-0 pod'u hem controller hem broker olduğu için ekstra broker
+# pod'larına ihtiyaç yoktur (2 GB RAM sınırını korumak için 0 yapılır).
+broker:
+  replicaCount: 0
+  resourcesPreset: "none"
+
+# ------------------------------------------------------------------------------
+# 5. OTOMATİK TOPIC OLUŞTURMA VE TEK KOPYA REplikasyon AYARLARI
+# ------------------------------------------------------------------------------
+# Tek düğümlü (1 broker) mimaride dahili __consumer_offsets topic'inin replikasyon
+# faktörü 1 olmalıdır (varsayılan 3 kalırsa Consumer grup koordinatörü başlayamaz!).
+extraConfig: |
+  auto.create.topics.enable=true
+  offsets.topic.replication.factor=1
+  transaction.state.log.replication.factor=1
+  transaction.state.log.min.isr=1
+  default.replication.factor=1
+  min.insync.replicas=1
