@@ -1,0 +1,50 @@
+# ==============================================================================
+# ARGOCD GITOPS APPLICATION MANİFESTOSU (gitops/argocd-application.yaml)
+# ==============================================================================
+# GitOps Mimarisinin Kalbi:
+# Geleneksel (Push-based) CI/CD boru hatlarında GitLab Runner içinden doğrudan
+# `kubectl apply` veya `helm upgrade` çalıştırılır; bu da küme admin şifresinin
+# (kubeconfig) dışarıya verilmesi gibi ciddi bir güvenlik riski doğurur.
+#
+# ArgoCD (Pull-based GitOps) ise kümenin İÇİNDE (`argocd` namespace'inde) yaşar:
+# 1. Tek Doğruluk Kaynağı (Single Source of Truth) olarak Git deposundaki
+#    `Projects/devops-capstone-project-4/app/omnistream-chart` dizinini sürekli izler.
+# 2. GitLab CI pipeline'ı (`gitops-promote` aşaması) yeni imaj etiketini (`image.tag`)
+#    `values.yaml` dosyasına işleyip Git'e pushladığı anda ArgoCD değişikliği
+#    (OutOfSync) algılar ve RKE2 kümesindeki Deployment'ı otomatik günceller!
+# 3. `selfHeal: true` (Kendi Kendini İyileştirme): Bir sistem yöneticisi kümede
+#    elle (`kubectl edit` veya `kubectl scale`) yetkisiz bir değişiklik yaparsa
+#    (Configuration Drift), ArgoCD bu sapmayı saniyeler içinde tespit eder ve
+#    kümeyi tekrar Git deposundaki bildirimsel (declarative) duruma geri döndürür.
+# 4. `prune: true` (Yetim Kaynak Temizliği): Git deposundan silinen bir YAML/Helm
+#    objesi kümeden de otomatik olarak silinir.
+# ==============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: omnistream-app
+  namespace: argocd
+  finalizers:
+    # Uygulama ArgoCD'den silindiğinde oluşturduğu alt kaynakların da temizlenmesini sağlar
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # 1. KAYNAK (SOURCE): ArgoCD'nin izlediği Git Deposu ve Helm Chart Dizini
+  source:
+    repoURL: "https://github.com/YusufKaya00/k8sfundamentals.git"
+    targetRevision: main
+    path: Projects/devops-capstone-project-4/app/omnistream-chart
+
+  # 2. HEDEF (DESTINATION): Uygulamanın kurulacağı Kubernetes Kümesi ve Namespace
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: app
+
+  # 3. OTOMATİK SENKRONİZASYON VE SAPMA ÖNLEME (DRIFT RECONCILIATION) POLİTİKASI
+  syncPolicy:
+    automated:
+      prune: true      # Git'ten kaldırılan kaynakları kümeden otomatik sil
+      selfHeal: true   # Kümede yapılan manuel müdahaleleri (drift) otomatik ez ve Git durumuna döndür
+    syncOptions:
+      - CreateNamespace=true  # Hedef `app` namespace'i yoksa otomatik oluştur
