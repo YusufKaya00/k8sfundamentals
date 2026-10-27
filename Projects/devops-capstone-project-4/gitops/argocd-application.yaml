@@ -35,6 +35,14 @@ spec:
     repoURL: "https://github.com/YusufKaya00/k8sfundamentals.git"
     targetRevision: main
     path: Projects/devops-capstone-project-4/app/omnistream-chart
+    helm:
+      # ÇOK ÖNEMLİ: Git'teki values.yaml içinde genel "app.APP_IP.nip.io" yer tutucusu
+      # bulunduğundan, ArgoCD'nin selfHeal yaparken canlı Azure Public IP adresimizi
+      # ezmemesi için dinamik Ingress Host parametresini burada açıkça belirtiyoruz
+      # (Ansible 05-platform-services.yml kurulum sırasında APP_IP'yi gerçek IP ile değiştirir):
+      parameters:
+        - name: ingress.host
+          value: "app.APP_IP.nip.io"
 
   # 2. HEDEF (DESTINATION): Uygulamanın kurulacağı Kubernetes Kümesi ve Namespace
   destination:
