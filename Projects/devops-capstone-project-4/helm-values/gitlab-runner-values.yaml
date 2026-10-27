@@ -15,14 +15,16 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. GITLAB SUNUCUSU VE KAYIT ANAHTARI (REGISTRATION TOKEN)
+# 1. GITLAB SUNUCUSU VE YENİ NESİL RUNNER TOKEN (glrt-...)
 # ------------------------------------------------------------------------------
 # GitLab.com veya kendi kurumsal GitLab sunucunuzun adresi:
 gitlabUrl: https://gitlab.com/
 
-# GitLab -> Settings -> CI/CD -> Runners ekranından alınan Runner Token:
-# (Kurulum sırasında --set runnerToken="glrt-..." parametresiyle de geçilebilir)
-runnerRegistrationToken: "REPLACE_WITH_GITLAB_RUNNER_TOKEN"
+# ÖNEMLİ (Yeni GitLab Runner Mimarisi):
+# GitLab artık eski "runnerRegistrationToken" yerine "New project runner" ekranından
+# üretilen "glrt-..." ile başlayan "runnerToken" (Authentication Token) kullanır.
+# Kurulum sırasında --set runnerToken="glrt-..." ile dışarıdan geçirilir:
+runnerToken: "REPLACE_WITH_GLRT_TOKEN"
 
 # ------------------------------------------------------------------------------
 # 2. EŞZAMANLI İŞ (CONCURRENCY) VE KONTROL ARALIĞI
@@ -30,7 +32,7 @@ runnerRegistrationToken: "REPLACE_WITH_GITLAB_RUNNER_TOKEN"
 # Standard_B1ms (1 vCPU / 2 GB RAM) boyutundaki vm-worker-app düğümünü aşırı
 # yüklememek için aynı anda en fazla 2 CI/CD işinin (Job) çalışmasına izin veriyoruz.
 concurrent: 2
-checkInterval: 10
+checkInterval: 5
 
 # ------------------------------------------------------------------------------
 # 3. RBAC (ROL TABANLI ERİŞİM KONTROLÜ) YETKİLERİ
@@ -44,8 +46,6 @@ rbac:
 # ------------------------------------------------------------------------------
 # 4. RUNNER YÖNETİCİ POD'U KAYNAK VE DÜĞÜM PLANLAMASI
 # ------------------------------------------------------------------------------
-resourcesPreset: "none"
-
 # Runner ana pod'unun "vm-worker-app" sunucusunda çalışmasını sağlar:
 nodeSelector:
   tier: app
@@ -63,19 +63,21 @@ resources:
 # ------------------------------------------------------------------------------
 runners:
   # CI/CD işlerinin oluşturulacağı özel Kubernetes ayarları (config.toml şablonu):
-  # Burada oluşturulan her bir geçici derleme/Trivy pod'unun da "tier=app" düğümüne
-  # düşmesini ve düşük kaynak limitleriyle çalışmasını garanti altına alıyoruz.
+  # - RKE2 containerd üzerinde Buildah'ın (--storage-driver=vfs --isolation=chroot)
+  #   veya Kaniko/Trivy'nin sorunsuz çalışması için privileged = true ve
+  #   tier = "app" node_selector tanımlanmıştır.
   config: |
     [[runners]]
       [runners.kubernetes]
         namespace = "{{.Release.Namespace}}"
         image = "ubuntu:24.04"
-        privileged = false
+        privileged = true
         cpu_request = "100m"
-        cpu_limit = "500m"
+        cpu_limit = "600m"
         memory_request = "128Mi"
-        memory_limit = "512Mi"
+        memory_limit = "768Mi"
         helper_cpu_request = "25m"
         helper_memory_request = "64Mi"
         [runners.kubernetes.node_selector]
           tier = "app"
+
