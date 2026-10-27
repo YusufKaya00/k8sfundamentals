@@ -1,0 +1,108 @@
+# =====================================================================
+# Deney 09 — "Black Friday" Game Day (Chaos Mesh Workflow)
+# k6 yükü (chaos/load/k6-black-friday.js) çalışırken sırayla/paralel
+# arızalar enjekte edilir. Hipotez: yük altında bile 5xx oranı < %1 ve
+# tüm bileşenler workflow bittikten sonra 5 dk içinde steady state'e döner.
+# Akış:  [Cassandra gecikme ∥ payment-worker stres] → bekle → order-api pod-kill → bekle → RabbitMQ partition
+# Game day: chaos/game-days/09-black-friday-workflow.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: black-friday
+  namespace: chaos-mesh
+  labels:
+    experiment: "09"
+spec:
+  entry: entry
+  templates:
+    - name: entry
+      templateType: Serial
+      deadline: "20m"            # Workflow'un toplam emniyet sınırı
+      children:
+        - phase-1-parallel
+        - pause-1
+        - kill-order-api
+        - pause-2
+        - partition-rabbitmq
+
+    # --- Faz 1: iki arıza aynı anda (gerçek olaylar nadiren tektir) ---
+    - name: phase-1-parallel
+      templateType: Parallel
+      deadline: "3m"
+      children:
+        - latency-cassandra
+        - stress-payment
+
+    - name: latency-cassandra
+      templateType: NetworkChaos
+      deadline: "3m"
+      networkChaos:
+        action: delay
+        mode: one
+        selector:
+          namespaces: [data]
+          labelSelectors:
+            app.kubernetes.io/name: cassandra
+        delay:
+          latency: "300ms"
+          jitter: "50ms"
+        direction: from
+        target:
+          mode: all
+          selector:
+            namespaces: [app]
+
+    - name: stress-payment
+      templateType: StressChaos
+      deadline: "3m"
+      stressChaos:
+        mode: one
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: payment-worker
+        stressors:
+          cpu:
+            workers: 1
+            load: 70
+
+    - name: pause-1
+      templateType: Suspend      # Sistemin toparlanmasını gözlemlemek için nefes payı
+      deadline: "2m"
+
+    # --- Faz 2: yük altında pod kaybı ---
+    - name: kill-order-api
+      templateType: PodChaos
+      deadline: "60s"
+      podChaos:
+        action: pod-kill
+        mode: one
+        gracePeriod: 0
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+
+    - name: pause-2
+      templateType: Suspend
+      deadline: "2m"
+
+    # --- Faz 3: mesajlaşma bölünmesi ---
+    - name: partition-rabbitmq
+      templateType: NetworkChaos
+      deadline: "2m"
+      networkChaos:
+        action: partition
+        mode: one
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+        direction: both
+        target:
+          mode: all
+          selector:
+            namespaces: [messaging]
+            labelSelectors:
+              app.kubernetes.io/name: rabbitmq
