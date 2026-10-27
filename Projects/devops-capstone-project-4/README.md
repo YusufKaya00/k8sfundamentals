@@ -153,42 +153,56 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 
 ---
 
-## 🔄 5. Kendi İmajını Derleme, Docker Hub'a Pushlama ve CI/CD + ArgoCD Akışını Deneme
+## 🔄 5. GitLab Kredisi Kullanmadan Kendi Kümemizde CI/CD + Trivy + Docker Hub + ArgoCD Akışı (Self-Hosted Kubernetes Runner)
 
-### A) Kendi Bilgisayarından Yeni İmaj Derleyip Docker Hub'a Pushlama:
-Uygulama kodunda (`app/app.py`) istediğin bir yazıyı değiştirip kendi Docker Hub hesabına (`yusufk00/omnistream-app:v1`) göndermek için:
+GitLab'ın ücretsiz paylaşımlı (Shared/Instance) runner dakikaları dolduğunda (veya gerçek kurumsal şirket ortamlarında iç ağdaki kümeye erişmek gerektiğinde), **GitLab Runner'ı doğrudan RKE2 kümemizin içine (`vm-worker-app` düğümüne) bir Pod olarak kurarız.** Pipeline tetiklendiğinde kümede geçici bir Pod açar, Buildah ile imajı derler, Trivy ile tarar, Docker Hub'a pushlar, `values.yaml` dosyasını günceller ve işi bitince Pod'u siler!
+
+### ADIM 1: GitLab Arayüzünden Runner Token (`glrt-...`) Al ve Paylaşımlı Runner'ı Kapat
+1. GitLab projenin sol menüsünden **Settings -> CI/CD -> Runners** kısmına git.
+2. Sağ taraftaki **Instance runners** (Paylaşımlı runner'lar) bölümündeki **"Enable instance runners for this project"** şalterini **KAPAT** *(Böylece GitLab kota/kredi hatası verip bekletmez, doğrudan senin RKE2 kümendeki runner'ı kullanır!)*.
+3. Üstteki **New project runner** butonuna tıkla:
+   * **Run untagged jobs** kutucuğunu **İŞARETLE** (Çok önemli!).
+   * **Create runner** butonuna tıkla ve ekranda çıkan **`glrt-...`** ile başlayan Token'ı kopyala.
+
+### ADIM 2: GitLab CI/CD Değişkenlerini Tanımla (`Settings -> CI/CD -> Variables`)
+Pipeline'ın Docker Hub'a imaj atabilmesi ve GitOps commit'i yapabilmesi için **Settings -> CI/CD -> Variables** ekranından şu 3 değişkeni ekle (*Mask variable* kutucuğunu işaretleyebilirsin, *Protect variable* kutucuğunu işaretleme):
+* **`DOCKERHUB_USERNAME`**: Docker Hub kullanıcı adın (Örn: `yusufk00`)
+* **`DOCKERHUB_TOKEN`**: Docker Hub şifren veya Access Token'ın
+* **`GIT_PUSH_TOKEN`**: GitLab Personal Access Token (`write_repository` yetkili)
+
+### ADIM 3: `vm-master` Üzerinden Helm ile GitLab Runner'ı Kümeye Kur
+Ansible zaten `gitlab` Helm reposunu ve `/home/ysf/helm-values/gitlab-runner-values.yaml` dosyasını (`vm-worker-app` üzerine yerleşecek ve `rbac.create=true` olacak şekilde) hazırladı. Tek yapman gereken `vm-master` sunucusunda şu komutu çalıştırmak:
+
 ```bash
-cd ~/k8sfundamentals/Projects/devops-capstone-project-4/app
-
-# 1. İmajı derle ve Docker Hub kullanıcı adınla etiketle
-docker build -t yusufk00/omnistream-app:v1 .
-
-# 2. Trivy ile yerel güvenlik taraması yap (İsteğe bağlı)
-trivy image --severity HIGH,CRITICAL yusufk00/omnistream-app:v1
-
-# 3. Docker Hub'a gönder
-docker push yusufk00/omnistream-app:v1
+helm upgrade --install gitlab-runner gitlab/gitlab-runner \
+  --namespace gitlab-runner --create-namespace \
+  -f /home/ysf/helm-values/gitlab-runner-values.yaml \
+  --set runnerToken="BURAYA_GLRT_TOKEN_YAPISTIR"
 ```
 
-### B) GitOps ile ArgoCD'nin Yeni İmajı Otomatik Çekmesini İzleme:
-1. `Projects/devops-capstone-project-4/app/omnistream-chart/values.yaml` dosyasını aç:
-   ```yaml
-   image:
-     repository: yusufk00/omnistream-app
-     tag: "v1"
-   ```
-2. Değişikliği GitHub/GitLab'a pushla:
-   ```bash
-   git add Projects/devops-capstone-project-4/app/omnistream-chart/values.yaml
-   git commit -m "feat(app): promote omnistream-app:v1 to production via GitOps"
-   git push all main
-   ```
-3. **ArgoCD Arayüzüne (`http://argocd.<MASTER_IP>.nip.io`) git:** `omnistream-app` kartında **Refresh / Sync** butonuna bas (veya otomatik algılamasını bekle). ArgoCD'nin eski podu kapatıp yeni `yusufk00/omnistream-app:v1` podunu canlıya aldığını ve `http://app.<APP_IP>.nip.io` ekranında **⚡ Kafka Event Gönder (Produce)** butonuyla Kafka + PostgreSQL + MongoDB + Redis dörtlüsünün canlı çalıştığını gör!
+Kontrol et:
+```bash
+kubectl get pods -n gitlab-runner -o wide
+```
+Pod **`Running` (`1/1`)** olduğunda GitLab **Settings -> CI/CD -> Runners** ekranında runner'ının yanında **yeşil daire (Online)** yandığını göreceksin!
+
+---
+
+### ADIM 4: Pipeline'ı Tetikle ve 4 Aşamalı DevSecOps + ArgoCD Şovunu İzle!
+Şimdi repo kök dizininde [`.gitlab-ci.yml`](file:///home/ysf/k8sfundamentals/Projects/devops-capstone-project-4/.gitlab-ci.yml) dosyasını aktif edip (veya `app/app.py` içinde ufak bir metin değiştirip) GitLab'a pushladığında:
+
+1. **`build_image` (Buildah):** `vm-worker-app` üzerinde geçici bir pod açılır, Docker Daemon olmadan (`vfs` + `chroot` ile) `app/Dockerfile` derlenir.
+2. **`trivy_security_scan` (Aqua Trivy):** Derlenen imaj `HIGH` ve `CRITICAL` zafiyetlere karşı taranır ve JSON güvenlik raporu üretilir.
+3. **`push_to_dockerhub`:** Doğrulanan imaj `docker.io/yusufk00/omnistream-app:<COMMIT_SHA>` ve `:latest` olarak Docker Hub'a yüklenir.
+4. **`gitops_promote`:** Pipeline otomatik olarak `app/omnistream-chart/values.yaml` içindeki `tag:` satırını yeni `<COMMIT_SHA>` ile günceller ve `[skip ci]` mesajıyla Git'e pushlar.
+5. **ArgoCD (`http://argocd.<MASTER_IP>.nip.io`):** Git'teki değişikliği yakalar ve `omnistream-app` podunu sıfır kesintiyle (RollingUpdate) günceller!
+
+---
 
 ### C) Grafana'da Canlı Metrikleri İzleme (`http://grafana.<MASTER_IP>.nip.io`):
 1. Sol menüden **Dashboards** kısmına gir:
    * **Node Exporter / Nodes:** 5 sunucunun (`vm-master`, `vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`, `vm-worker-app`) anlık CPU, RAM, Disk I/O ve Ağ trafiğini incele.
-   * **Explore (PromQL):** `omnistream_kafka_events_published_total` veya `omnistream_backend_latency_ms` yazarak uygulamanın `/metrics` uç noktasından (`ServiceMonitor` ile) toplanan özel Kafka ve DB metriklerini sorgula!
+   * **Explore (PromQL):** `omnistream_kafka_events_published_total` veya `omnistream_db_health_status` yazarak uygulamanın `/metrics` uç noktasından (`ServiceMonitor` ile) toplanan özel Kafka ve DB metriklerini sorgula!
 
 ---
 
