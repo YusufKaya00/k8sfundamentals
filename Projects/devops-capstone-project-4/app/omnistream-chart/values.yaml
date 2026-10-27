@@ -33,17 +33,10 @@ service:
   targetPort: 8000
 
 # RKE2 NGINX Ingress Controller Ayarları:
-# `APP_IP` değeri Ansible kurulumunda veya manuel olarak `vm-worker-app`
-# sunucusunun Public IP adresiyle (Örn: app.20.x.x.x.nip.io) değiştirilir.
 ingress:
   enabled: true
   className: nginx
-  host: app.APP_IP.nip.io
-  hosts:
-    - host: app.APP_IP.nip.io
-      paths:
-        - path: /
-          pathType: Prefix
+  host: app.9.205.30.202.nip.io
 
 # Prometheus Operator (kube-prometheus-stack) Entegrasyonu:
 # `serviceMonitor.enabled: true` olduğunda `servicemonitor.yaml` şablonu devreye
