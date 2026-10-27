@@ -45,7 +45,7 @@ prometheusOperator:
       effect: "NoSchedule"
   resources:
     requests:
-      cpu: 50m
+      cpu: 10m
       memory: 128Mi
     limits:
       cpu: 250m
@@ -83,7 +83,7 @@ prometheus:
     # başlangıç isteği 256Mi, tavan sınırı 1024Mi (1 GB) olarak sınırlandırılmıştır.
     resources:
       requests:
-        cpu: 150m
+        cpu: 25m
         memory: 256Mi
       limits:
         cpu: 600m
@@ -107,7 +107,7 @@ grafana:
       effect: "NoSchedule"
   resources:
     requests:
-      cpu: 50m
+      cpu: 15m
       memory: 128Mi
     limits:
       cpu: 300m
@@ -124,25 +124,10 @@ grafana:
     pathType: Prefix
 
 # ------------------------------------------------------------------------------
-# 5. ALERTMANAGER (ALARM YÖNLENDİRME MOTORU)
+# 5. ALERTMANAGER (KAYNAK TASARRUFU İÇİN KAPALI)
 # ------------------------------------------------------------------------------
 alertmanager:
-  enabled: true
-  alertmanagerSpec:
-    resourcesPreset: "none"
-    nodeSelector:
-      kubernetes.io/hostname: "vm-master"
-    tolerations:
-      - key: "CriticalAddonsOnly"
-        operator: "Exists"
-        effect: "NoSchedule"
-    resources:
-      requests:
-        cpu: 25m
-        memory: 64Mi
-      limits:
-        cpu: 150m
-        memory: 256Mi
+  enabled: false
 
 # ------------------------------------------------------------------------------
 # 6. KUBE-STATE-METRICS (KUBERNETES OBJE DURUM METRİKLERİ)
@@ -159,7 +144,7 @@ kube-state-metrics:
       effect: "NoSchedule"
   resources:
     requests:
-      cpu: 25m
+      cpu: 10m
       memory: 64Mi
     limits:
       cpu: 150m
@@ -181,7 +166,7 @@ prometheus-node-exporter:
     - operator: "Exists"
   resources:
     requests:
-      cpu: 20m
+      cpu: 10m
       memory: 32Mi
     limits:
       cpu: 100m

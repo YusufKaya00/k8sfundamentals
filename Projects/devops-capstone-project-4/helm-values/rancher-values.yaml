@@ -96,10 +96,10 @@ resourcesPreset: "none"
 
 resources:
   requests:
-    # Başlangıçta 150 milicore (0.15 vCPU) ve 512 MB RAM rezerve edilir.
-    # Bu sayede 2 vCPU / 8 GB RAM'li vm-master üzerinde RKE2, ArgoCD ve Monitoring
-    # yığını ile hiçbir CPU/RAM çakışması yaşanmaz.
-    cpu: 150m
+    # Başlangıçta 20 milicore (0.02 vCPU) ve 512 MB RAM rezerve edilir.
+    # Bu sayede 2 vCPU / 8 GB RAM'li vm-master üzerinde RKE2 Control Plane (1675m),
+    # ArgoCD ve Monitoring yığını ile hiçbir "Insufficient cpu" çakışması yaşanmaz.
+    cpu: 20m
     memory: 512Mi
   limits:
     # Yoğun küme senkronizasyonu anlarında 1 vCPU ve 1.5 GB RAM'e kadar esneyebilir.

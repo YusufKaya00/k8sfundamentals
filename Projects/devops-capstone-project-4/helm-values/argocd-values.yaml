@@ -68,7 +68,7 @@ controller:
       effect: "NoSchedule"
   resources:
     requests:
-      cpu: 100m
+      cpu: 15m
       memory: 256Mi
     limits:
       cpu: 500m
@@ -93,7 +93,7 @@ server:
     - --insecure
   resources:
     requests:
-      cpu: 50m
+      cpu: 10m
       memory: 128Mi
     limits:
       cpu: 300m
@@ -128,7 +128,7 @@ repoServer:
       effect: "NoSchedule"
   resources:
     requests:
-      cpu: 50m
+      cpu: 10m
       memory: 128Mi
     limits:
       cpu: 300m
@@ -149,47 +149,20 @@ redis:
       effect: "NoSchedule"
   resources:
     requests:
-      cpu: 25m
+      cpu: 10m
       memory: 64Mi
     limits:
       cpu: 150m
       memory: 256Mi
 
 # ------------------------------------------------------------------------------
-# 8. APPLICATIONSET CONTROLLER (ÇOKLU KÜME / ŞABLON YÖNETİCİSİ)
+# 8. APPLICATIONSET VE NOTIFICATIONS CONTROLLER (KAYNAK TASARRUFU İÇİN KAPALI)
 # ------------------------------------------------------------------------------
+# Tek bir kümede standart `Application` CRD kullandığımız için ApplicationSet ve
+# Notifications bileşenlerini kapatarak vm-master üzerinde ekstra CPU/RAM açıyoruz:
 applicationSet:
-  replicas: 1
-  resourcesPreset: "none"
-  nodeSelector:
-    kubernetes.io/hostname: "vm-master"
-  tolerations:
-    - key: "CriticalAddonsOnly"
-      operator: "Exists"
-      effect: "NoSchedule"
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 150m
-      memory: 256Mi
+  enabled: false
+  replicas: 0
 
-# ------------------------------------------------------------------------------
-# 9. NOTIFICATIONS CONTROLLER (BİLDİRİM VE WEBHOOK YÖNETİCİSİ)
-# ------------------------------------------------------------------------------
 notifications:
-  resourcesPreset: "none"
-  nodeSelector:
-    kubernetes.io/hostname: "vm-master"
-  tolerations:
-    - key: "CriticalAddonsOnly"
-      operator: "Exists"
-      effect: "NoSchedule"
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 150m
-      memory: 256Mi
+  enabled: false
