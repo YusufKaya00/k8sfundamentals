@@ -1,0 +1,43 @@
+# ==============================================================================
+# OMNISTREAM ENTERPRISE PLATFORM - AUTO-GENERATED ANSIBLE INVENTORY
+# ==============================================================================
+# Bu dosya Terraform `local_file.ansible_inventory` kaynağı ve `templatefile()`
+# fonksiyonu tarafından otomatik olarak üretilmiştir. Manuel olarak düzenlemeyiniz!
+#
+# BASTION / JUMP HOST (ProxyCommand) MİMARİSİ:
+# Özel alt ağdaki (`10.20.1.0/24`) veritabanı ve Kafka düğümlerinin (`10.20.1.5-7`)
+# güvenlik (Zero-Trust) ve Azure 3 Public IP kotası nedeniyle dış dünyaya açık
+# Public IP adresleri yoktur. Ansible kontrol makinesi bu özel düğümlere bağlanırken
+# `vm-master` (${master_public_ip}) düğümünü bir SSH Atlama Sunucusu (Jump Host)
+# olarak kullanır ve `-W %h:%p` parametresiyle şifreli SSH tüneli içinden geçer.
+# ==============================================================================
+
+[master]
+vm-master ansible_host=${master_public_ip} private_ip=10.20.1.4 node_role=control-plane
+
+[workers]
+%{ for name, worker in workers ~}
+${name} ansible_host=${worker.private_ip} private_ip=${worker.private_ip} worker_tier=${worker.role}
+%{ endfor ~}
+
+[k8s_cluster:children]
+master
+workers
+
+[all:vars]
+ansible_user=${admin_username}
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+master_private_ip=10.20.1.4
+master_public_ip=${master_public_ip}
+app_public_ip=${app_public_ip}
+
+# ------------------------------------------------------------------------------
+# Özel Alt Ağdaki Worker Düğümleri İçin SSH Bastion / Jump Host Tünel Ayarı
+# ------------------------------------------------------------------------------
+# `-o ProxyCommand="ssh ... -W %h:%p ${admin_username}@${master_public_ip}"`
+# Ansible, `10.20.1.5`, `10.20.1.6`, `10.20.1.7` ve `10.20.1.8` özel IP'lerine
+# bağlanmak istediğinde önce `vm-master` genel IP'sine SSH açar ve standart girdi/çıktıyı
+# (`-W %h:%p`) hedef Worker düğümünün 22 portuna şeffaf biçimde yönlendirir.
+[workers:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -W %h:%p ${admin_username}@${master_public_ip}"'

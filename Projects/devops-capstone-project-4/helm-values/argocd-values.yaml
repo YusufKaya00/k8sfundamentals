@@ -1,0 +1,195 @@
+# ==============================================================================
+# ARGOCD (argo/argo-cd) — GITOPS SÜREKLİ TESLİMAT (CD) HELM DEĞERLERİ
+# ==============================================================================
+# MİMARİ AMAÇ:
+# ArgoCD, GitOps prensiplerini uygulayan bildirimsel (declarative) Sürekli Teslimat
+# (Continuous Delivery) aracımızdır. GitLab/GitHub üzerindeki "omnistream-chart"
+# Helm şablonlarını sürekli izler (pull-based) ve Git deposundaki arzu edilen durum
+# (Desired State) ile RKE2 kümesindeki canlı durum (Actual State) arasında bir fark
+# (OutOfSync) tespit ettiğinde küme durumunu otomatik olarak eşitler (Self-Heal).
+#
+# NEDEN vm-master ÜZERİNE SABİTLENİYOR?
+# ArgoCD; Application Controller, API/Web Server, Repo Server ve Redis olmak üzere
+# birden fazla mikroservisten oluşur. Veritabanı ve uygulama worker düğümlerimizin
+# (Standard_B1ms - 2 GB RAM) kaynaklarını tüketmemek için tüm ArgoCD bileşenlerini
+# 8 GB RAM'e sahip "vm-master" kontrol düzlemi düğümüne sabitliyoruz.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. KÜRESEL (GLOBAL) DÜĞÜM SEÇİCİ VE TOLERASYON AYARLARI
+# ------------------------------------------------------------------------------
+# ArgoCD chart'ındaki tüm alt pod'ların (destekleyen tüm şablonların) varsayılan
+# olarak vm-master üzerinde çalışmasını ve üzerindeki CriticalAddonsOnly Taint'ini
+# aşabilmesini sağlar.
+global:
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+# ------------------------------------------------------------------------------
+# 2. SUNUCU PARAMETRELERİ (CONFIGS.PARAMS — INSECURE MODU VE REVERSE PROXY)
+# ------------------------------------------------------------------------------
+# ÇOK KRİTİK ÜRETİM DETAYI:
+# ArgoCD API/UI sunucusu varsayılan olarak kendi iç TLS sertifikasıyla HTTPS'ye
+# yönlendirme (307 Redirect) yapar. Önünde RKE2 NGINX Ingress Controller bulunduğunda,
+# Ingress'ten ArgoCD'ye gelen HTTP trafiği tekrar HTTPS'ye yönlendirilirse tarayıcıda
+# sonsuz yönlendirme döngüsü ("ERR_TOO_MANY_REDIRECTS") oluşur.
+# "server.insecure: true" ayarı ile TLS sonlandırma (SSL Termination) veya HTTP
+# yönlendirme işini tamamen NGINX Ingress Controller'a devrediyoruz.
+configs:
+  params:
+    "server.insecure": true
+
+# ------------------------------------------------------------------------------
+# 3. DEX (HARİCİ OIDC KİMLİK DOĞRULAMA) BİLEŞENİNİ KAPATMA
+# ------------------------------------------------------------------------------
+# Kurumsal SSO (LDAP/SAML/OIDC) entegrasyonu gerektirmeyen bu mimaride ArgoCD'nin
+# yerleşik admin/RBAC mekanizması yeterlidir. Dex sunucusunu kapatarak gereksiz
+# CPU ve RAM tüketimini (~150 MB RAM) tamamen ortadan kaldırıyoruz.
+dex:
+  enabled: false
+
+# ------------------------------------------------------------------------------
+# 4. APPLICATION CONTROLLER (DURUM EŞİTLEME MOTORU)
+# ------------------------------------------------------------------------------
+# Kümedeki canlı Kubernetes nesnelerini Git deposundaki manifestolarla karşılaştıran
+# ana beyin bileşenidir.
+controller:
+  replicas: 1
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+# ------------------------------------------------------------------------------
+# 5. ARGOCD SERVER (WEB ARAYÜZÜ & gRPC/REST API SUNUCUSU) VE INGRESS
+# ------------------------------------------------------------------------------
+# Kullanıcıların görsel olarak GitOps topolojisini izlediği Web UI ve CLI bağlantısını
+# karşılayan katmandır.
+server:
+  replicas: 1
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  # Eski chart sürümleriyle de geriye dönük tam uyumluluk için extraArgs eklenir:
+  extraArgs:
+    - --insecure
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+  ingress:
+    # ArgoCD arayüzüne dış dünyadan "http://argocd.<MASTER_IP>.nip.io" adresiyle
+    # doğrudan erişebilmek için NGINX Ingress kaydını aktif ediyoruz.
+    enabled: true
+    ingressClassName: nginx
+    # MASTER_IP yer tutucusu Ansible (05-platform-services.yml) tarafından
+    # gerçek Master Public IP adresiyle dinamik olarak değiştirilir.
+    hostname: argocd.MASTER_IP.nip.io
+    hosts:
+      - argocd.MASTER_IP.nip.io
+    paths:
+      - /
+    pathType: Prefix
+
+# ------------------------------------------------------------------------------
+# 6. REPO SERVER (GİT DEPOSU KLONLAMA VE HELM ŞABLON DERLEME MOTORU)
+# ------------------------------------------------------------------------------
+# Git deposunu klonlayan ve içindeki Helm Chart'ları (omnistream-chart) "helm template"
+# ile saf Kubernetes YAML manifestolarına dönüştüren bileşendir.
+repoServer:
+  replicas: 1
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+# ------------------------------------------------------------------------------
+# 7. DAHİLİ REDIS (ARGOCD ÖNBELLEK KATMANI)
+# ------------------------------------------------------------------------------
+# ArgoCD'nin Kubernetes API ve Git sorgularını önbelleklemesi için kullandığı
+# kendi iç hafif Redis sunucusudur (uygulama katmanındaki Redis'ten bağımsızdır).
+redis:
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 8. APPLICATIONSET CONTROLLER (ÇOKLU KÜME / ŞABLON YÖNETİCİSİ)
+# ------------------------------------------------------------------------------
+applicationSet:
+  replicas: 1
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 9. NOTIFICATIONS CONTROLLER (BİLDİRİM VE WEBHOOK YÖNETİCİSİ)
+# ------------------------------------------------------------------------------
+notifications:
+  resourcesPreset: "none"
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
