@@ -14,7 +14,7 @@ replicaCount: 1
 # tanımlanmıştır. GitLab CI pipeline çalıştığında burası otomatik güncellenir!
 image:
   repository: yusufk00/omnistream-app
-  tag: "627e454c"
+  tag: "8e105ca3"
   pullPolicy: IfNotPresent
 # Düğüm İzolasyonu (Node Placement):
 # Uygulama pod'unun sadece uygulama katmanı için ayrılmış `vm-worker-app`
