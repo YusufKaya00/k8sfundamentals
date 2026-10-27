@@ -102,13 +102,11 @@ trivy_security_scan:
     - job: build_image
       artifacts: true
   script:
-    - echo "🛡️ [2/4] Trivy ile konteyner imajı HIGH ve CRITICAL zafiyetlere karşı taranıyor..."
+    - 'echo "🛡️ [2/4] Trivy ile konteyner imajı HIGH ve CRITICAL zafiyetlere karşı taranıyor..."'
     - trivy --version
-    # 1. Denetim ve arşivleme için JSON formatında detaylı güvenlik raporu üret
     - trivy image --input "${IMAGE_ARCHIVE}" --severity HIGH,CRITICAL --format json --output trivy-vulnerability-report.json
-    # 2. Pipeline konsolunda okunabilir tablo çıktısı göster (Düzeltilmemiş/unfixed OS çekirdek CVE'lerini yoksay, uygulama zafiyetlerinde uyar)
     - trivy image --input "${IMAGE_ARCHIVE}" --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0
-    - echo "✅ Trivy güvenlik taraması tamamlandı. Rapor: trivy-vulnerability-report.json"
+    - 'echo "✅ Trivy güvenlik taraması tamamlandı. Rapor: trivy-vulnerability-report.json"'
   artifacts:
     name: "trivy-report-${CI_COMMIT_SHORT_SHA}"
     when: always
@@ -135,12 +133,12 @@ push_to_dockerhub:
       artifacts: true
     - job: trivy_security_scan
   script:
-    - echo "🚀 [3/4] Doğrulanmış imaj Docker Hub kayıt defterine yükleniyor..."
+    - 'echo "🚀 [3/4] Doğrulanmış imaj Docker Hub kayıt defterine yükleniyor..."'
     - buildah login -u "${DOCKERHUB_USERNAME}" -p "${DOCKERHUB_TOKEN}" docker.io
     - buildah pull --storage-driver=${STORAGE_DRIVER} "docker-archive:${IMAGE_ARCHIVE}"
     - buildah push --storage-driver=${STORAGE_DRIVER} "${IMAGE_NAME}:${IMAGE_TAG}" "docker://${IMAGE_NAME}:${IMAGE_TAG}"
     - buildah push --storage-driver=${STORAGE_DRIVER} "${IMAGE_NAME}:${IMAGE_TAG}" "docker://${IMAGE_NAME}:latest"
-    - echo "✅ İmaj başarıyla yayınlandı: ${IMAGE_NAME}:${IMAGE_TAG} ve ${IMAGE_NAME}:latest"
+    - 'echo "✅ İmaj başarıyla yayınlandı: ${IMAGE_NAME}:${IMAGE_TAG} ve ${IMAGE_NAME}:latest"'
   rules:
     - if: '$CI_COMMIT_MESSAGE =~ /\[skip ci\]/i'
       when: never
@@ -166,18 +164,18 @@ gitops_promote:
     - git config --global user.name "OmniStream GitOps Bot"
     - git config --global user.email "gitops-bot@omnistream.local"
   script:
-    - echo "🔄 [4/4] GitOps Manifestosu (values.yaml) yeni imaj etiketiyle güncelleniyor..."
+    - 'echo "🔄 [4/4] GitOps Manifestosu (values.yaml) yeni imaj etiketiyle güncelleniyor..."'
     - |
       if [ -f "${CHART_VALUES_FILE}" ]; then
         TARGET_VALUES="${CHART_VALUES_FILE}"
       else
         TARGET_VALUES="app/omnistream-chart/values.yaml"
       fi
-    - echo "Hedef Helm values dosyası: ${TARGET_VALUES}"
+    - 'echo "Hedef Helm values dosyası: ${TARGET_VALUES}"'
     # yq / sed kullanarak image.repository ve image.tag alanlarını yeni imajla güncelle
     - sed -i "s|repository:.*|repository: ${DOCKERHUB_USERNAME}/omnistream-app|g" "${TARGET_VALUES}"
     - sed -i "s|tag:.*|tag: \"${IMAGE_TAG}\"|g" "${TARGET_VALUES}"
-    - echo "📄 Güncellenmiş ${TARGET_VALUES} içeriği:"
+    - 'echo "📄 Güncellenmiş ${TARGET_VALUES} içeriği:"'
     - grep -n -A 4 "image:" "${TARGET_VALUES}"
     # Değişikliği commit et ve [skip ci] ile sonsuz pipeline döngüsünü engelle
     - git add "${TARGET_VALUES}"
