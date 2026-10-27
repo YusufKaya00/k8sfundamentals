@@ -1,0 +1,38 @@
+# ==============================================================================
+# PROMETHEUS OPERATOR SERVICEMONITOR ŞABLONU (templates/servicemonitor.yaml)
+# ==============================================================================
+# Neden ServiceMonitor Kullanıyoruz?
+# Klasik Prometheus kurulumlarında her yeni mikroservis eklendiğinde `prometheus.yml`
+# konfigürasyon dosyasını elle düzenlemek gerekir. Kubernetes ortamında ise
+# `kube-prometheus-stack` (Prometheus Operator) CRD tabanlı dinamik keşif kullanır:
+#
+# 1. Prometheus Operator, küme genelindeki `ServiceMonitor` (monitoring.coreos.com/v1)
+#    objelerini sürekli dinler.
+# 2. `metadata.labels` altındaki `release: kube-prometheus-stack` etiketi sayesinde
+#    Prometheus bu ServiceMonitor'u otomatik olarak tanır ve konfigürasyonuna ekler.
+# 3. `spec.selector.matchLabels` kısmı, `service.yaml` içindeki `omnistream-app`
+#    servisini bulur ve onun `port: http` portu üzerinden `/metrics` uç noktasını
+#    her 15 saniyede bir (`interval: 15s`) otomatik olarak kazır (scrape eder)!
+# ==============================================================================
+{{- if .Values.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: {{ .Values.serviceMonitor.path | default "/metrics" }}
+      interval: {{ .Values.serviceMonitor.interval | default "15s" }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}
