@@ -180,11 +180,17 @@ gitops_promote:
         echo "ℹ️ values.yaml zaten guncel, yeni commit gerekmiyor."
       else
         git commit -m "chore(gitops) promote omnistream-app image to ${IMAGE_TAG} [skip ci]"
-        if [ -n "${GITLAB_ACCESS_TOKEN}" ]; then
+        PUSH_TOKEN="${GITLAB_ACCESS_TOKEN:-$GIT_PUSH_TOKEN}"
+        if [ -n "${PUSH_TOKEN}" ]; then
           CLEAN_REPO_URL=$(echo "${CI_REPOSITORY_URL}" | sed -E 's|https?://[^@]+@||')
-          git push "https://oauth2:${GITLAB_ACCESS_TOKEN}@${CLEAN_REPO_URL}" "HEAD:${CI_COMMIT_REF_NAME}"
+          echo "🚀 GitLab deposuna pushlaniyor (${CLEAN_REPO_URL})..."
+          git push "https://oauth2:${PUSH_TOKEN}@${CLEAN_REPO_URL}" "HEAD:${CI_COMMIT_REF_NAME}"
         else
-          echo "⚠️ GITLAB_ACCESS_TOKEN tanimli degil."
+          echo "⚠️ GITLAB_ACCESS_TOKEN veya GIT_PUSH_TOKEN tanimli degil."
+        fi
+        if [ -n "${GITHUB_ACCESS_TOKEN}" ]; then
+          echo "🚀 GitHub deposuna da (ArgoCD icin) senkronize ediliyor..."
+          git push "https://x-access-token:${GITHUB_ACCESS_TOKEN}@github.com/YusufKaya00/k8sfundamentals.git" "HEAD:${CI_COMMIT_REF_NAME}"
         fi
       fi
       echo "🎯 GitOps Promote tamamlandi! ArgoCD yeni surumu (${IMAGE_TAG}) otomatik olarak RKE2 kumesine uygulayacak."
