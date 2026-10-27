@@ -1,0 +1,24 @@
+# ==============================================================================
+# RESILIENCESTREAM HELM CHART METADATA (Chart.yaml)
+# ==============================================================================
+# Neden Helm Chart?
+# Tek bir şablon setinden (`templates/`) hem `order-api` (2 replica + PDB + HPA),
+# hem `analytics-consumer` (Kafka -> Cassandra), hem de `payment-worker`
+# (RabbitMQ -> PostgreSQL + DLQ) bileşenlerini ArgoCD GitOps ile yönetmemizi sağlar.
+# ==============================================================================
+apiVersion: v2
+name: resiliencestream
+description: "ResilienceStream — Kafka KRaft, RabbitMQ (DLQ), Cassandra, PostgreSQL & Redis Chaos Engineering Microservice Suite"
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - chaos-engineering
+  - sre
+  - kafka
+  - rabbitmq
+  - cassandra
+  - fastapi
+  - rke2
+maintainers:
+  - name: Yusuf Kaya
