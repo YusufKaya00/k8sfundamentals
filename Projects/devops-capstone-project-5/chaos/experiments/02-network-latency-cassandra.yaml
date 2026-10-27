@@ -1,0 +1,33 @@
+# =====================================================================
+# Deney 02 — NetworkChaos: Cassandra'ya 300ms gecikme
+# Hipotez: analytics-consumer Cassandra yazımlarında timeout + circuit
+#          breaker kullandığı için order-api p99 SLO'su bozulmaz; sadece
+#          Kafka consumer lag geçici olarak artar ve sonra erir.
+# Game day: chaos/game-days/02-network-latency-cassandra.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-latency-cassandra
+  namespace: chaos-mesh
+  labels:
+    experiment: "02"
+spec:
+  action: delay
+  mode: one                      # Tek Cassandra pod'u (lab'da zaten 1 tane)
+  duration: "3m"                 # Süre dolunca tc kuralları otomatik kaldırılır
+  selector:
+    namespaces:
+      - data
+    labelSelectors:
+      app.kubernetes.io/name: cassandra
+  delay:
+    latency: "300ms"
+    jitter: "50ms"               # Gerçek ağlar sabit değildir; jitter daha gerçekçi
+    correlation: "25"
+  direction: from                # Sadece "app" ns'ten gelen trafik etkilenir (Cassandra iç gossip'i bozulmaz)
+  target:
+    mode: all
+    selector:
+      namespaces:
+        - app                    # Sadece uygulama pod'ları ↔ Cassandra yolu yavaşlar

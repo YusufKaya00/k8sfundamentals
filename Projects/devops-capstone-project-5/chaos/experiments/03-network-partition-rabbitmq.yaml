@@ -1,0 +1,31 @@
+# =====================================================================
+# Deney 03 — NetworkChaos: order-api ↔ RabbitMQ ağ bölünmesi (partition)
+# Hipotez: RabbitMQ'ya ulaşılamazken order-api circuit breaker'ı açar,
+#          siparişi Postgres'e yazmaya devam eder (outbox/retry), bölünme
+#          bitince mesajlar kaybolmadan işlenir; kalıcı hatalar DLQ'ya gider.
+# Game day: chaos/game-days/03-network-partition-rabbitmq.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-partition-rabbitmq
+  namespace: chaos-mesh
+  labels:
+    experiment: "03"
+spec:
+  action: partition              # Paketler tamamen düşürülür (iptables)
+  mode: one                      # Sadece 1 order-api pod'u izole edilir → diğer replica hizmet verir
+  duration: "2m"
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  direction: both                # İki yönlü kesinti: gerçek bir switch/AZ arızası gibi
+  target:
+    mode: all
+    selector:
+      namespaces:
+        - messaging
+      labelSelectors:
+        app.kubernetes.io/name: rabbitmq

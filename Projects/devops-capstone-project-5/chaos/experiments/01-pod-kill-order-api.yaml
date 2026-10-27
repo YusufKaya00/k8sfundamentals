@@ -1,0 +1,23 @@
+# =====================================================================
+# Deney 01 — PodChaos: order-api pod'unu öldür
+# Hipotez: order-api 2 replica + PodDisruptionBudget ile çalıştığı için
+#          tek bir pod öldüğünde kullanıcı hatası (5xx) oranı SLO'yu bozmaz.
+# Game day: chaos/game-days/01-pod-kill-order-api.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: pod-kill-order-api
+  namespace: chaos-mesh          # Deney nesneleri chaos-mesh ns'te tutulur, hedef başka ns'te olabilir
+  labels:
+    experiment: "01"
+spec:
+  action: pod-kill               # pod-failure (pause) yerine gerçek silme: Deployment yeniden yaratmalı
+  mode: one                      # GÜVENLİ VARSAYILAN: sadece rastgele 1 pod (blast radius minimum)
+  gracePeriod: 0                 # 0 = SIGKILL; ani çöküşü simüle eder (graceful shutdown testi için 30 yap)
+  duration: "60s"                # pod-kill anlıktır; duration deneyin "aktif" sayılacağı pencere
+  selector:
+    namespaces:
+      - app                      # Açık namespace: yanlışlıkla platform pod'larını öldürmeyi engeller
+    labelSelectors:
+      app.kubernetes.io/component: order-api

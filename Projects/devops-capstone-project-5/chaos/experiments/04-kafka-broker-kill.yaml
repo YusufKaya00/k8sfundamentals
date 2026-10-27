@@ -1,0 +1,26 @@
+# =====================================================================
+# Deney 04 — PodChaos: Kafka broker'ını öldür
+# Hipotez: Producer (order-api) retry/idempotence ile event kaybetmez;
+#          consumer lag artar, broker StatefulSet tarafından geri gelince
+#          lag 5 dk içinde sıfıra iner.
+# DİKKAT: Lab'da tek broker var (RF=1) → bu deney prod'dan SERT. Prod'da
+#          3 broker + min.insync.replicas=2 ile kesinti hiç hissedilmezdi.
+# Game day: chaos/game-days/04-kafka-broker-kill.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: kafka-broker-kill
+  namespace: chaos-mesh
+  labels:
+    experiment: "04"
+spec:
+  action: pod-kill
+  mode: one
+  gracePeriod: 0
+  duration: "60s"
+  selector:
+    namespaces:
+      - data
+    labelSelectors:
+      app.kubernetes.io/name: kafka

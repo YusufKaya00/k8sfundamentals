@@ -1,0 +1,30 @@
+# =====================================================================
+# Deney 05 — StressChaos: payment-worker CPU + bellek baskısı
+# Hipotez: CPU baskısında HPA replica sayısını artırır (veya throttling
+#          nedeniyle işleme yavaşlar ama mesaj kaybı olmaz); bellek limiti
+#          aşılırsa pod OOMKilled olur, yeniden başlar, kuyruktaki mesajlar
+#          ack edilmediği için tekrar teslim edilir.
+# Game day: chaos/game-days/05-stress-payment-worker.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: stress-payment-worker
+  namespace: chaos-mesh
+  labels:
+    experiment: "05"
+spec:
+  mode: one
+  duration: "3m"
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: payment-worker
+  stressors:
+    cpu:
+      workers: 1                 # vm-worker-app 2 vCPU; 1 worker %80 ile node'u boğmadan baskı yapar
+      load: 80
+    memory:
+      workers: 1
+      size: "200MB"              # Limitin altında tut; OOM testi için limit üstüne çıkar (bilinçli olarak!)
