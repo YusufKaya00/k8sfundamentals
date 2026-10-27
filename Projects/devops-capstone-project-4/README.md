@@ -166,51 +166,115 @@ git push all main
 
 ---
 
-## 🧪 6. Kurulan Platformu Uçtan Uca Test Etme ve Deney Senaryoları (Grafana, Prometheus, ArgoCD, Rancher, Kafka)
+## 🧪 6. Grafana Dashboard Rehberi, Alarm (Alert) Kuralları ve Kaos Mühendisliği (Chaos) Test Senaryoları
 
-Bu bölümde kurduğumuz her bir bileşeni (Grafana, Prometheus, ArgoCD Self-Heal, Rancher ve Kafka) bizzat test edebileceğin **5 gerçek dünya SRE / DevSecOps senaryosu** yer almaktadır:
+Bu bölümde; Grafana'da **hangi Dashboard'ları açman/kurman gerektiği**, **hangi Alarm (Alert) kurallarının aktif olduğu** ve sistemi bizzat test edebileceğin **gerçek dünya SRE / Kaos Mühendisliği** senaryoları adım adım anlatılmaktadır.
 
-### Senaryo 1: Canlı Uygulamadan Kafka Yük Testi Yapıp Grafana'da İzleme 📊
-Sana özel olarak Grafana içine **"🚀 OmniStream — Kafka KRaft, Polyglot DBs & 5-Node RKE2 Command Center"** adında özel bir Dashboard kuruldu!
+---
 
-1. Tarayıcıdan doğrudan şu adresi aç (`admin` / `AdminPassword2026!`):
+### 📊 A) Grafana'da Hangi Dashboard'ları Açmalısın ve Kurmalısın?
+
+`http://grafana.<MASTER_IP>.nip.io` adresine (`admin` / `AdminPassword2026!`) girdiğinde sol menüden **Dashboards** kısmına tıkla. Kümede **2 tür** dashboard seti bulunur:
+
+#### 1. Senin İçin Özel Kurulan Uygulama & Kafka Komuta Merkezi (Özel Dashboard)
+Uygulamanın (`/metrics`) ürettiği özel Prometheus metriklerini (`omnistream_*`) ve 5 sunucunun izolasyonunu tek ekranda görmek için hazırlandı:
+* **Dashboard Adı:** `🚀 OmniStream — Kafka KRaft, Polyglot DBs & 5-Node RKE2 Command Center`
+* **Doğrudan Link:** `http://grafana.<MASTER_IP>.nip.io/d/omnistream-command-center`
+* **JSON Dosyası (Tekrar İçe Aktarmak İstersen):** [`helm-values/grafana-omnistream-dashboard.json`](file:///home/ysf/k8sfundamentals/Projects/devops-capstone-project-4/helm-values/grafana-omnistream-dashboard.json)
+  * **Nasıl Kurulur (API ile Tek Komut):**
+    ```bash
+    curl -X POST -H "Content-Type: application/json" \
+      -u admin:AdminPassword2026! \
+      -d @helm-values/grafana-omnistream-dashboard.json \
+      "http://grafana.<MASTER_IP>.nip.io/api/dashboards/db"
+    ```
+  * **İçindeki 7 Canlı Panel:**
+    1. **🟢 Polyglot Data & Streaming Health (`omnistream_db_health_status`):** Kafka, Redis, PostgreSQL ve MongoDB'nin anlık `UP ✅ (1)` veya `DOWN ❌ (0)` durumu.
+    2. **📨 Kafka KRaft Toplam Yayınlanan Event Sayısı (`omnistream_kafka_events_published_total`):** `omnistream-events` topic'ine yazılan toplam mesaj sayısı.
+    3. **🌐 Toplam HTTP API İstekleri (`omnistream_http_requests_total`):** `/`, `/api/publish`, `/api/status` uç noktalarına gelen trafik.
+    4. **📈 Kafka Event Akışı & HTTP Trafik Hızı (Zaman Serisi).**
+    5. **⏱️ Veritabanı & Kafka Yazma/Okuma Gecikmesi (`omnistream_backend_latency_seconds`):** 4 veritabanının ortalama yanıt süresi (ms/sn).
+    6. **🖥️ 5-Node RKE2 Sunucu Bellek (RAM) Kullanım Oranı (%):** 5 sunucunun (`10.20.1.4` - `10.20.1.8`) OOM sınırına yaklaşıp yaklaşmadığını gösteren ibreler (Gauge).
+    7. **⚡ Namespace Bazlı Pod Bellek Kullanımı (MB):** `data`, `app`, `monitoring`, `argocd`, `gitlab-runner` ve `cattle-system` namespace'lerinin RAM dağılımı.
+
+#### 2. `kube-prometheus-stack` İle Hazır Gelen En Önemli 5 Sistem Dashboard'u
+Grafana -> **Dashboards** listesinde mutlaka incelemen gereken hazır Kubernetes panelleri:
+
+| Dashboard Adı | Doğrudan URL Yolu | Ne İşe Yarar / Neyi İncelemelisin? |
+| :--- | :--- | :--- |
+| **1. Node Exporter / Nodes** | `/d/7d57716318ee0dddbac5a7f451fb7753/node-exporter-nodes` | **Donanım & OS Seviyesi:** Üstteki `Host` menüsünden 5 sunucudan birini (`10.20.1.4` Master, `10.20.1.5` Stream, `10.20.1.6` SQL, `10.20.1.7` NoSQL, `10.20.1.8` App) seçip CPU, RAM, Disk IOPS ve Network trafiğini incelersin. |
+| **2. Kubernetes / Compute Resources / Cluster** | `/d/efa86fd1d0c121a26444b636a3f509a8/kubernetes-compute-resources-cluster` | **Küme Geneli Kapasite:** 6 vCPU ve 16 GB toplam RAM'in namespace bazında (`data`, `app`, `monitoring`, `cattle-system`) yüzde kaçının kullanıldığını ve CPU Request/Limit oranlarını gösterir. |
+| **3. Kubernetes / Compute Resources / Namespace (Pods)** | `/d/85a562078cdf77779eaa1add43ccec1e/kubernetes-compute-resources-namespace-pods` | **Namespace Bazlı Pod İzleme:** Üstteki `namespace` kutusundan **`data`** seçersen `kafka-controller-0`, `redis-master-0`, `postgres-postgresql-0` ve `mongodb-0` podlarının ne kadar RAM/CPU harcadığını yan yana görürsün! |
+| **4. Kubernetes / Networking / Namespace (Pods)** | `/d/8b7a8b326d7a6f1f04244066368c67af/kubernetes-networking-namespace-pods` | **Ağ Trafiği (Kafka & DB Akışı):** `app` veya `data` namespace'ini seçtiğinde Kafka'ya mesaj bastıkça podlar arasındaki gelen/giden (`Rx/Tx`) bant genişliğini canlı izlersin. |
+| **5. Kubernetes / Persistent Volumes** | `/d/919b92a8e8041bd567af9edab12c840c/kubernetes-persistent-volumes` | **Disk Doluluk Oranı (PVC):** Local-Path CSI ile bağlanan Kafka, PostgreSQL, MongoDB ve Redis disklerinin (`PersistentVolumeClaim`) doluluk yüzdesini gösterir. |
+
+#### 3. Grafana.com'dan Tek Tıkla İçe Aktarabileceğin (Import ID) Popüler Topluluk Dashboard'ları
+Grafana'da sol üstteki **`+` -> Import dashboard** ekranına gidip şu resmi ID numaralarını yazıp **Load** diyerek (Data source: `Prometheus` seçerek) ekstra görsel paneller de ekleyebilirsin:
+* **`1860`** — **Node Exporter Full:** Dünyanın en kapsamlı Linux sunucu izleme paneli.
+* **`15757`** — **Kubernetes / Views / Global:** Tüm küme podlarını, düğümlerini ve ağını tek ekranda özetleyen modern görünüm.
+* **`15760`** — **Kubernetes / Views / Pods:** Her bir podun yaşam döngüsünü ve konteyner restartlarını detaylı gösterir.
+
+---
+
+### 🚨 B) Grafana'da Hangi Alarm (Alert) Kuralları Kurulu ve Nasıl Test Edilir?
+
+Projede [`helm-values/omnistream-prometheus-rules.yaml`](file:///home/ysf/k8sfundamentals/Projects/devops-capstone-project-4/helm-values/omnistream-prometheus-rules.yaml) dosyası ile kümeye **3 özel SRE Alarm Kuralı (`PrometheusRule`)** tanımlanmıştır.
+
+**Alarmları Grafana'da Görmek İçin:**
+1. Grafana sol menüsünden **Alerting (Çan İkonu 🔔) -> Alert rules** sayfasına tıkla.
+2. **`omnistream.rules`** grubunu genişlet; burada şu 3 özel alarmımızı göreceksin:
+
+| Alarm Adı (`Alert`) | PromQL İfadesi (`expr`) | Tetiklenme Süresi (`for`) | Önem (`severity`) | Ne Zaman Alarm Çalar (`Firing`)? |
+| :--- | :--- | :--- | :--- | :--- |
+| **`OmniStreamDatabaseDown`** | `omnistream_db_health_status == 0` | `15s` | `critical` 🔴 | Kafka, Redis, PostgreSQL veya MongoDB'den herhangi biri 15 saniye boyunca çökerse (`0` dönerse) anında kırmızı alarm üretir! |
+| **`OmniStreamKafkaPublishErrors`** | `increase(omnistream_kafka_events_published_total{status="error"}[5m]) > 0` | `0m` | `warning` 🟡 | Son 5 dakika içinde Kafka KRaft broker'ına mesaj yazılırken 1 tane bile hata alınırsa uyarı verir. |
+| **`RKE2NodeHighMemoryUsage`** | `(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85` | `2m` | `warning` 🟡 | 5 sunucudan herhangi birinde RAM kullanımı %85'i geçerse (`OOMKilled` tehlikesi başlamadan önce) uyarı verir. |
+
+*(Eğer kümeyi sıfırdan kurarsan bu alarmları aktif etmek için `vm-master` üzerinde `kubectl apply -f helm-values/omnistream-prometheus-rules.yaml` çalıştırman yeterlidir).*
+
+---
+
+### 🧪 C) Adım Adım Canlı Test ve Kaos Mühendisliği (Chaos Engineering) Senaryoları
+
+#### Senaryo 1: Canlı Uygulamadan Kafka Yük Testi Yapıp Grafana'da İzleme 🚀
+1. Tarayıcıdan özel Grafana panelini aç:
    👉 **`http://grafana.<MASTER_IP>.nip.io/d/omnistream-command-center`**
-2. Şimdi kendi bilgisayarının terminalinden aşağıdaki komutla canlı uygulamaya **20 adet ardışık Kafka + 3 Veritabanı işlemi** gönder (veya `http://app.<APP_IP>.nip.io` arayüzündeki **"⚡ PRODUCE KAFKA EVENT"** butonuna art arda bas):
+2. Kendi bilgisayarının terminalinden aşağıdaki komutla canlı uygulamaya **20 adet ardışık Kafka + 3 Veritabanı işlemi** gönder (veya `http://app.<APP_IP>.nip.io` arayüzündeki **"⚡ PRODUCE KAFKA EVENT"** butonuna art arda bas):
    ```bash
    for i in {1..20}; do
      curl -s -X POST http://app.<APP_IP>.nip.io/api/publish \
        -H "Content-Type: application/json" \
        -d "{\"event_type\":\"LOAD_TEST_$i\",\"amount\":$((RANDOM % 500)),\"user_id\":\"sre-tester\"}" > /dev/null
-     echo "Event #$i gonderildi!"
+     echo "Event #$i Kafka ve 3 DB'ye islendi!"
    done
    ```
-3. Grafana ekranına (`omnistream-command-center`) bak (her 5 saniyede bir otomatik yenilenir):
+3. Grafana ekranına bak (her 5 saniyede bir otomatik yenilenir):
    * **🟢 Polyglot Data & Streaming Health:** `kafka`, `redis`, `postgresql`, `mongodb` kutularının 4'ünün de yemyeşil **`UP ✅`** olduğunu,
    * **📨 Kafka KRaft Toplam Yayınlanan Event Sayısı:** Sayacın anlık olarak yukarı fırladığını,
-   * **⏱️ Veritabanı & Kafka Gecikmesi (Latency):** Hangi veritabanının kaç milisaniyede yanıt verdiğini,
-   * **⚡ Namespace Bazlı Pod Bellek Kullanımı:** `data`, `app`, `monitoring`, `argocd` ve `cattle-system` katmanlarının ne kadar RAM tükettiğini canlı grafiklerde göreceksin!
+   * **⏱️ Veritabanı & Kafka Gecikmesi (Latency):** Hangi veritabanının kaç milisaniyede yanıt verdiğini canlı grafiklerde göreceksin!
 
 ---
 
-### Senaryo 2: Kaos Mühendisliği (Chaos Engineering) — Veritabanını Çökertip Grafana'da "DOWN ❌" Alarmını Görmek 💥
-Bir veritabanı çöktüğünde uygulamanın ve Grafana'nın nasıl tepki verdiğini test edelim:
+#### Senaryo 2: Kaos Mühendisliği (Chaos Engineering) — Veritabanını Çökertip Grafana'da "DOWN ❌" ve Alarm (`Firing`) Görmek 💥
+Bir veritabanı çöktüğünde uygulamanın ve Grafana Alerting sisteminin nasıl tepki verdiğini test edelim:
 
-1. `vm-master` sunucusunda Redis veya MongoDB'yi geçici olarak `0` kopyaya düşür (durdur):
+1. `vm-master` sunucusunda MongoDB'yi geçici olarak `0` kopyaya düşür (durdur):
    ```bash
    kubectl scale statefulset mongodb -n data --replicas=0
    ```
-2. Uygulama sayfasını (`http://app.<APP_IP>.nip.io`) yenile veya 15 saniye sonra Grafana Dashboard'una bak:
+2. Uygulama sayfasında (`http://app.<APP_IP>.nip.io`) **"⚡ PRODUCE KAFKA EVENT"** butonuna bir kez bas (veya 15 saniye bekle) ve Grafana'ya bak:
    * Uygulama çökmez (**Graceful Degradation**); Kafka, Redis ve PostgreSQL çalışmaya devam ederken sadece MongoDB kartı kırmızıya döner.
-   * Grafana'daki **`omnistream_db_health_status`** panelinde `mongodb` kutusu anında kırmızı **`DOWN ❌ (0)`** olur!
+   * Grafana Dashboard'undaki **`omnistream_db_health_status`** panelinde `mongodb` kutusu anında kırmızı **`DOWN ❌ (0)`** olur!
+   * Grafana **Alerting -> Alert rules -> `omnistream.rules`** altındaki **`OmniStreamDatabaseDown`** alarmı **`Pending` -> `Firing` 🔴** durumuna geçer!
 3. Şimdi MongoDB'yi tekrar ayağa kaldır:
    ```bash
    kubectl scale statefulset mongodb -n data --replicas=1
    ```
-   Saniyeler içinde hem uygulama arayüzünün hem de Grafana'nın tekrar **`4/4 Systems Operational (UP ✅)`** durumuna geçtiğini göreceksin!
+   Saniyeler içinde hem uygulama arayüzünün hem Grafana Dashboard'unun tekrar **`4/4 Systems Operational (UP ✅)`** durumuna geçtiğini ve alarmın **`Normal` 🟢** olduğunu göreceksin!
 
 ---
 
-### Senaryo 3: ArgoCD "Self-Heal" (Kendi Kendini İyileştirme / Drift Önleme) Testi 🛡️
+#### Senaryo 3: ArgoCD "Self-Heal" (Kendi Kendini İyileştirme / Drift Önleme) Testi 🛡️
 Bir kişinin kümeye `kubectl` ile girip yetkisiz bir değişiklik (Configuration Drift) yaptığında ArgoCD'nin bunu nasıl otomatik geri aldığını test et:
 
 1. ArgoCD arayüzünü (`http://argocd.<MASTER_IP>.nip.io`) aç ve `omnistream-app` kartına tıkla.
@@ -223,7 +287,7 @@ Bir kişinin kümeye `kubectl` ile girip yetkisiz bir değişiklik (Configuratio
 
 ---
 
-### Senaryo 4: Rancher UI Üzerinden 5-Node Taint/Toleration ve Canlı Pod Loglarını İnceleme 🐄
+#### Senaryo 4: Rancher UI Üzerinden 5-Node Taint/Toleration ve Canlı Pod Loglarını İnceleme 🐄
 1. Tarayıcıdan `https://rancher.<MASTER_IP>.nip.io` adresine gir (`admin` / `AdminPassword2026!`).
 2. **`local` kümesine -> Cluster -> Nodes** menüsüne tıkla:
    * 5 sunucunun (`vm-master`, `vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`, `vm-worker-app`) her birinin üzerindeki **Taint** ve **Label** etiketlerini görsel olarak incele.
