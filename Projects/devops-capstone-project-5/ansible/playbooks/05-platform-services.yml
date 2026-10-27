@@ -1,0 +1,323 @@
+---
+# ==============================================================================
+# FAZ 5: PLATFORM SERVİSLERİ, DATA + MESSAGING KATMANLARI VE GITOPS DAĞITIMI
+# Dosya: playbooks/05-platform-services.yml
+# Hedef: vm-master (Helm 3 & kubectl ile tüm platform katmanlarının kurulumu)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Altyapı, RKE2 çekirdeği, Local-Path CSI depolama ve 3 düğümlü Taint/Label
+# izolasyonu tamamlandıktan sonra bu playbook tüm kurumsal yazılım yığınını
+# deterministik bir sırayla ayağa kaldırır:
+#   1. Resmi Helm Kataloglarının (`jetstack`, `rancher-latest`, `argo`,
+#      `prometheus-community`, `bitnami`, `gitlab`, `chaos-mesh`) eklenmesi.
+#   2. Yerel proje dosyalarının (`helm-values/`, `app/`, `gitops/`, `observability/`, `chaos/`)
+#      `vm-master` üzerindeki `/home/ysf/` dizinine kopyalanması ve `MASTER_IP` ile
+#      `APP_IP` yer tutucularının gerçek Azure Public IP'leriyle dinamik değiştirilmesi.
+#   3. `cert-manager` kurulumu ve Webhook hazırlık kontrolü.
+#   4. `vm-master` (8 GB RAM) üzerine Yönetim ve Gözlemlenebilirlik katmanının
+#      (`Rancher`, `ArgoCD`, `kube-prometheus-stack` + Alertmanager + Grafana)
+#      dağıtılması + oluşturulan 8 Namespace'in Rancher `Default Project` içerisine
+#      otomatik bağlanması + Grafana Dashboard ConfigMap ve PrometheusRule uygulanması.
+#   5. `data` namespace'i altında `vm-worker-data` (4 GB RAM) üzerine **Kafka (KRaft)**,
+#      **Apache Cassandra (768M Heap)** ve **PostgreSQL 16** kurulması.
+#   6. `messaging` namespace'i altında `vm-worker-app` (4 GB RAM) üzerine **RabbitMQ**
+#      (Management Plugin + `rabbitmq.<APP_IP>.nip.io` Ingress) ve **Redis** kurulması.
+#   7. `app` namespace'i altında `resiliencestream` uygulamasının (`app/chart`) Helm ile
+#      kurulması ve `gitops/argocd-application.yaml` manifestosunun uygulanarak
+#      yönetimin ArgoCD GitOps motoruna devredilmesi.
+# ==============================================================================
+
+- name: "Faz 5: Kurumsal Platform Servisleri, Data (Kafka/Cassandra/PG), Messaging (RabbitMQ/Redis) ve GitOps Dağıtımı"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+    target_user: "{{ ansible_user | default('ysf') }}"
+    target_home: "/home/{{ ansible_user | default('ysf') }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: HELM REPO KATALOGLARININ EKLENMESİ VE GÜNCELLENMESİ
+    # --------------------------------------------------------------------------
+    - name: "Resmi Helm Chart depolarını ekle ve indeksleri güncelle"
+      shell: |
+        {{ helm_cmd }} repo add jetstack https://charts.jetstack.io --force-update
+        {{ helm_cmd }} repo add rancher-latest https://releases.rancher.com/server-charts/latest --force-update
+        {{ helm_cmd }} repo add argo https://argoproj.github.io/argo-helm --force-update
+        {{ helm_cmd }} repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+        {{ helm_cmd }} repo add bitnami https://charts.bitnami.com/bitnami --force-update
+        {{ helm_cmd }} repo add gitlab https://charts.gitlab.io --force-update
+        {{ helm_cmd }} repo add chaos-mesh https://charts.chaos-mesh.org --force-update
+        {{ helm_cmd }} repo update
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: PROJE DİZİNLERİNİN VM-MASTER'A AKTARILMASI
+    # --------------------------------------------------------------------------
+    - name: "vm-master üzerinde /home/ysf/{helm-values,app,gitops,observability,chaos} dizinlerini oluştur"
+      file:
+        path: "{{ target_home }}/{{ item }}"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0755'
+      loop:
+        - helm-values
+        - app
+        - gitops
+        - observability
+        - chaos
+
+    - name: "helm-values/ dosyalarını vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../helm-values/"
+        dest: "{{ target_home }}/helm-values/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+
+    - name: "app/ dizinini (FastAPI kaynak kodu ve app/chart) vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../app/"
+        dest: "{{ target_home }}/app/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0755'
+      failed_when: false
+
+    - name: "gitops/ dizinini (ArgoCD Application manifestosu) vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../gitops/"
+        dest: "{{ target_home }}/gitops/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+      failed_when: false
+
+    - name: "observability/ dizinini (PrometheusRules & Grafana Dashboards) vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../observability/"
+        dest: "{{ target_home }}/observability/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+      failed_when: false
+
+    - name: "chaos/ dizinini (Chaos Mesh deney manifestoları) vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../chaos/"
+        dest: "{{ target_home }}/chaos/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: DİNAMİK IP ENJEKSİYONU (PROJE 4 DERS 7: KÜÇÜK HARF GEÇERLİ HOST)
+    # --------------------------------------------------------------------------
+    - name: "Kopyalanan YAML dosyalarında MASTER_IP ve APP_IP yer tutucularını gerçek Public IP'lerle değiştir"
+      shell: |
+        find {{ target_home }}/helm-values {{ target_home }}/app {{ target_home }}/gitops {{ target_home }}/observability {{ target_home }}/chaos -type f \( -name "*.yaml" -o -name "*.yml" \) -exec sed -i \
+          -e "s/<MASTER_IP>/{{ master_public_ip }}/g" \
+          -e "s/MASTER_IP/{{ master_public_ip }}/g" \
+          -e "s/<APP_IP>/{{ app_worker_public_ip }}/g" \
+          -e "s/APP_IP/{{ app_worker_public_ip }}/g" {} +
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: CERT-MANAGER KURULUMU VE WEBHOOK HAZIRLIK KONTROLÜ
+    # --------------------------------------------------------------------------
+    - name: "cert-manager'ı (CRD'ler ile birlikte) cert-manager namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --set crds.enabled=true \
+          --set global.leaderElection.namespace=cert-manager \
+          --wait --timeout=180s
+      changed_when: true
+
+    - name: "cert-manager ve cert-manager-webhook pod'larının tamamen hazır olmasını bekle"
+      shell: |
+        {{ kubectl_cmd }} rollout status deployment/cert-manager -n cert-manager --timeout=150s
+        {{ kubectl_cmd }} rollout status deployment/cert-manager-cainjector -n cert-manager --timeout=150s
+        {{ kubectl_cmd }} rollout status deployment/cert-manager-webhook -n cert-manager --timeout=150s
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 5. ADIM: RANCHER SERVER KURULUMU VE NAMESPACE'LERİN DEFAULT PROJECT'E BAĞLANMASI
+    # --------------------------------------------------------------------------
+    - name: "Rancher Yönetim Panelini vm-master (cattle-system) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install rancher rancher-latest/rancher \
+          --namespace cattle-system \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/rancher-values.yaml \
+          --set hostname=rancher.{{ master_public_ip }}.nip.io \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "Rancher Server deployment'ının hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} rollout status deployment/rancher -n cattle-system --timeout=300s"
+      changed_when: false
+
+    - name: "Tüm proje Namespace'lerini Rancher Default Project'e bağla"
+      shell: |
+        DEFAULT_PROJ=$({{ kubectl_cmd }} get projects.management.cattle.io -n local -o jsonpath='{.items[?(@.spec.displayName=="Default")].metadata.name}' 2>/dev/null || true)
+        if [ -n "$DEFAULT_PROJ" ]; then
+          for ns in data messaging app monitoring argocd chaos-mesh gitlab-runner; do
+            {{ kubectl_cmd }} annotate namespace $ns field.cattle.io/projectId="local:${DEFAULT_PROJ}" --overwrite=true || true
+            {{ kubectl_cmd }} label namespace $ns field.cattle.io/projectId="${DEFAULT_PROJ}" --overwrite=true || true
+          done
+        fi
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 6. ADIM: ARGOCD (GITOPS MOTORU) KURULUMU (VM-MASTER)
+    # --------------------------------------------------------------------------
+    - name: "ArgoCD GitOps platformunu argocd namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install argocd argo/argo-cd \
+          --namespace argocd \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/argocd-values.yaml \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "ArgoCD Server pod'unun hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} rollout status deployment/argocd-server -n argocd --timeout=180s"
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 7. ADIM: KUBE-PROMETHEUS-STACK (PROMETHEUS + ALERTMANAGER + GRAFANA) KURULUMU
+    # --------------------------------------------------------------------------
+    # PROJE 4 DERS 5: Grafana sidecar kapalı olduğu için dashboard'larımızı
+    # `resiliencestream-dashboards` ConfigMap'i olarak oluşturup Grafana'ya mount ediyoruz.
+    - name: "Grafana için resiliencestream-dashboards ConfigMap'ini oluştur (varsa JSON dosyalarından)"
+      shell: |
+        if [ -d "{{ target_home }}/observability/dashboards" ] && ls {{ target_home }}/observability/dashboards/*.json >/dev/null 2>&1; then
+          {{ kubectl_cmd }} create configmap resiliencestream-dashboards -n monitoring \
+            --from-file={{ target_home }}/observability/dashboards/ \
+            --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -
+        else
+          {{ kubectl_cmd }} create configmap resiliencestream-dashboards -n monitoring \
+            --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -
+        fi
+      changed_when: true
+
+    - name: "Prometheus, Alertmanager ve Grafana (kube-prometheus-stack) yığınını monitoring namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+          --namespace monitoring \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/monitoring-values.yaml \
+          --wait --timeout=360s
+      changed_when: true
+
+    - name: "SLO ve Kaos PrometheusRule alarm kurallarını uygula (varsa)"
+      shell: |
+        if [ -f "{{ target_home }}/observability/prometheus-rules.yaml" ]; then
+          {{ kubectl_cmd }} apply -f {{ target_home }}/observability/prometheus-rules.yaml
+        fi
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 8. ADIM: DATA KATMANI KURULUMU (VM-WORKER-DATA -> KAFKA, CASSANDRA, POSTGRESQL)
+    # --------------------------------------------------------------------------
+    - name: "PostgreSQL 16 ilişkisel veritabanını vm-worker-data (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install postgres bitnami/postgresql \
+          --namespace data \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/postgres-values.yaml \
+          --wait --timeout=240s
+      changed_when: true
+
+    - name: "Apache Kafka (KRaft - ZooKeeper'sız) olay akış motorunu vm-worker-data (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install kafka bitnami/kafka \
+          --namespace data \
+          -f {{ target_home }}/helm-values/kafka-values.yaml \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "Apache Cassandra (768M Heap) geniş sütunlu NoSQL veritabanını vm-worker-data (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install cassandra bitnami/cassandra \
+          --namespace data \
+          -f {{ target_home }}/helm-values/cassandra-values.yaml \
+          --wait --timeout=360s
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 9. ADIM: MESSAGING KATMANI KURULUMU (VM-WORKER-APP -> RABBITMQ & REDIS)
+    # --------------------------------------------------------------------------
+    - name: "Redis 7 önbellek sunucusunu vm-worker-app (messaging namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install redis bitnami/redis \
+          --namespace messaging \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/redis-values.yaml \
+          --wait --timeout=240s
+      changed_when: true
+
+    - name: "RabbitMQ (Management Plugin + DLQ Desteği) mesaj kuyruğunu vm-worker-app (messaging namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install rabbitmq bitnami/rabbitmq \
+          --namespace messaging \
+          -f {{ target_home }}/helm-values/rabbitmq-values.yaml \
+          --set ingress.hostname=rabbitmq.{{ app_worker_public_ip }}.nip.io \
+          --wait --timeout=300s
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 10. ADIM: RESILIENCESTREAM UYGULAMASININ HELM VE ARGOCD GITOPS İLE DAĞITIMI
+    # --------------------------------------------------------------------------
+    - name: "resiliencestream (app/chart) Helm Chart'ını app namespace'i içine dağıt (vm-worker-app)"
+      shell: |
+        if [ -d "{{ target_home }}/app/chart" ]; then
+          {{ helm_cmd }} upgrade --install resiliencestream {{ target_home }}/app/chart \
+            --namespace app \
+            --create-namespace \
+            --set ingress.host=app.{{ app_worker_public_ip }}.nip.io \
+            --wait --timeout=240s
+        fi
+      changed_when: true
+
+    - name: "ArgoCD GitOps Application manifestosunu (gitops/argocd-application.yaml) kümeye uygula"
+      shell: |
+        if [ -f "{{ target_home }}/gitops/argocd-application.yaml" ]; then
+          {{ kubectl_cmd }} apply -f {{ target_home }}/gitops/argocd-application.yaml
+        fi
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 11. ADIM: SMOKE TEST & DOĞRULAMA BLOĞU (BLOCK / RESCUE)
+    # --------------------------------------------------------------------------
+    - name: "Faz 5 Doğrulama (Smoke Test): Platform, Data (Kafka/Cassandra/PG) ve Messaging (RabbitMQ/Redis) Kontrolü"
+      block:
+        - name: "Tüm StatefulSet ve Deployment'ların Ready durumda olduğunu doğrula"
+          shell: |
+            set -e
+            {{ kubectl_cmd }} rollout status statefulset/postgres-postgresql -n data --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/kafka-controller -n data --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/cassandra -n data --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/redis-master -n messaging --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/rabbitmq -n messaging --timeout=60s
+            {{ kubectl_cmd }} rollout status deployment/monitoring-grafana -n monitoring --timeout=60s
+          changed_when: false
+      rescue:
+        - name: "Faz 5 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 5 (PLATFORM, DATA & MESSAGING) DOĞRULAMASI BAŞARISIZ OLDU!"
+              - "Lütfen vm-master üzerinde şu teşhis komutlarını çalıştırın:"
+              - "  1. Data Katmanı Pod/PVC : kubectl get pods,pvc -n data -o wide"
+              - "  2. Cassandra Logları    : kubectl logs statefulset/cassandra -n data --tail=80"
+              - "  3. Messaging Pod/PVC    : kubectl get pods,pvc -n messaging -o wide"
+              - "  4. Düğüm Kaynak Tahsisi : kubectl describe node vm-worker-data vm-worker-app | grep -A 8 'Allocated resources'"
+              - "  5. Son Uyarı Olayları   : kubectl get events -A --sort-by='.lastTimestamp' | tail -n 30"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 5 Platform & Veri Katmanı doğrulaması başarısız oldu. Yukarıdaki teşhis komutlarını inceleyin."

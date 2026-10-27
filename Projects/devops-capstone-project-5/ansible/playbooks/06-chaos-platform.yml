@@ -1,0 +1,130 @@
+---
+# ==============================================================================
+# FAZ 6: CHAOS MESH KAOS MÜHENDİSLİĞİ PLATFORMU KURULUMU
+# Dosya: playbooks/06-chaos-platform.yml
+# Hedef: vm-master (Helm 3 ile Chaos Mesh kurulumu ve RKE2 containerd entegrasyonu)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Proje 5'in kalbi olan Kaos Mühendisliği (Chaos Engineering) deneylerini
+# (`PodChaos`, `NetworkChaos`, `StressChaos`, `IOChaos`, `DNSChaos`, `Workflow`)
+# çalıştıracak Chaos Mesh platformunu ayağa kaldırır.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI (PROJE 4 DERS 10)?
+# - En Sık Yapılan RKE2 + Chaos Mesh Hatası:
+#   Standart Kubernetes dağıtımlarında containerd soketi `/run/containerd/containerd.sock`
+#   yolundadır. Ancak RKE2 (ve k3s) kendi gömülü containerd sürecini
+#   **`/run/k3s/containerd/containerd.sock`** üzerinde çalıştırır!
+#   Eğer `chaosDaemon.runtime=containerd` ve `chaosDaemon.socketPath=/run/k3s/containerd/containerd.sock`
+#   verilmezse, `chaos-daemon` pod'ları `Running` görünse bile ilk kaos deneyinde
+#   `failed to create containerd client: dial unix /run/containerd/containerd.sock: no such file`
+#   hatasıyla patlar.
+# - Bu playbook hem `helm-values/chaos-mesh-values.yaml` dosyasını hem de açık
+#   `--set` bayraklarını kullanarak RKE2 containerd soketini ve `chaos.<MASTER_IP>.nip.io`
+#   Ingress kaydını hatasız yapılandırır.
+# ==============================================================================
+
+- name: "Faz 6: Chaos Mesh Kaos Mühendisliği Platformunun RKE2 Üzerine Kurulumu"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+    target_home: "/home/{{ ansible_user | default('ysf') }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: CHAOS MESH HELM REPO VE CRD KURULUMU (RKE2 SOKET YOLUYLA)
+    # --------------------------------------------------------------------------
+    - name: "Chaos Mesh Helm deposunu güncelle"
+      shell: |
+        {{ helm_cmd }} repo add chaos-mesh https://charts.chaos-mesh.org --force-update
+        {{ helm_cmd }} repo update chaos-mesh
+      changed_when: true
+
+    - name: "Chaos Mesh platformunu RKE2 containerd soketi (/run/k3s/containerd/containerd.sock) ile chaos-mesh namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install chaos-mesh chaos-mesh/chaos-mesh \
+          --namespace chaos-mesh \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/chaos-mesh-values.yaml \
+          --set chaosDaemon.runtime=containerd \
+          --set chaosDaemon.socketPath=/run/k3s/containerd/containerd.sock \
+          --set dashboard.ingress.hosts[0].name=chaos.{{ master_public_ip }}.nip.io \
+          --wait --timeout=300s
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: CHAOS CONTROLLER, DAEMONSET VE DASHBOARD HAZIRLIK BEKLEMESİ
+    # --------------------------------------------------------------------------
+    - name: "chaos-controller-manager, chaos-daemon ve chaos-dashboard bileşenlerinin hazır olmasını bekle"
+      shell: |
+        {{ kubectl_cmd }} rollout status deployment/chaos-controller-manager -n chaos-mesh --timeout=180s
+        {{ kubectl_cmd }} rollout status daemonset/chaos-daemon -n chaos-mesh --timeout=180s
+        {{ kubectl_cmd }} rollout status deployment/chaos-dashboard -n chaos-mesh --timeout=180s
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: KURULUM ÖZETİ VE TÜM ERİŞİM ADRESLERİNİN GÖSTERİLMESİ
+    # --------------------------------------------------------------------------
+    - name: "ArgoCD başlangıç admin şifresini (argocd-initial-admin-secret) oku"
+      shell: |
+        {{ kubectl_cmd }} -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+      register: argocd_admin_password
+      changed_when: false
+      failed_when: false
+
+    - name: "ResilienceStream Platformu ve Kaos Mühendisliği Lab Erişim Özeti"
+      debug:
+        msg:
+          - "=========================================================================="
+          - "🔥 RESILIENCESTREAM KAOS MÜHENDİSLİĞİ & GITOPS PLATFORMU HAZIR!"
+          - "=========================================================================="
+          - "1. Rancher UI       : https://rancher.{{ master_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre: admin / AdminPassword2026!"
+          - "--------------------------------------------------------------------------"
+          - "2. ArgoCD UI        : http://argocd.{{ master_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre: admin / {{ argocd_admin_password.stdout | default('Secret üzerinden kontrol edin') }}"
+          - "--------------------------------------------------------------------------"
+          - "3. Grafana UI       : http://grafana.{{ master_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre: admin / AdminPassword2026!"
+          - "--------------------------------------------------------------------------"
+          - "4. Chaos Mesh UI    : http://chaos.{{ master_public_ip }}.nip.io"
+          - "   RKE2 Soket Yolu  : /run/k3s/containerd/containerd.sock (3/3 DaemonSet)"
+          - "--------------------------------------------------------------------------"
+          - "5. RabbitMQ Mgmt UI : http://rabbitmq.{{ app_worker_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre: resilience / AdminPassword2026!"
+          - "--------------------------------------------------------------------------"
+          - "6. Order API & UI   : http://app.{{ app_worker_public_ip }}.nip.io"
+          - "   Liveness / Ready : /healthz  |  /readyz  |  /metrics"
+          - "=========================================================================="
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: SMOKE TEST & DOĞRULAMA BLOĞU (BLOCK / RESCUE)
+    # --------------------------------------------------------------------------
+    - name: "Faz 6 Doğrulama (Smoke Test): Chaos Mesh CRD, 3 Düğümde chaos-daemon ve RKE2 Soket Kontrolü"
+      block:
+        - name: "Chaos Mesh CRD'lerinin, 3 chaos-daemon pod'unun ve Ingress'in hazır olduğunu doğrula"
+          shell: |
+            set -e
+            {{ kubectl_cmd }} get crd podchaos.chaos-mesh.org networkchaos.chaos-mesh.org stresschaos.chaos-mesh.org iochaos.chaos-mesh.org dnschaos.chaos-mesh.org >/dev/null
+            DAEMON_READY=$({{ kubectl_cmd }} get daemonset chaos-daemon -n chaos-mesh -o jsonpath='{.status.numberReady}')
+            if [ "$DAEMON_READY" -lt 3 ]; then
+              echo "HATA: chaos-daemon 3 düğümün tamamında Ready değil ($DAEMON_READY/3)!"
+              exit 1
+            fi
+            {{ kubectl_cmd }} get daemonset chaos-daemon -n chaos-mesh -o yaml | grep -q "/run/k3s/containerd/containerd.sock"
+            {{ kubectl_cmd }} get ingress -n chaos-mesh | grep -q "chaos.{{ master_public_ip }}.nip.io"
+          changed_when: false
+      rescue:
+        - name: "Faz 6 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 6 (CHAOS MESH PLATFORM) DOĞRULAMASI BAŞARISIZ OLDU!"
+              - "Lütfen vm-master üzerinde şu teşhis komutlarını çalıştırın:"
+              - "  1. Chaos Mesh Podları : kubectl get pods -n chaos-mesh -o wide"
+              - "  2. Chaos Daemon Log   : kubectl logs -n chaos-mesh -l app.kubernetes.io/component=chaos-daemon --tail=50"
+              - "  3. Soket Doğrulaması  : kubectl get ds chaos-daemon -n chaos-mesh -o jsonpath='{.spec.template.spec.volumes}'"
+              - "  4. CRD Kontrolü       : kubectl get crd | grep chaos-mesh"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 6 Chaos Mesh doğrulaması başarısız oldu. Yukarıdaki teşhis komutlarını inceleyin."
