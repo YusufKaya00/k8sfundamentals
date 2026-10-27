@@ -1,0 +1,101 @@
+---
+# ==============================================================================
+# FAZ 3: WORKER DÜĞÜMLERİNİN RKE2 KÜMESİNE KATILIMI (RKE2 AGENT BOOTSTRAP)
+# Dosya: playbooks/03-rke2-workers.yml
+# Hedef: master (Token okuma) -> workers (vm-worker-data & vm-worker-app)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# RKE2 mimarisinde işçi düğümler (`rke2-agent`), kontrol düzlemine (`vm-master`)
+# katılırken iki temel bilgiye ihtiyaç duyar:
+#   1. RKE2 Supervisor API Adresi (`https://10.30.1.4:9345`): Port 9345, RKE2'nin
+#      düğüm kaydı (node registration), sertifika imzalama (CSR) ve konfigürasyon
+#      dağıtımı için kullandığı özel kontrol portudur.
+#   2. Küme Katılım Anahtarı (`node-token`): `vm-master` üzerinde RKE2 Server ilk
+#      başladığında `/var/lib/rancher/rke2/server/node-token` dosyasında üretilir.
+#
+# Bu playbook önce `vm-master` üzerinden bu token'ı `slurp` modülüyle Base64
+# formatında güvenli bir şekilde belleğe çeker ve ardından `vm-worker-data`
+# (`10.30.1.5`) ile `vm-worker-app` (`10.30.1.6`) sunucularına paralel olarak
+# enjekte ederek `rke2-agent` servisini başlatır.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# BÖLÜM 1: VM-MASTER SUNUCUSUNDAN KÜME KATILIM ANAHTARINI (NODE-TOKEN) ALMA
+# ------------------------------------------------------------------------------
+- name: "Faz 3.1: Master Sunucusundan RKE2 Katılım Token'ını (node-token) Oku"
+  hosts: master
+  become: true
+  tasks:
+    - name: "/var/lib/rancher/rke2/server/node-token dosyasını Base64 olarak oku"
+      slurp:
+        src: /var/lib/rancher/rke2/server/node-token
+      register: master_node_token_b64
+
+    - name: "Base64 Token'ı çöz ve küme genelinde erişilebilir değişkene (rke2_cluster_token) ata"
+      set_fact:
+        rke2_cluster_token: "{{ master_node_token_b64.content | b64decode | trim }}"
+
+# ------------------------------------------------------------------------------
+# BÖLÜM 2: 2 WORKER SUNUCUSUNDA RKE2-AGENT KURULUMU VE KÜMEYE KATILIM
+# ------------------------------------------------------------------------------
+- name: "Faz 3.2: Worker Sunucularında (vm-worker-data & vm-worker-app) RKE2 Agent Kurulumu"
+  hosts: workers
+  become: true
+  vars:
+    rke2_version: "v1.31.2+rke2r1"
+    master_private_ip: "10.30.1.4"
+
+  tasks:
+    - name: "Worker düğümlerinde /etc/rancher/rke2 yapılandırma dizinini oluştur"
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+
+    - name: "Worker /etc/rancher/rke2/config.yaml dosyasını Master IP (10.30.1.4) ve Token ile yapılandır"
+      copy:
+        dest: /etc/rancher/rke2/config.yaml
+        content: |
+          server: https://{{ master_private_ip }}:9345
+          token: "{{ hostvars[groups['master'][0]]['rke2_cluster_token'] }}"
+        mode: '0600'
+
+    - name: "RKE2 Agent ({{ rke2_version }}) ikili dosyalarını indir ve kur"
+      shell: "curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=agent INSTALL_RKE2_VERSION={{ rke2_version }} sh -"
+      args:
+        creates: /usr/local/bin/rke2
+
+    - name: "rke2-agent systemd servisini etkinleştir ve başlat"
+      systemd:
+        name: rke2-agent
+        state: started
+        enabled: true
+
+    # --------------------------------------------------------------------------
+    # SMOKE TEST & DOĞRULAMA BLOĞU (BLOCK / RESCUE)
+    # --------------------------------------------------------------------------
+    - name: "Faz 3 Doğrulama (Smoke Test): rke2-agent Systemd Servisi ve Containerd Soket Kontrolü"
+      block:
+        - name: "rke2-agent servisinin active (running) ve containerd soketinin hazır olduğunu doğrula"
+          shell: |
+            set -e
+            systemctl is-active --quiet rke2-agent
+            test -S /run/k3s/containerd/containerd.sock
+          retries: 12
+          delay: 5
+          register: worker_agent_check
+          until: worker_agent_check.rc == 0
+          changed_when: false
+      rescue:
+        - name: "Faz 3 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 3 (RKE2 WORKER BOOTSTRAP) DOĞRULAMASI BAŞARISIZ OLDU! ({{ inventory_hostname }})"
+              - "Lütfen ilgili worker sunucusunda şu teşhis komutlarını çalıştırın:"
+              - "  1. Agent Servis Durumu : sudo systemctl status rke2-agent"
+              - "  2. Agent Logları       : sudo journalctl -u rke2-agent -n 100 --no-pager"
+              - "  3. Master 9345 Erişimi : nc -zv 10.30.1.4 9345 && nc -zv 10.30.1.4 6443"
+              - "  4. NAT GW İnternet     : curl -I https://get.rke2.io"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 3 RKE2 Worker ({{ inventory_hostname }}) doğrulaması başarısız oldu."
