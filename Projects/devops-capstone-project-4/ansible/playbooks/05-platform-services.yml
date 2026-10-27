@@ -43,6 +43,7 @@
     # - argo                 : ArgoCD (GitOps sürekli teslimat motoru)
     # - prometheus-community : kube-prometheus-stack (Prometheus + Grafana + Exporters)
     # - bitnami              : Kafka (KRaft), Redis, PostgreSQL, MongoDB
+    # - gitlab               : Self-Hosted GitLab Runner (Kubernetes Executor)
     - name: "Resmi Helm Chart depolarını ekle ve indeksleri güncelle"
       shell: |
         {{ helm_cmd }} repo add jetstack https://charts.jetstack.io --force-update
@@ -50,6 +51,7 @@
         {{ helm_cmd }} repo add argo https://argoproj.github.io/argo-helm --force-update
         {{ helm_cmd }} repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
         {{ helm_cmd }} repo add bitnami https://charts.bitnami.com/bitnami --force-update
+        {{ helm_cmd }} repo add gitlab https://charts.gitlab.io --force-update
         {{ helm_cmd }} repo update
       changed_when: true
 
