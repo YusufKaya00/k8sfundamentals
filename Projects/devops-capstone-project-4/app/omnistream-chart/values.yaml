@@ -7,37 +7,31 @@
 
 # Pod kopya sayısı (`vm-worker-app` Standard_B1ms 2GB RAM üzerinde hafif çalışması için 1)
 replicaCount: 1
-
 # Konteyner İmaj Ayarları:
 # NOT: Kullanıcı kendi `yusufk00/omnistream-app:v1` imajını CI/CD ile derleyip
 # Docker Hub'a göndermeden önce de kümenin kutudan çıktığı gibi (out-of-the-box)
 # sorunsuz çalışması için varsayılan (fallback) olarak `yusufk00/rke2-multi-app:v2`
 # tanımlanmıştır. GitLab CI pipeline çalıştığında burası otomatik güncellenir!
 image:
-  repository: yusufk00/rke2-multi-app
-  tag: "v2"
+  repository: yusufk00/omnistream-app
+  tag: "26935e11"
   pullPolicy: IfNotPresent
-
 # Düğüm İzolasyonu (Node Placement):
 # Uygulama pod'unun sadece uygulama katmanı için ayrılmış `vm-worker-app`
 # sunucusunda (`tier=app`) çalışmasını garanti eder.
 nodeSelector:
   tier: app
-
 tolerations: []
-
 # Kubernetes Servis Ayarları (ClusterIP üzerinden Ingress ve Prometheus erişimi)
 service:
   type: ClusterIP
   port: 80
   targetPort: 8000
-
 # RKE2 NGINX Ingress Controller Ayarları:
 ingress:
   enabled: true
   className: nginx
   host: app.9.205.30.202.nip.io
-
 # Prometheus Operator (kube-prometheus-stack) Entegrasyonu:
 # `serviceMonitor.enabled: true` olduğunda `servicemonitor.yaml` şablonu devreye
 # girer ve Prometheus'un `/metrics` uç noktasını otomatik olarak kazımasını sağlar.
@@ -48,7 +42,6 @@ serviceMonitor:
   path: /metrics
   additionalLabels:
     release: kube-prometheus-stack
-
 # Konteyner Kaynak Limitleri (Zero OOM / Zero CPU Starvation Matrisi ile uyumlu)
 resources:
   requests:
@@ -57,7 +50,6 @@ resources:
   limits:
     cpu: 300m
     memory: 128Mi
-
 # Polyglot Persistence & Event Streaming Bağlantı Parametreleri (CoreDNS FQDN)
 env:
   KAFKA_BOOTSTRAP_SERVERS: "kafka.data.svc.cluster.local:9092"
