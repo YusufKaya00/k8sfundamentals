@@ -475,8 +475,15 @@ def healthz() -> JSONResponse:
 def metrics() -> Response:
     """
     Prometheus Operator (ServiceMonitor) tarafından kazınan (scrape) metrik uç noktası.
+    Prometheus her geldiğinde arka plandaki tüm veritabanlarının canlılığını doğrudan
+    sorgular, böylece bir çökme (Chaos) anında anında 0.0 (DOWN) döner!
     """
     HTTP_REQUESTS_TOTAL.labels(method="GET", endpoint="/metrics").inc()
+    # Canlı sağlık kontrolünü aktif olarak çalıştır:
+    try:
+        collect_full_telemetry(event_source="prometheus_scrape")
+    except Exception:
+        pass
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
