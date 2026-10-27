@@ -1,0 +1,81 @@
+# ==============================================================================
+# GITLAB RUNNER (gitlab/gitlab-runner) — DEVSECOPS CI/CD İŞLEYİCİSİ ŞABLONU
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu Helm değerleri dosyası, GitLab CI/CD boru hattındaki (.gitlab-ci.yml)
+# 4 aşamayı (Rootless Buildah İmaj İnşası -> Trivy Güvenlik Taraması -> Docker Hub Push
+# -> GitOps Helm Tag Güncellemesi) kendi RKE2 kümemiz içinde (Self-Hosted Kubernetes
+# Executor olarak) çalıştırmak istediğimizde kullanılan üretim şablonudur.
+#
+# NEDEN vm-worker-app ÜZERİNE KONUMLANDIRILIR?
+# CI/CD derleme ve güvenlik taraması (Trivy DB indirme + imaj katmanı analizi)
+# geçici (ephemeral) pod'lar oluşturur. Veritabanı ve Kafka düğümlerimizin disk/CPU
+# performansını etkilememesi için hem GitLab Runner yöneticisi hem de onun doğurduğu
+# CI Job pod'ları "tier: app" etiketli "vm-worker-app" düğümüne yönlendirilir.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. GITLAB SUNUCUSU VE KAYIT ANAHTARI (REGISTRATION TOKEN)
+# ------------------------------------------------------------------------------
+# GitLab.com veya kendi kurumsal GitLab sunucunuzun adresi:
+gitlabUrl: https://gitlab.com/
+
+# GitLab -> Settings -> CI/CD -> Runners ekranından alınan Runner Token:
+# (Kurulum sırasında --set runnerToken="glrt-..." parametresiyle de geçilebilir)
+runnerRegistrationToken: "REPLACE_WITH_GITLAB_RUNNER_TOKEN"
+
+# ------------------------------------------------------------------------------
+# 2. EŞZAMANLI İŞ (CONCURRENCY) VE KONTROL ARALIĞI
+# ------------------------------------------------------------------------------
+# Standard_B1ms (1 vCPU / 2 GB RAM) boyutundaki vm-worker-app düğümünü aşırı
+# yüklememek için aynı anda en fazla 2 CI/CD işinin (Job) çalışmasına izin veriyoruz.
+concurrent: 2
+checkInterval: 10
+
+# ------------------------------------------------------------------------------
+# 3. RBAC (ROL TABANLI ERİŞİM KONTROLÜ) YETKİLERİ
+# ------------------------------------------------------------------------------
+# ÇOK ÖNEMLİ: GitLab Runner'ın Kubernetes Executor modunda çalışabilmesi için
+# RKE2 API Server'a bağlanıp dinamik olarak Job Pod'ları, Secret'lar ve ConfigMap'ler
+# oluşturma/silme yetkisine (ServiceAccount + Role + RoleBinding) ihtiyacı vardır.
+rbac:
+  create: true
+
+# ------------------------------------------------------------------------------
+# 4. RUNNER YÖNETİCİ POD'U KAYNAK VE DÜĞÜM PLANLAMASI
+# ------------------------------------------------------------------------------
+resourcesPreset: "none"
+
+# Runner ana pod'unun "vm-worker-app" sunucusunda çalışmasını sağlar:
+nodeSelector:
+  tier: app
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 5. KUBERNETES EXECUTOR VE GEÇİCİ CI/CD JOB POD'U KONFİGÜRASYONU
+# ------------------------------------------------------------------------------
+runners:
+  # CI/CD işlerinin oluşturulacağı özel Kubernetes ayarları (config.toml şablonu):
+  # Burada oluşturulan her bir geçici derleme/Trivy pod'unun da "tier=app" düğümüne
+  # düşmesini ve düşük kaynak limitleriyle çalışmasını garanti altına alıyoruz.
+  config: |
+    [[runners]]
+      [runners.kubernetes]
+        namespace = "{{.Release.Namespace}}"
+        image = "ubuntu:24.04"
+        privileged = false
+        cpu_request = "100m"
+        cpu_limit = "500m"
+        memory_request = "128Mi"
+        memory_limit = "512Mi"
+        helper_cpu_request = "25m"
+        helper_memory_request = "64Mi"
+        [runners.kubernetes.node_selector]
+          tier = "app"

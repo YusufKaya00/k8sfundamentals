@@ -1,0 +1,67 @@
+# ==============================================================================
+# POSTGRESQL 16 (bitnami/postgresql) — İLİŞKİSEL (ACID SQL) VERİTABANI KATMANI
+# ==============================================================================
+# MİMARİ AMAÇ:
+# PostgreSQL, OmniStream platformumuzda yapılandırılmış (structured) ilişkisel
+# verileri, işlem kayıtlarını (transactional logs) ve ACID bütünlüğü gerektiren
+# kurumsal tabloları saklayan ana SQL veritabanımızdır.
+#
+# FİZİKSEL DÜĞÜM İZOLASYONU (DEDICATED SQL NODE):
+# İlişkisel veritabanları yoğun Disk I/O (WAL - Write-Ahead Logging) ve bellek
+# tamponu (shared_buffers) kullanır. NoSQL (MongoDB) veya yayın (Kafka) katmanlarıyla
+# disk/bellek yarışına (noisy neighbor sendromu) girmemesi için tamamen kendine ait
+# "vm-worker-sql" (Standard_B1ms: 1 vCPU / 2 GB RAM) sunucusunda izole edilmiştir.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. KİMLİK DOĞRULAMA VE VERİTABANI ŞEMASI (AUTH)
+# ------------------------------------------------------------------------------
+# İlk kurulum anında süper kullanıcı (postgres) şifresini, uygulama kullanıcısını
+# (appuser), uygulama şifresini ve "appdb" veritabanını otomatik oluşturur.
+# Uygulama "postgres-postgresql.data.svc.cluster.local:5432" adresinden erişir.
+auth:
+  postgresPassword: "PgStrongPassword123!"
+  username: "appuser"
+  password: "AppDbPassword123!"
+  database: "appdb"
+
+# ------------------------------------------------------------------------------
+# 2. BİRİNCİL (PRIMARY) VERİTABANI SUNUCUSU YAPILANDIRMASI
+# ------------------------------------------------------------------------------
+primary:
+  # Bitnami'nin varsayılan kaynak şablonlarını kapatarak manuel kontrol sağlıyoruz:
+  resourcesPreset: "none"
+
+  # Kaynak İstekleri ve Sınırları:
+  # 1 vCPU / 2 GB RAM'li vm-worker-sql sunucusunda kubelet, Canal CNI ve
+  # Node Exporter pod'larına yer bırakmak için 100m CPU / 192Mi RAM başlangıç
+  # isteği ve 600m CPU / 768Mi RAM üst limiti tanımlanmıştır.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 600m
+      memory: 768Mi
+
+  # Düğüm Sabitleme (Node Selector):
+  # PostgreSQL pod'unun (postgres-postgresql-0) yalnızca "tier: db-sql" etiketli
+  # vm-worker-sql düğümüne atanmasını garanti eder.
+  nodeSelector:
+    tier: db-sql
+
+  # Taint Tolerasyonu (Dedicated SQL İzolasyonu):
+  # vm-worker-sql sunucusuna basılan "dedicated=db-sql:NoSchedule" Taint'ini
+  # yalnızca bu tolerasyona sahip olan PostgreSQL pod'u geçebilir.
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: db-sql
+      effect: NoSchedule
+
+  # Kalıcı Depolama (PVC — Local-Path StorageClass):
+  # Tablo verilerinin ve WAL dosyalarının kalıcı olarak "/var/lib/rancher/local-path-provisioner"
+  # altında saklanması için 4 GB disk hacmi talep eder.
+  persistence:
+    enabled: true
+    size: 4Gi

@@ -1,0 +1,12 @@
+# ==============================================================================
+# OMNISTREAM HELM CHART METADATA (Chart.yaml)
+# ==============================================================================
+# ArgoCD bu dosyayı okuyarak Helm Chart'ın adını, şema sürümünü (v2 = Helm 3)
+# ve paketlenen uygulamanın versiyonunu (`appVersion`) tespit eder.
+# ==============================================================================
+apiVersion: v2
+name: omnistream-app
+description: Event-Driven Polyglot Microservice (Kafka KRaft + Redis + PostgreSQL + MongoDB + Prometheus ServiceMonitor) Helm Chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
