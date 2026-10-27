@@ -712,7 +712,7 @@ def dashboard() -> HTMLResponse:
 <div class="container">
     <header class="header">
         <div class="title-block">
-            <h1>⚡ OMNISTREAM // EVENT-DRIVEN POLYGLOT SRE TERMINAL</h1>
+            <h1>⚡ OMNISTREAM // EVENT-DRIVEN POLYGLOT SRE TERMINAL  DENEMEEEE</h1>
             <p>Pod: <strong>{telemetry["pod_hostname"]}</strong> | Sürüm: <strong>v{telemetry["version"]}</strong> | Durum: <strong>{telemetry["overall_health"]}</strong> | {telemetry["timestamp_utc"]}</p>
         </div>
         <div class="actions">
