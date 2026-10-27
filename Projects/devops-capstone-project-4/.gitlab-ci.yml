@@ -164,34 +164,30 @@ gitops_promote:
     - git config --global user.name "OmniStream GitOps Bot"
     - git config --global user.email "gitops-bot@omnistream.local"
   script:
-    - 'echo "🔄 [4/4] GitOps Manifestosu (values.yaml) yeni imaj etiketiyle güncelleniyor..."'
     - |
+      echo "🔄 [4/4] GitOps Manifestosu (values.yaml) yeni imaj etiketiyle güncelleniyor..."
       if [ -f "${CHART_VALUES_FILE}" ]; then
         TARGET_VALUES="${CHART_VALUES_FILE}"
       else
         TARGET_VALUES="app/omnistream-chart/values.yaml"
       fi
-    - 'echo "Hedef Helm values dosyası: ${TARGET_VALUES}"'
-    # yq / sed kullanarak image.repository ve image.tag alanlarını yeni imajla güncelle
-    - sed -i "s|repository:.*|repository: ${DOCKERHUB_USERNAME}/omnistream-app|g" "${TARGET_VALUES}"
-    - sed -i "s|tag:.*|tag: \"${IMAGE_TAG}\"|g" "${TARGET_VALUES}"
-    - 'echo "📄 Güncellenmiş ${TARGET_VALUES} içeriği:"'
-    - grep -n -A 4 "image:" "${TARGET_VALUES}"
-    # Değişikliği commit et ve [skip ci] ile sonsuz pipeline döngüsünü engelle
-    - git add "${TARGET_VALUES}"
-    - |
+      echo "Hedef Helm values dosyasi -> ${TARGET_VALUES}"
+      yq -i ".image.repository = \"${DOCKERHUB_USERNAME}/omnistream-app\"" "${TARGET_VALUES}"
+      yq -i ".image.tag = \"${IMAGE_TAG}\"" "${TARGET_VALUES}"
+      grep -n -A 4 "image" "${TARGET_VALUES}"
+      git add "${TARGET_VALUES}"
       if git diff --cached --quiet; then
-        echo "ℹ️ values.yaml zaten güncel, yeni commit gerekmiyor."
+        echo "ℹ️ values.yaml zaten guncel, yeni commit gerekmiyor."
       else
-        git commit -m "chore(gitops): promote omnistream-app image to ${IMAGE_TAG} [skip ci]"
+        git commit -m "chore(gitops) promote omnistream-app image to ${IMAGE_TAG} [skip ci]"
         if [ -n "${GITLAB_ACCESS_TOKEN}" ]; then
           CLEAN_REPO_URL=$(echo "${CI_REPOSITORY_URL}" | sed -E 's|https?://[^@]+@||')
           git push "https://oauth2:${GITLAB_ACCESS_TOKEN}@${CLEAN_REPO_URL}" "HEAD:${CI_COMMIT_REF_NAME}"
         else
-          echo "⚠️ GITLAB_ACCESS_TOKEN tanımlı değil, yerel commit oluşturuldu (ArgoCD senkronizasyonu için GITLAB_ACCESS_TOKEN ekleyin)."
+          echo "⚠️ GITLAB_ACCESS_TOKEN tanimli degil."
         fi
       fi
-    - echo "🎯 GitOps Promote tamamlandı! ArgoCD yeni sürümü (${IMAGE_TAG}) otomatik olarak RKE2 kümesine uygulayacak."
+      echo "🎯 GitOps Promote tamamlandi! ArgoCD yeni surumu (${IMAGE_TAG}) otomatik olarak RKE2 kumesine uygulayacak."
   rules:
     - if: '$CI_COMMIT_MESSAGE =~ /\[skip ci\]/i'
       when: never
