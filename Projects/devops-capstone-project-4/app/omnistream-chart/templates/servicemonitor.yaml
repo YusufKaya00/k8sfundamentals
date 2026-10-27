@@ -14,7 +14,7 @@
 #    servisini bulur ve onun `port: http` portu üzerinden `/metrics` uç noktasını
 #    her 15 saniyede bir (`interval: 15s`) otomatik olarak kazır (scrape eder)!
 # ==============================================================================
-{{- if .Values.serviceMonitor.enabled -}}
+{{- if .Values.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
