@@ -1,0 +1,107 @@
+# ==============================================================================
+# RANCHER SERVER (v2.9/v2.10) — ÜRETİM ORTAMI HELM DEĞERLERİ (rancher-values.yaml)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Rancher Server; RKE2 kümemizin çoklu-küme (multi-cluster) yönetim panelini, RBAC
+# (Rol Tabanlı Erişim Kontrolü) politikalarını, proje/namespace izolasyonunu ve
+# görsel iş yükü izleme katmanını sağlayan merkezi yönetim düzlemidir (Management Plane).
+#
+# NEDEN vm-master (8 GB RAM) ÜZERİNE SABİTLENİYOR?
+# Azure for Students kotamızda (toplam 6 vCPU) 4 adet Worker düğümümüz Standard_B1ms
+# (1 vCPU / 2 GB RAM) boyutundadır ve Kafka, Redis, PostgreSQL, MongoDB ile FastAPI
+# iş yüklerini çalıştırmaktadır. Rancher Server dahili olarak norman/steve API
+# sunucularını, fleet-controller'ı ve cattle-cluster-agent'ı barındırdığı için
+# ~800 MB - 1.2 GB RAM tüketir. Bu yüzden 2 GB RAM'li worker düğümlerinde OOMKilled
+# (Out Of Memory) hatasına yol açmaması için 8 GB RAM'e sahip vm-master sunucusuna
+# kesin olarak sabitlenmiştir (Node Pinning).
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. KOPYA SAYISI (REPLICAS) VE YÜKSEK ERİŞİLEBİLİRLİK OPTİMİZASYONU
+# ------------------------------------------------------------------------------
+# Rancher varsayılan olarak 3 replika (High Availability) ile ayağa kalkmaya çalışır.
+# Ancak tek bir Control Plane (vm-master) düğümümüz olduğu ve kaynaklarımızı ArgoCD
+# ile Prometheus/Grafana ile paylaştığımız için replika sayısını 1'e düşürüyoruz.
+# Aksi takdirde diğer 2 replika Anti-Affinity kuralları veya yetersiz CPU yüzünden
+# "Pending" durumunda asılı kalacaktır.
+replicas: 1
+
+# ------------------------------------------------------------------------------
+# 2. İLK KURULUM (BOOTSTRAP) YÖNETİCİ ŞİFRESİ
+# ------------------------------------------------------------------------------
+# Rancher ilk kez kurulduğunda rastgele bir şifre üretip Kubernetes Secret içine
+# gömmek yerine, otomasyon ve eğitim ortamında doğrudan giriş yapabilmemiz için
+# başlangıç "admin" şifresini deterministik olarak belirliyoruz.
+bootstrapPassword: "AdminPassword2026!"
+
+# ------------------------------------------------------------------------------
+# 3. INGRESS VE TLS SERTİFİKA YÖNETİMİ (CERT-MANAGER ENTEGRASYONU)
+# ------------------------------------------------------------------------------
+# hostname değeri Ansible playbook (05-platform-services.yml) tarafından dinamik
+# olarak "rancher.<MASTER_IP>.nip.io" şeklinde 주입 (inject) edilir veya buradaki
+# varsayılan şablon üzerinden güncellenir. nip.io servisi, özel bir DNS sunucusu
+# kurmaya gerek kalmadan IP adresini otomatik olarak o IP'ye çözen wildcard DNS sağlar.
+hostname: rancher.MASTER_IP.nip.io
+
+ingress:
+  # RKE2 içerisinde yerleşik (built-in) olarak gelen NGINX Ingress Controller'ı
+  # kullanması için ingressClassName parametresini açıkça "nginx" olarak belirtiyoruz.
+  ingressClassName: nginx
+  tls:
+    # Sertifika kaynağı olarak "rancher" seçildiğinde, önceden kurduğumuz cert-manager
+    # devreye girerek Rancher'ın kendi Self-Signed CA sertifikasını otomatik üretir.
+    source: rancher
+
+# ------------------------------------------------------------------------------
+# 4. DÜĞÜM SEÇİCİ (NODE SELECTOR) — SADECE VM-MASTER ÜZERİNDE ÇALIŞTIRMA
+# ------------------------------------------------------------------------------
+# Kubernetes Scheduler'a Rancher pod'unu yalnızca hostname etiketi "vm-master"
+# olan sunucuya yerleştirmesini emrediyoruz.
+nodeSelector:
+  kubernetes.io/hostname: vm-master
+
+# Rancher chart'ının bazı alt bileşenleri (ör. webhook/post-install job'ları)
+# extraNodeSelectorTerms yapısını da desteklediği için tam uyumluluk sağlıyoruz:
+extraNodeSelectorTerms:
+  - key: kubernetes.io/hostname
+    operator: In
+    values:
+      - vm-master
+
+# ------------------------------------------------------------------------------
+# 5. TAINT TOLERASYONU (CRITICAL ADDONS ONLY İZOLASYONU)
+# ------------------------------------------------------------------------------
+# 04-node-isolation.yml playbook'unda vm-master düğümüne sıradan uygulama veya
+# veritabanı pod'larının yerleşmesini engellemek için "CriticalAddonsOnly=true:NoSchedule"
+# Taint'i (lekesi) basılmıştır. Rancher kritik bir yönetim eklentisi olduğu için
+# bu Taint'i tolere etme (görmezden gelme) iznine sahip olmalıdır.
+tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+extraTolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+# ------------------------------------------------------------------------------
+# 6. KAYNAK KISITLAMALARI (RESOURCE REQUESTS & LIMITS — SIFIR OOM / SIFIR DARBOĞAZ)
+# ------------------------------------------------------------------------------
+# Bitnami/Rancher tarzı ön tanımlı kaynak profillerini devre dışı bırakıp ("none"),
+# Kubernetes Scheduler'ın "Insufficient cpu" veya "Insufficient memory" hatası
+# vermesini önlemek adına düşük başlangıç istekleri (requests) ve güvenli tavan
+# sınırları (limits) tanımlıyoruz.
+resourcesPreset: "none"
+
+resources:
+  requests:
+    # Başlangıçta 150 milicore (0.15 vCPU) ve 512 MB RAM rezerve edilir.
+    # Bu sayede 2 vCPU / 8 GB RAM'li vm-master üzerinde RKE2, ArgoCD ve Monitoring
+    # yığını ile hiçbir CPU/RAM çakışması yaşanmaz.
+    cpu: 150m
+    memory: 512Mi
+  limits:
+    # Yoğun küme senkronizasyonu anlarında 1 vCPU ve 1.5 GB RAM'e kadar esneyebilir.
+    cpu: 1000m
+    memory: 1536Mi
