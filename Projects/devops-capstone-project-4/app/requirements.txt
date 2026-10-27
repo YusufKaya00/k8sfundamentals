@@ -1,0 +1,32 @@
+# ==============================================================================
+# OMNISTREAM EVENT-DRIVEN POLYGLOT MİKROSERVİS BAĞIMLILIKLARI (PYTHON)
+# ==============================================================================
+# Üretim ortamında (Production) "Reproducible Builds" (Tekrarlanabilir Derlemeler)
+# ilkesi gereği tüm kütüphanelerin sürümleri (Exact Pinning) sabitlenmiştir.
+# Böylece CI/CD (Buildah) aşamasında beklenmedik bir kütüphane güncellemesi
+# yüzünden uygulamanın çökmesi (Breaking Change) engellenir.
+# ==============================================================================
+
+# 1. Web Framework & ASGI Sunucusu
+# FastAPI: Yüksek performanslı, asenkron destekli modern Python API çatısı.
+fastapi==0.115.0
+# Uvicorn[standard]: C tabanlı uvloop ve httptools içeren hızlı ASGI uygulama sunucusu.
+uvicorn[standard]==0.30.6
+
+# 2. Event Streaming (Olay Akışı) İstemcisi
+# kafka-python-ng: Apache Kafka (KRaft modu dahil) ile tam uyumlu, Python 3.11+
+# için optimize edilmiş yeni nesil Producer/Consumer (Üretici/Tüketici) kütüphanesi.
+kafka-python-ng==2.2.3
+
+# 3. Polyglot Persistence (Çoklu Veritabanı) Sürücüleri
+# psycopg2-binary: PostgreSQL 16 ilişkisel veritabanı (ACID işlemler) için C-tabanlı sürücü.
+psycopg2-binary==2.9.9
+# pymongo: MongoDB 7 NoSQL doküman veritabanı (Audit/Denetim logları) için resmi sürücü.
+pymongo==4.8.0
+# redis: Redis 7 bellek-içi (In-Memory) önbellek ve gerçek zamanlı sayaç sürücüsü.
+redis==5.0.8
+
+# 4. Bulut-Yerli Gözlemlenebilirlik (Cloud-Native Observability)
+# prometheus-client: Uygulama metriklerini (/metrics) Prometheus Operator (ServiceMonitor)
+# tarafından kazınabilecek (scrape) OpenMetrics formatında dışa aktaran resmi kütüphane.
+prometheus-client==0.21.0
