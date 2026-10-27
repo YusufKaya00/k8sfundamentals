@@ -1,0 +1,193 @@
+---
+# ==============================================================================
+# FAZ 2: RKE2 CONTROL PLANE (MASTER), INGRESS WEBHOOK VE LOCAL-PATH CSI KURULUMU
+# Dosya: playbooks/02-rke2-master.yml
+# Hedef: vm-master (Standard_B2s_v2 — 2 vCPU / 8 GB RAM — 10.30.1.4)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu playbook kümemizin beyni olan "vm-master" sunucusunda RKE2 Server (`v1.31.2+rke2r1`)
+# kontrol düzlemini ayağa kaldırır ve Proje 4'ten aldığımız iki kritik dersi uygular:
+#   1. PROJE 4 DERS 3 (Ingress NGINX Admission Webhook Beklemesi):
+#      RKE2 ilk başladığında API Server hemen yanıt verir ancak `rke2-ingress-nginx-controller`
+#      pod'u henüz ayağa kalkmamıştır. Bu sırada Ingress içeren bir Helm chart
+#      kurulursa `failed calling webhook "validate.nginx.ingress.kubernetes.io"`
+#      hatası alınır. Bu yüzden DaemonSet tamamen Ready olana kadar beklenir.
+#   2. PROJE 4 DERS 4 (Taint-Tolerant Local-Path Provisioner Helper-Pod):
+#      `vm-worker-data` düğümümüzde `dedicated=data:NoSchedule` Taint'i olduğu için,
+#      Local-Path Provisioner yeni bir disk klasörü oluşturmak üzere geçici `helper-pod`
+#      başlattığında bu pod Taint'e takılıp `Pending` kalır ve Kafka/Cassandra/PostgreSQL
+#      asla başlayamaz! Bunu önlemek için hem Provisioner Deployment'ına hem de
+#      `helperPod.yaml` ConfigMap'ine `tolerations: [{operator: Exists}]` yaması uygulanır.
+# ==============================================================================
+
+- name: "Faz 2: vm-master Üzerinde RKE2 Server, Helm 3 ve Local-Path Storage Kurulumu"
+  hosts: master
+  become: true
+  vars:
+    rke2_version: "v1.31.2+rke2r1"
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: RKE2 SERVER KONFİGÜRASYONU (/etc/rancher/rke2/config.yaml)
+    # --------------------------------------------------------------------------
+    - name: "RKE2 konfigürasyon dizinini (/etc/rancher/rke2) oluştur"
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+
+    - name: "RKE2 Server yapılandırma dosyasını (/etc/rancher/rke2/config.yaml) oluştur"
+      copy:
+        dest: /etc/rancher/rke2/config.yaml
+        content: |
+          tls-san:
+            - "{{ master_public_ip }}"
+            - "10.30.1.4"
+            - "vm-master"
+          cni: canal
+          write-kubeconfig-mode: "0644"
+        mode: '0644'
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: RKE2 SERVER KURULUMU VE SYSTEMD SERVİSİNİN BAŞLATILMASI
+    # --------------------------------------------------------------------------
+    - name: "RKE2 Server ({{ rke2_version }}) ikili dosyalarını indir ve kur"
+      shell: "curl -sfL https://get.rke2.io | INSTALL_RKE2_VERSION={{ rke2_version }} sh -"
+      args:
+        creates: /usr/local/bin/rke2
+
+    - name: "rke2-server systemd servisini etkinleştir ve başlat"
+      systemd:
+        name: rke2-server
+        state: started
+        enabled: true
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: KUBERNETES API SERVER VE DÜĞÜM HAZIRLIK BEKLEMESİ
+    # --------------------------------------------------------------------------
+    - name: "Kubernetes API Server'ın yanıt vermesini ve vm-master'ın Ready olmasını bekle"
+      shell: "{{ kubectl_cmd }} get nodes | grep -w 'Ready'"
+      register: master_ready
+      until: master_ready.rc == 0
+      retries: 36
+      delay: 10
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: KUBECTL SYMLINK, KUBECONFIG VE HELM 3 KURULUMU
+    # --------------------------------------------------------------------------
+    - name: "kubectl ve crictl araçlarını /usr/local/bin altına sembolik bağla (symlink)"
+      file:
+        src: "/var/lib/rancher/rke2/bin/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        state: link
+        force: true
+      loop:
+        - kubectl
+        - crictl
+
+    - name: "Kullanıcı (/home/ysf/.kube) dizinini oluştur"
+      file:
+        path: "/home/{{ ansible_user | default('ysf') }}/.kube"
+        state: directory
+        owner: "{{ ansible_user | default('ysf') }}"
+        group: "{{ ansible_user | default('ysf') }}"
+        mode: '0755'
+
+    - name: "Kubeconfig dosyasını /home/ysf/.kube/config konumuna kopyala ve yetkilendir"
+      copy:
+        src: /etc/rancher/rke2/rke2.yaml
+        dest: "/home/{{ ansible_user | default('ysf') }}/.kube/config"
+        remote_src: true
+        owner: "{{ ansible_user | default('ysf') }}"
+        group: "{{ ansible_user | default('ysf') }}"
+        mode: '0600'
+
+    - name: "Helm 3 paket yöneticisini indir ve /usr/local/bin/helm olarak kur"
+      shell: |
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        chmod 700 get_helm.sh
+        ./get_helm.sh
+        rm -f get_helm.sh
+      args:
+        creates: /usr/local/bin/helm
+
+    # --------------------------------------------------------------------------
+    # 5. ADIM: PROJE 4 DERS 3 — NGINX INGRESS ADMISSION WEBHOOK BEKLEMESİ
+    # --------------------------------------------------------------------------
+    - name: "daemonset/rke2-ingress-nginx-controller oluşana kadar bekle"
+      shell: "{{ kubectl_cmd }} get daemonset rke2-ingress-nginx-controller -n kube-system"
+      register: ingress_ds_exists
+      until: ingress_ds_exists.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: "RKE2 NGINX Ingress Controller ve Admission Webhook'un tamamen hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} rollout status daemonset/rke2-ingress-nginx-controller -n kube-system --timeout=240s"
+      register: ingress_rollout
+      until: ingress_rollout.rc == 0
+      retries: 15
+      delay: 10
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 6. ADIM: PROJE 4 DERS 4 — LOCAL-PATH PROVISIONER VE TAINT TOLERASYON YAMASI
+    # --------------------------------------------------------------------------
+    - name: "Rancher Local-Path Provisioner (v0.0.30) manifestosunu uygula"
+      shell: "{{ kubectl_cmd }} apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml"
+      changed_when: true
+
+    - name: "local-path-provisioner Deployment'ına tüm Taint'leri tolere etme yetkisi (operator: Exists) ekle"
+      shell: |
+        {{ kubectl_cmd }} patch deployment local-path-provisioner -n local-path-storage --type='json' \
+          -p='[{"op": "add", "path": "/spec/template/spec/tolerations", "value": [{"operator": "Exists"}]}]'
+      changed_when: true
+
+    - name: "local-path-config ConfigMap içindeki helperPod.yaml şablonuna Taint Tolerasyonu ekle"
+      shell: |
+        {{ kubectl_cmd }} patch configmap local-path-config -n local-path-storage --type merge -p '{
+          "data": {
+            "helperPod.yaml": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: helper-pod\nspec:\n  tolerations:\n  - operator: Exists\n  containers:\n  - name: helper-pod\n    image: busybox:stable\n    imagePullPolicy: IfNotPresent\n"
+          }
+        }'
+      changed_when: true
+
+    - name: "local-path StorageClass'ını kümenin varsayılan (default) depolama sınıfı olarak işaretle"
+      shell: |
+        {{ kubectl_cmd }} patch storageclass local-path \
+          -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      changed_when: true
+
+    - name: "local-path-provisioner pod'unun hazır olmasını bekle"
+      shell: "{{ kubectl_cmd }} rollout status deployment/local-path-provisioner -n local-path-storage --timeout=120s"
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 7. ADIM: SMOKE TEST & DOĞRULAMA BLOĞU (BLOCK / RESCUE)
+    # --------------------------------------------------------------------------
+    - name: "Faz 2 Doğrulama (Smoke Test): RKE2 Master, Ingress Webhook ve StorageClass Kontrolü"
+      block:
+        - name: "vm-master Ready, Helm 3 kurulu ve local-path default StorageClass aktif mi?"
+          shell: |
+            set -e
+            {{ kubectl_cmd }} get node vm-master | grep -w "Ready"
+            /usr/local/bin/helm version --short
+            {{ kubectl_cmd }} get storageclass local-path -o jsonpath='{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}' | grep -q "true"
+            {{ kubectl_cmd }} get endpoints rke2-ingress-nginx-controller-admission -n kube-system -o jsonpath='{.subsets[0].addresses[0].ip}' | grep -E '[0-9]+\.'
+          changed_when: false
+      rescue:
+        - name: "Faz 2 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 2 (RKE2 MASTER & STORAGE) DOĞRULAMASI BAŞARISIZ OLDU!"
+              - "Lütfen vm-master üzerinde şu teşhis komutlarını çalıştırın:"
+              - "  1. RKE2 Servis Logları : sudo systemctl status rke2-server && sudo journalctl -u rke2-server -n 100 --no-pager"
+              - "  2. Containerd Soketi   : sudo /var/lib/rancher/rke2/bin/crictl --runtime-endpoint unix:///run/k3s/containerd/containerd.sock ps -a"
+              - "  3. Ingress Pod Durumu  : kubectl get pods -n kube-system -l app.kubernetes.io/name=rke2-ingress-nginx"
+              - "  4. Local-Path Durumu   : kubectl get pods,cm -n local-path-storage && kubectl get sc"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 2 RKE2 Master kurulum doğrulaması başarısız oldu. Yukarıdaki teşhis komutlarını inceleyin."
