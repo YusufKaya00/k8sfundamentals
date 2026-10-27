@@ -1,0 +1,57 @@
+# ==============================================================================
+# REDIS 7 (bitnami/redis) — BELLEK İÇİ ÖNBELLEK VE HIZLI DURUM KATMANI
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Redis, ResilienceStream mimarisinde `messaging` namespace'i altında çalışır ve
+# `order-api` tarafından son oluşturulan siparişlerin mikrosaniye seviyesinde
+# önbelleklenmesi (caching) ile idempotency anahtarlarının tutulması için kullanılır.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI?
+# - Prod'da: Redis Sentinel veya Redis Cluster (3 Master + 3 Replica) ile
+#   otomatik yük devretme (failover) mimarisinde çalışır.
+# - Lab'da: `vm-worker-app` (`tier: app`) düğümünde `standalone` modda çalışır.
+#   Eğer Redis'e kaos deneyiyle erişim kesilirse, `order-api` Graceful Degradation
+#   (Zarif Bozulma) prensibiyle önbelleği atlayıp doğrudan PostgreSQL'den yanıt
+#   vermeye devam eder (sistem çökmez!).
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. PROJE 4 DERS 2: BITNAMI LEGACY İMAJ DEPOSU VE GÜVENLİK İZNİ
+# ------------------------------------------------------------------------------
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  repository: bitnamilegacy/redis
+
+# ------------------------------------------------------------------------------
+# 2. MİMARİ TOPOLOJİ VE KİMLİK DOĞRULAMA (SÖZLEŞME STANDARTLARI)
+# ------------------------------------------------------------------------------
+# Küme içi DNS: `redis-master.messaging.svc.cluster.local:6379`
+architecture: standalone
+
+auth:
+  enabled: true
+  password: "AdminPassword2026!"
+
+# ------------------------------------------------------------------------------
+# 3. MASTER POD PLANLAMASI VE KAYNAK LİMİTLERİ (VM-WORKER-APP)
+# ------------------------------------------------------------------------------
+master:
+  resourcesPreset: "none"
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+  nodeSelector:
+    tier: app
+
+  persistence:
+    enabled: true
+    size: 2Gi

@@ -1,0 +1,72 @@
+# ==============================================================================
+# GITLAB RUNNER (gitlab/gitlab-runner) — DEVSECOPS CI/CD İŞLEYİCİSİ ŞABLONU
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu Helm değerleri dosyası, GitLab CI/CD boru hattındaki (.gitlab-ci.yml)
+# aşamaları (Test/Lint -> Rootless Buildah İmaj İnşası -> Trivy Güvenlik Taraması
+# -> GitOps Helm Tag Güncellemesi) RKE2 kümemiz içinde (`gitlab-runner` namespace)
+# Self-Hosted Kubernetes Executor olarak çalıştırır.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI (PROJE 4 DERS 9)?
+# - Prod'da: CI/CD Runner'ları otomatik ölçeklenen (Karpenter / Cluster Autoscaler)
+#   ayrı bir `ci-cd` düğüm havuzunda yüksek paralellikle (`concurrent: 20+`) çalışır.
+# - Lab'da (Proje 4 Ders 9): `vm-worker-app` (`Standard_B2s` - 2 vCPU / 4 GB RAM)
+#   üzerinde zaten `order-api` (2 replika), `analytics-consumer`, `payment-worker`,
+#   RabbitMQ ve Redis çalışmaktadır. Eğer aynı anda birden fazla CI job pod'u
+#   başlarsa CPU sıkışması (`Insufficient cpu`) yaşanır. Bu yüzden:
+#     * `concurrent: 1` (Aynı anda yalnızca 1 CI işi çalışır, kuyrukta sırayla ilerler)
+#     * Job pod `cpu_request = "100m"` olarak küçük tutulmuştur.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. GITLAB SUNUCUSU VE YENİ NESİL RUNNER TOKEN (glrt-...)
+# ------------------------------------------------------------------------------
+gitlabUrl: https://gitlab.com/
+
+# Kurulum sırasında --set runnerToken="glrt-..." ile dışarıdan geçirilir:
+runnerToken: "REPLACE_WITH_GLRT_TOKEN"
+
+# ------------------------------------------------------------------------------
+# 2. EŞZAMANLI İŞ (PROJE 4 DERS 9: CONCURRENT = 1 — CPU SIKIŞMASINI ÖNLER)
+# ------------------------------------------------------------------------------
+concurrent: 1
+checkInterval: 5
+
+# ------------------------------------------------------------------------------
+# 3. RBAC (ROL TABANLI ERİŞİM KONTROLÜ) YETKİLERİ
+# ------------------------------------------------------------------------------
+rbac:
+  create: true
+
+# ------------------------------------------------------------------------------
+# 4. RUNNER YÖNETİCİ POD'U KAYNAK VE DÜĞÜM PLANLAMASI (VM-WORKER-APP)
+# ------------------------------------------------------------------------------
+nodeSelector:
+  tier: app
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 5. KUBERNETES EXECUTOR VE GEÇİCİ CI/CD JOB POD'U KONFİGÜRASYONU
+# ------------------------------------------------------------------------------
+runners:
+  config: |
+    [[runners]]
+      [runners.kubernetes]
+        namespace = "{{.Release.Namespace}}"
+        image = "ubuntu:24.04"
+        privileged = true
+        cpu_request = "100m"
+        cpu_limit = "600m"
+        memory_request = "128Mi"
+        memory_limit = "768Mi"
+        helper_cpu_request = "25m"
+        helper_memory_request = "64Mi"
+        [runners.kubernetes.node_selector]
+          tier = "app"

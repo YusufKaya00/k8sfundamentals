@@ -1,0 +1,114 @@
+# ==============================================================================
+# CHAOS MESH (chaos-mesh/chaos-mesh) — KAOS MÜHENDİSLİĞİ PLATFORMU HELM DEĞERLERİ
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Chaos Mesh, CNCF bünyesinde geliştirilen bulut-yerel (Cloud-Native) Kaos
+# Mühendisliği platformumuzdur. Kubernetes üzerinde PodChaos, NetworkChaos (gecikme,
+# paket kaybı, ağ bölünmesi), StressChaos (CPU/Bellek baskısı), IOChaos (disk
+# gecikmesi) ve DNSChaos deneylerini CRD (Custom Resource Definition) olarak
+# çalıştırmamızı sağlar.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI (PROJE 4 DERS 10)?
+# 1. RKE2 Containerd Soket Yolu Tuzağı (`/run/k3s/containerd/containerd.sock`):
+#    Chaos Mesh'in her düğümde çalışan `chaos-daemon` pod'u, hedef konteynerin
+#    Linux Network/PID/Mount namespace'ine girebilmek için düğümdeki container
+#    runtime soketine bağlanır. Standart Kubernetes'te bu yol `/run/containerd/containerd.sock`
+#    iken, **RKE2 mimarisinde `/run/k3s/containerd/containerd.sock`** adresindedir!
+#    Bu ayar yanlış bırakılırsa tüm kaos deneyleri `failed to create containerd client`
+#    hatasıyla başarısız olur (En sık yapılan RKE2 + Chaos Mesh kurulum hatası!).
+# 2. Taint Tolerasyonu:
+#    `chaos-daemon` bir DaemonSet'tir; hem `vm-master` (`CriticalAddonsOnly`) hem de
+#    `vm-worker-data` (`dedicated=data`) düğümlerindeki veritabanlarına kaos enjekte
+#    edebilmesi için `operator: Exists` tolerasyonuna sahip olmalıdır.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. CONTROLLER MANAGER (MERKEZİ KAOS ORKESTRATÖRÜ — VM-MASTER)
+# ------------------------------------------------------------------------------
+controllerManager:
+  replicaCount: 1
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 15m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+# ------------------------------------------------------------------------------
+# 2. CHAOS DAEMON (RKE2 CONTAINERD SOKET YOLU VE TÜM DÜĞÜMLERDE ÇALIŞMA)
+# ------------------------------------------------------------------------------
+# PROJE 4 DERS 10: RKE2 containerd runtime ve soket yolu zorunluluğu!
+chaosDaemon:
+  runtime: containerd
+  socketPath: /run/k3s/containerd/containerd.sock
+  # Ağ (tc/netem/iptables), IO (fuse) ve Stress (stress-ng) kaosları için privileged şarttır:
+  privileged: true
+  # Kümedeki 3 düğümün tamamında (master, data, app) çalışabilmesi için tüm taint'leri tolere et:
+  tolerations:
+    - operator: "Exists"
+  resources:
+    requests:
+      cpu: 15m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+# ------------------------------------------------------------------------------
+# 3. CHAOS DASHBOARD (GÖRSEL DENEY VE GAME DAY ARAYÜZÜ — chaos.<MASTER_IP>.nip.io)
+# ------------------------------------------------------------------------------
+dashboard:
+  create: true
+  replicaCount: 1
+  # Lab ortamında hızlı Game Day yürütümü için token zorunluluğunu kapatıyoruz
+  # (Prod'da RBAC token ile `securityMode: true` kullanılır):
+  securityMode: false
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 15m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - name: chaos.MASTER_IP.nip.io
+        paths:
+          - /
+        tls: false
+
+# ------------------------------------------------------------------------------
+# 4. DNS SERVER (7. DENEY: DNSCHAOS İÇİN ZORUNLU BİLEŞEN)
+# ------------------------------------------------------------------------------
+# 7. Kaos deneyimiz olan `DNSChaos` (servis keşfi arızası simülasyonu) için
+# Chaos Mesh'in dahili `chaos-dns-server` pod'unu aktif ediyoruz:
+dnsServer:
+  create: true
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 150m
+      memory: 128Mi
