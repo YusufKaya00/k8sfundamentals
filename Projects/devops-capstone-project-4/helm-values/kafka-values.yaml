@@ -20,8 +20,19 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. KRAFT PROTOKOLÜ VE ZOOKEEPER DEVRE DIŞI BIRAKMA
+# 1. KRAFT PROTOKOLÜ, ZOOKEEPER DEVRE DIŞI BIRAKMA VE RESMİ İMAJ DEPOSU
 # ------------------------------------------------------------------------------
+# ÖNEMLİ ÜRETİM NOTU (Bitnami Docker Hub Taşınması):
+# Bitnami (Broadcom), versiyonlu (4.0.0-debian-12-r10) Kafka imajlarını Docker Hub
+# üzerinde "bitnamilegacy/kafka" deposuna taşımıştır. ImagePullBackOff hatası
+# yaşanmaması için resmi arşivi ve global güvenlik iznini tanımlıyoruz:
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  repository: bitnamilegacy/kafka
+
 kraft:
   # Raft tabanlı dahili konsensüs protokolünü etkinleştirir:
   enabled: true
