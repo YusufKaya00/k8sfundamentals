@@ -1,0 +1,50 @@
+# ==============================================================================
+# RESILIENCESTREAM ENTERPRISE PLATFORM - AUTO-GENERATED ANSIBLE INVENTORY
+# ==============================================================================
+# Bu dosya Terraform `local_file.ansible_inventory` kaynağı ve `templatefile()`
+# fonksiyonu tarafından otomatik olarak üretilmiştir. Manuel olarak düzenlemeyiniz!
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI (BASTION / PROXYCOMMAND)?
+# - Prod'da: Özel alt ağdaki (`10.30.1.0/24`) veritabanı ve uygulama düğümlerinin
+#   güvenlik (Zero-Trust) nedeniyle doğrudan SSH'a açık Public IP adresleri yoktur.
+#   Sistem yöneticileri ve Ansible otomasyonu, bir Bastion / Jump Host (`vm-master`)
+#   üzerinden `-W %h:%p` parametresiyle şifreli SSH tüneli (ProxyCommand) açarak
+#   özel düğümlere erişir.
+# - Lab'da: `vm-worker-data` (`10.30.1.5`) sunucumuzun Public IP'si yoktur (yalnızca
+#   NAT Gateway ile dışarı çıkar). Hem `vm-worker-data` hem de `vm-worker-app`
+#   düğümlerine VNet içinden tutarlı ve güvenli şekilde ulaşmak için `vm-master`
+#   (${master_public_ip}) üzerinden SSH ProxyCommand tüneli kullanıyoruz.
+#   Ayrıca Proje 4'ten alınan dersle hem `app_public_ip` hem de `app_worker_public_ip`
+#   değişkenleri eksiksiz tanımlanarak değişken adı uyumsuzlukları önlenmiştir.
+# ==============================================================================
+
+[master]
+vm-master ansible_host=${master_public_ip} private_ip=10.30.1.4 node_role=control-plane
+
+[workers]
+%{ for name, worker in workers ~}
+${name} ansible_host=${worker.private_ip} private_ip=${worker.private_ip} worker_tier=${worker.role}
+%{ endfor ~}
+
+[k8s_cluster:children]
+master
+workers
+
+[all:vars]
+ansible_user=${admin_username}
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+master_private_ip=10.30.1.4
+master_public_ip=${master_public_ip}
+app_public_ip=${app_public_ip}
+app_worker_public_ip=${app_worker_public_ip}
+
+# ------------------------------------------------------------------------------
+# Özel Alt Ağdaki Worker Düğümleri İçin SSH Bastion / Jump Host Tünel Ayarı
+# ------------------------------------------------------------------------------
+# `-o ProxyCommand="ssh ... -W %h:%p ${admin_username}@${master_public_ip}"`
+# Ansible, `vm-worker-data` (`10.30.1.5`) ve `vm-worker-app` (`10.30.1.6`) özel
+# IP'lerine bağlanmak istediğinde önce `vm-master` genel IP'sine SSH açar ve
+# standart girdi/çıktıyı (`-W %h:%p`) hedef Worker düğümünün 22 portuna yönlendirir.
+[workers:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -W %h:%p ${admin_username}@${master_public_ip}"'
