@@ -1,0 +1,166 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "omnistream-command-center",
+    "title": "🚀 OmniStream — Kafka KRaft, Polyglot DBs & 5-Node RKE2 Command Center",
+    "tags": ["omnistream", "kafka", "rke2", "devsecops"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "🟢 Polyglot Data & Streaming Health (1 = UP, 0 = DOWN)",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          {
+            "expr": "omnistream_db_health_status",
+            "legendFormat": "{{ backend }}"
+          }
+        ],
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "textMode": "value_and_name"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "DOWN ❌", "color": "red" }, "1": { "text": "UP ✅", "color": "green" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 1 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "📨 Kafka KRaft Toplam Yayınlanan Event Sayısı (omnistream-events)",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          {
+            "expr": "sum(omnistream_kafka_events_published_total{status=\"success\"})",
+            "legendFormat": "Published Events"
+          }
+        ],
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "blue", "value": null },
+                { "color": "purple", "value": 10 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "🌐 Toplam HTTP API İstekleri (Endpoint Bazlı)",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          {
+            "expr": "omnistream_http_requests_total{endpoint!=\"/healthz\",endpoint!=\"/metrics\"}",
+            "legendFormat": "{{ method }} {{ endpoint }}"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area"
+        }
+      },
+      {
+        "id": 4,
+        "title": "📈 Kafka Event Akışı & HTTP Trafik Hızı (Zaman Serisi)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          {
+            "expr": "omnistream_kafka_events_published_total",
+            "legendFormat": "Kafka Events ({{ status }})"
+          },
+          {
+            "expr": "omnistream_http_requests_total{endpoint=~\"/api/.*|/\"}",
+            "legendFormat": "HTTP {{ method }} {{ endpoint }}"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "⏱️ Veritabanı & Kafka Yazma/Okuma Gecikmesi (Latency p95 Saniye)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          {
+            "expr": "rate(omnistream_backend_latency_seconds_sum[5m]) / rate(omnistream_backend_latency_seconds_count[5m])",
+            "legendFormat": "{{ backend }} Ortalama Gecikme (sn)"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "🖥️ 5-Node RKE2 Sunucu Bellek (RAM) Kullanım Oranı (%)",
+        "type": "gauge",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          {
+            "expr": "100 * (1 - ((node_memory_MemAvailable_bytes) / (node_memory_MemTotal_bytes)))",
+            "legendFormat": "Node {{ instance }}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 88 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "⚡ Namespace Bazlı Pod Bellek Kullanımı (MB) — İzolasyon Kanıtı",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          {
+            "expr": "sum by (namespace) (container_memory_working_set_bytes{namespace=~\"app|data|argocd|monitoring|gitlab-runner|cattle-system\"}) / 1024 / 1024",
+            "legendFormat": "Namespace: {{ namespace }} (MB)"
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}
