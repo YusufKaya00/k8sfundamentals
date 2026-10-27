@@ -1,0 +1,79 @@
+# ==============================================================================
+# RABBITMQ (bitnami/rabbitmq) — GÖREV KUYRUĞU, RETRY VE DEAD-LETTER QUEUE (DLQ)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Kafka ile RabbitMQ arasındaki mimari farkı (Event Streaming vs Task Queueing)
+# canlı olarak göstermek için RabbitMQ `messaging` namespace'inde çalışır:
+#   - `order-api`: Yeni sipariş oluştuğunda `payments` kuyruğuna ödeme görevi basar.
+#   - `payment-worker`: Mesajı tüketir; hata durumunda (ör. Chaos deneyi sırasında)
+#     3 kez yeniden dener (retry) ve hala başarısızsa mesajı kaybetmek yerine
+#     **Dead-Letter Queue (`payments.dlq`)** kuyruğuna yönlendirir!
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI?
+# - Prod'da: RabbitMQ 3 düğümlü Erlang kümesi olarak kurulur ve klasik kuyruklar
+#   yerine Raft tabanlı **Quorum Queues** (`x-queue-type: quorum`) kullanılarak
+#   düğüm kaybında mesaj bütünlüğü korunur.
+# - Lab'da: `vm-worker-app` (`tier: app`) düğümünde tek kopya (`replicaCount: 1`)
+#   olarak çalışır, Management Plugin (`15672`) açıktır ve `rabbitmq.<APP_IP>.nip.io`
+#   Ingress adresi üzerinden kuyruk derinliği ile DLQ mesajları görsel olarak izlenir.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. PROJE 4 DERS 2: BITNAMI LEGACY İMAJ DEPOSU VE GÜVENLİK İZNİ
+# ------------------------------------------------------------------------------
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  repository: bitnamilegacy/rabbitmq
+
+# ------------------------------------------------------------------------------
+# 2. KULLANICI KİMLİK DOĞRULAMA (SÖZLEŞME STANDARTLARI)
+# ------------------------------------------------------------------------------
+# Küme içi AMQP DNS: `rabbitmq.messaging.svc.cluster.local:5672`
+# Küme içi HTTP Management API: `rabbitmq.messaging.svc.cluster.local:15672`
+auth:
+  username: "resilience"
+  password: "AdminPassword2026!"
+  erlangCookie: "ResilienceStreamErlangCookie2026Secret"
+
+# ------------------------------------------------------------------------------
+# 3. REPLİKA, EKLENTİLER (MANAGEMENT & PROMETHEUS) VE KAYNAK LİMİTLERİ
+# ------------------------------------------------------------------------------
+replicaCount: 1
+resourcesPreset: "none"
+
+# Management UI ve Prometheus metrik eklentilerini etkinleştiriyoruz:
+extraPlugins: "rabbitmq_management rabbitmq_prometheus"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 640Mi
+
+# ------------------------------------------------------------------------------
+# 4. DÜĞÜM SEÇİCİ (VM-WORKER-APP: tier=app, TAINT YOK)
+# ------------------------------------------------------------------------------
+nodeSelector:
+  tier: app
+
+# ------------------------------------------------------------------------------
+# 5. KALICI DEPOLAMA (PERSISTENCE — QUORUM & DLQ MESAJLARI İÇİN)
+# ------------------------------------------------------------------------------
+persistence:
+  enabled: true
+  size: 2Gi
+
+# ------------------------------------------------------------------------------
+# 6. RABBITMQ MANAGEMENT UI INGRESS (rabbitmq.<APP_IP>.nip.io)
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  hostname: rabbitmq.APP_IP.nip.io
+  path: /
+  pathType: Prefix
