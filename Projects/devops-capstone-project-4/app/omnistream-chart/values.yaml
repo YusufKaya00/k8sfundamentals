@@ -1,0 +1,85 @@
+# ==============================================================================
+# OMNISTREAM HELM CHART VARSAYILAN DEĞERLERİ (values.yaml)
+# ==============================================================================
+# Bu dosya hem Ansible ilk kurulumu hem de GitLab CI `gitops-promote` aşaması
+# ve ArgoCD tarafından okunur.
+# ==============================================================================
+
+# Pod kopya sayısı (`vm-worker-app` Standard_B1ms 2GB RAM üzerinde hafif çalışması için 1)
+replicaCount: 1
+
+# Konteyner İmaj Ayarları:
+# NOT: Kullanıcı kendi `yusufk00/omnistream-app:v1` imajını CI/CD ile derleyip
+# Docker Hub'a göndermeden önce de kümenin kutudan çıktığı gibi (out-of-the-box)
+# sorunsuz çalışması için varsayılan (fallback) olarak `yusufk00/rke2-multi-app:v2`
+# tanımlanmıştır. GitLab CI pipeline çalıştığında burası otomatik güncellenir!
+image:
+  repository: yusufk00/rke2-multi-app
+  tag: "v2"
+  pullPolicy: IfNotPresent
+
+# Düğüm İzolasyonu (Node Placement):
+# Uygulama pod'unun sadece uygulama katmanı için ayrılmış `vm-worker-app`
+# sunucusunda (`tier=app`) çalışmasını garanti eder.
+nodeSelector:
+  tier: app
+
+tolerations: []
+
+# Kubernetes Servis Ayarları (ClusterIP üzerinden Ingress ve Prometheus erişimi)
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+# RKE2 NGINX Ingress Controller Ayarları:
+# `APP_IP` değeri Ansible kurulumunda veya manuel olarak `vm-worker-app`
+# sunucusunun Public IP adresiyle (Örn: app.20.x.x.x.nip.io) değiştirilir.
+ingress:
+  enabled: true
+  className: nginx
+  host: app.APP_IP.nip.io
+  hosts:
+    - host: app.APP_IP.nip.io
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Prometheus Operator (kube-prometheus-stack) Entegrasyonu:
+# `serviceMonitor.enabled: true` olduğunda `servicemonitor.yaml` şablonu devreye
+# girer ve Prometheus'un `/metrics` uç noktasını otomatik olarak kazımasını sağlar.
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  scrapeTimeout: 10s
+  path: /metrics
+  additionalLabels:
+    release: kube-prometheus-stack
+
+# Konteyner Kaynak Limitleri (Zero OOM / Zero CPU Starvation Matrisi ile uyumlu)
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 300m
+    memory: 128Mi
+
+# Polyglot Persistence & Event Streaming Bağlantı Parametreleri (CoreDNS FQDN)
+env:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.data.svc.cluster.local:9092"
+  KAFKA_TOPIC: "omnistream-events"
+  REDIS_HOST: "redis-master.data.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_PASS: "RedisStrongPassword123!"
+  PG_HOST: "postgres-postgresql.data.svc.cluster.local"
+  PG_PORT: "5432"
+  PG_USER: "appuser"
+  PG_PASS: "AppDbPassword123!"
+  PG_DB: "appdb"
+  MONGO_HOST: "mongodb.data.svc.cluster.local"
+  MONGO_PORT: "27017"
+  MONGO_USER: "appuser"
+  MONGO_PASS: "AppMongoPassword123!"
+  MONGO_DB: "appdb"
+  APP_VERSION: "1.0.0"
