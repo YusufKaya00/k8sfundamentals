@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ===============================================================================
-OMNISTREAM EVENT-DRIVEN POLYGLOT MİKROSERVİS & CANLI SRE TERMİNALİ
+OMNISTREAM EVENT-DRIVEN POLYGLOT MİKROSERVİS & CANLI SRE TERMİNALİ  DENEMEEEEE
 ===============================================================================
 Mimari Rolü:
 Bu mikroservis, 5 sunuculu (5-Node) RKE2 Kubernetes kümesinde `vm-worker-app`
