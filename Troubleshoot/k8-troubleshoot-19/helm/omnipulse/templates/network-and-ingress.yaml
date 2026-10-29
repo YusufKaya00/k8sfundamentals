@@ -31,7 +31,7 @@ spec:
               tier: backend
       ports:
         - protocol: TCP
-          port: 6380
+          port: 6379
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
