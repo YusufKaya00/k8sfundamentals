@@ -19,8 +19,6 @@ spec:
             - configMapRef:
                 name: {{ .Release.Name }}-config
           env:
-            - name: REDIS_HOST
-              value: "127.0.0.1"
             - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
