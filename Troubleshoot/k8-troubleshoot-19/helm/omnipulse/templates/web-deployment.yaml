@@ -34,21 +34,16 @@ spec:
             - configMapRef:
                 name: {{ .Release.Name }}-config
           env:
-            - name: REDIS_HOST
-              value: {{ .Release.Name }}-cache-0.{{ .Release.Name }}-cache
-            - name: REDIS_PORT
-              value: "{{ .Values.cache.port }}"
-            - name: REDIS_PASSWORD
+            - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: REDIS_PASSWORD
-         
           command:
             - sh
             - -c
             - |
-              until redis-cli -h {{ .Release.Name }}-cache-0.${REDIS_HOST} -p ${REDIS_PORT} GET omnipulse:schema:status | grep -q INITIALIZED_V3 && test -f /usr/share/nginx/html/index.html; do
+              until redis-cli -h {{ .Release.Name }}-cache.${REDIS_HOST} -p ${REDIS_PORT} GET omnipulse:schema:status | grep -q INITIALIZED_V3 && test -f /usr/share/nginx/html/index.html; do
                 echo "Waiting for cache schema initialization and shared RWX index.html..."
                 sleep 2
               done
