@@ -1,7 +1,7 @@
 namespace: omnipulse-prod
 
 webapp:
-  replicas: 3
+  replicas: 2
   image:
     repository: nginxinc/nginx-unprivileged
     tag: "1.27-alpine"
