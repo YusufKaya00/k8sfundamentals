@@ -40,7 +40,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
-                  key: CACHE_AUTH_KEY
+                  key: REDIS_PASSWORD
           ports:
             - containerPort: {{ .Values.cache.port }}
           volumeMounts:
