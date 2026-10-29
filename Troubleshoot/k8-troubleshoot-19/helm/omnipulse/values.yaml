@@ -18,7 +18,7 @@ cache:
     repository: redis
     tag: "7.2-alpine"
   port: 6379
-  storageClassName: "managed-csi-ultra"
+  storageClassName: "managed-csi"
   storageSize: 2Gi
   passwordPlain: "OmniPulse#2026!"
 
