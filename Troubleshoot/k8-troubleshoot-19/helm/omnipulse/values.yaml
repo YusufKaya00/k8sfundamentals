@@ -23,8 +23,8 @@ cache:
   passwordPlain: "OmniPulse#2026!"
 
 sharedStorage:
-  storageClassName: "managed-csi"
-  accessMode: "ReadWriteOnce"
+  storageClassName: "azurefile-csi"
+  accessMode: "ReadWriteMany"
   size: 2Gi
 
 cronjob:
