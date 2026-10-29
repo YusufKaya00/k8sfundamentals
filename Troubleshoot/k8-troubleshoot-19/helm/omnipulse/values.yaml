@@ -9,9 +9,12 @@ webapp:
   servicePort: 80
   probePath: /ready
   resources:
+    requests:
+      cpu: "100m"
+      memory: "2Mi"
     limits:
       cpu: "200m"
-      memory: "4Mi"
+      memory: "64Mi"
 
 cache:
   image:
