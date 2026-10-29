@@ -19,7 +19,7 @@ metadata:
   name: {{ .Release.Name }}-cache
   namespace: {{ .Values.namespace }}
 spec:
-  serviceName: {{ .Release.Name }}-redis-headless
+  serviceName: {{ .Release.Name }}-cache
   replicas: 1
   selector:
     matchLabels:
