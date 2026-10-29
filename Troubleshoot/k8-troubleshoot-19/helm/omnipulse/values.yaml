@@ -43,4 +43,4 @@ pdb:
   minAvailable: 3
 
 ingress:
-  className: traefik
+  className: nginx
