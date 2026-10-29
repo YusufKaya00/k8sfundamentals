@@ -7,7 +7,7 @@ webapp:
     tag: "1.27-alpine"
   containerPort: 8080
   servicePort: 80
-  probePath: /healthz
+  probePath: /ready
   resources:
     limits:
       cpu: "200m"
