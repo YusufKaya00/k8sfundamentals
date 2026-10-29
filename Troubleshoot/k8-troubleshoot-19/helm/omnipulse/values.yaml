@@ -11,10 +11,10 @@ webapp:
   resources:
     requests:
       cpu: "100m"
-      memory: "2Mi"
+      memory: "64Mi"
     limits:
       cpu: "200m"
-      memory: "64Mi"
+      memory: "128Mi"
 
 cache:
   image:
