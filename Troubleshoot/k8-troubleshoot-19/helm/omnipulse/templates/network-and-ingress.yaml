@@ -32,6 +32,9 @@ spec:
         - podSelector:
             matchLabels:
               tier: batch
+        - podSelector:
+            matchLabels:
+              tier: frontend
       ports:
         - protocol: TCP
           port: 6379
