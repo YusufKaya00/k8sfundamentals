@@ -15,8 +15,6 @@ spec:
         app: {{ .Release.Name }}-web
         tier: frontend
     spec:
-      affinity:
-        podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
               podAffinityTerm:
