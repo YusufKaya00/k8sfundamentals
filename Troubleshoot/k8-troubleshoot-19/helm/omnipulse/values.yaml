@@ -24,7 +24,7 @@ cache:
 
 sharedStorage:
   storageClassName: "managed-csi"
-  accessMode: "ReadWriteMany"
+  accessMode: "ReadWriteOnce"
   size: 2Gi
 
 cronjob:
