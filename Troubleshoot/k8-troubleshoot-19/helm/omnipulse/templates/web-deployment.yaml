@@ -43,7 +43,7 @@ spec:
             - sh
             - -c
             - |
-              until redis-cli -h {{ .Release.Name }}-cache.${REDIS_HOST} -p ${REDIS_PORT} GET omnipulse:schema:status | grep -q INITIALIZED_V3 && test -f /usr/share/nginx/html/index.html; do
+              until redis-cli -h {{ .Release.Name }}-cache-0.${REDIS_HOST} -p ${REDIS_PORT} GET omnipulse:schema:status | grep -q INITIALIZED_V3 && test -f /usr/share/nginx/html/index.html; do
                 echo "Waiting for cache schema initialization and shared RWX index.html..."
                 sleep 2
               done
