@@ -25,7 +25,7 @@ spec:
                   - key: app
                     operator: In
                     values:
-                      - {{ .Release.Name }}-web
+                       - {{ .Release.Name }}-web
               topologyKey: kubernetes.io/hostname
       initContainers:
         - name: verify-cluster-state
