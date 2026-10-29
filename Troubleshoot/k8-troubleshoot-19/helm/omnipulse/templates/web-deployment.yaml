@@ -26,7 +26,7 @@ spec:
                     operator: In
                     values:
                        - {{ .Release.Name }}-web
-              topologyKey: kubernetes.io/hostname
+               topologyKey: kubernetes.io/hostname
       initContainers:
         - name: verify-cluster-state
           image: "{{ .Values.cache.image.repository }}:{{ .Values.cache.image.tag }}"
