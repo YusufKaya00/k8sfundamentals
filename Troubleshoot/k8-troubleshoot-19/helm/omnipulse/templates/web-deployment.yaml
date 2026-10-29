@@ -34,11 +34,16 @@ spec:
             - configMapRef:
                 name: {{ .Release.Name }}-config
           env:
-            - name: REDISCLI_AUTH
+            - name: REDIS_HOST
+              value: {{ .Release.Name }}-cache-0.{{ .Release.Name }}-cache
+            - name: REDIS_PORT
+              value: "{{ .Values.cache.port }}"
+            - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: REDIS_PASSWORD
+         
           command:
             - sh
             - -c
