@@ -20,7 +20,7 @@ spec:
                 name: {{ .Release.Name }}-config
           env:
             - name: REDIS_HOST
-              value: {{ .Release.Name }}-cache-0.{{ .Release.Name }}-cache
+              value: "{{ .Release.Name }}-cache"
             - name: REDIS_PORT
               value: "{{ .Values.cache.port }}"
             - name: REDISCLI_AUTH
