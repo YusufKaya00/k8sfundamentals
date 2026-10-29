@@ -9,7 +9,7 @@ spec:
     metadata:
       labels:
         app: {{ .Release.Name }}-seed
-        tier: cache
+        tier: batch
     spec:
       restartPolicy: OnFailure
       containers:
