@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrator
+  namespace: {{ .Values.namespace }}
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-migrator
+        tier: batch
+    spec:
+      restartPolicy: OnFailure
+      # Hata 5: serviceAccountName tanımı eksik bırakıldığı için 'default' SA kullanılır
+      # ve Kubernetes API'si 403 Forbidden döner.
+      # serviceAccountName: {{ .Release.Name }}-migrator-sa
+      initContainers:
+        - name: verify-rbac-and-db-pod
+          image: "{{ .Values.db.image.repository }}:{{ .Values.db.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Pre-flight: Checking Kubernetes API permissions for cluster pod discovery..."
+              APISERVER="https://kubernetes.default.svc"
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              
+              STATUS_CODE=$(wget --no-check-certificate --header="Authorization: Bearer $TOKEN" -S -qO- "$APISERVER/api/v1/namespaces/{{ .Values.namespace }}/pods/{{ .Release.Name }}-db-0" 2>&1 | awk '/HTTP\// {print $2}' | tail -n 1)
+              
+              if [ "$STATUS_CODE" = "403" ]; then
+                echo "ERROR 403: Forbidden! Default ServiceAccount lacks 'get pods' permission in namespace '{{ .Values.namespace }}'."
+                echo "Ensure migration Job uses 'serviceAccountName: {{ .Release.Name }}-migrator-sa'."
+                exit 1
+              fi
+              echo "RBAC pre-flight check passed."
+      containers:
+        - name: schema-seeder
+          image: "{{ .Values.db.image.repository }}:{{ .Values.db.image.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+          env:
+            # Hata 7: configMap'ten gelen DB_HOST ezilmiş! 127.0.0.1 yerine {{ .Release.Name }}-db olmalıdır.
+            - name: DB_HOST
+              value: "127.0.0.1"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: POSTGRES_PASSWORD
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for database (${DB_HOST}:${DB_PORT})..."
+              until pg_isready -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME}; do
+                echo "Database not ready yet, sleeping 2s..."
+                sleep 2
+              done
+
+              echo "Executing migration: creating ledger table and inserting genesis block..."
+              psql -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME} -c "CREATE TABLE IF NOT EXISTS transactions (id serial PRIMARY KEY, status text, amount numeric, created_at timestamp default now());"
+              psql -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME} -c "INSERT INTO transactions (status, amount) VALUES ('SETTLED_V4', 1000000.00);"
+
+              echo "Generating shared live HTML report into shared volume..."
+              cat << 'EOF' > /shared-html/index.html
+              <!DOCTYPE html>
+              <html>
+              <head>
+                <title>PayNexus v4.2 - Live</title>
+                <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #090d16; color: #f1f5f9; text-align: center; padding-top: 8%; }
+                  .container { max-width: 600px; margin: 0 auto; background: #131c2e; padding: 30px; border-radius: 12px; border: 1px solid #1e293b; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+                  h1 { color: #38bdf8; margin-bottom: 8px; }
+                  .badge { background: #10b981; color: #022c22; padding: 6px 16px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; }
+                  .stat { margin-top: 24px; text-align: left; background: #0c1220; padding: 16px; border-radius: 8px; font-size: 0.95rem; border-left: 4px solid #38bdf8; }
+                  .stat p { margin: 6px 0; }
+                </style>
+              </head>
+              <body>
+                <div class="container">
+                  <h1>PayNexus Production Gateway</h1>
+                  <p><span class="badge">STATUS: ONLINE (v4.2.0)</span></p>
+                  <div class="stat">
+                    <p>💾 <strong>Database Cluster:</strong> {{ .Release.Name }}-db-0.{{ .Release.Name }}-db:5432</p>
+                    <p>⚡ <strong>Genesis Transaction:</strong> #TX-1000000 (SETTLED_V4)</p>
+                    <p>📁 <strong>Shared Volume Mode:</strong> ReadWriteMany (AzureFile CSI)</p>
+                  </div>
+                </div>
+              </body>
+              </html>
+              EOF
+
+              echo "Migration and index.html generation completed successfully."
+          volumeMounts:
+            - name: shared-html
+              mountPath: /shared-html
+      volumes:
+        - name: shared-html
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-shared-html
