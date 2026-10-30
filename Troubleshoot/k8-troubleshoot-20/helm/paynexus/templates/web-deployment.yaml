@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-web
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.webapp.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-web
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-web
+        tier: frontend
+    spec:
+      affinity:
+        podAntiAffinity:
+          # Hata 10: 2 Düğümlü kümede zorunlu (required) anti-affinity ve 3 replika
+          # 3. podun sonsuza kadar Pending kalmasına yol açar.
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - {{ .Release.Name }}-web
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-for-db-and-html
+          image: "{{ .Values.db.image.repository }}:{{ .Values.db.image.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: POSTGRES_PASSWORD
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME} && test -f /usr/share/nginx/html/index.html; do
+                echo "Waiting for database (${DB_HOST}:${DB_PORT}) and shared RWX index.html..."
+                sleep 2
+              done
+              echo "Database online and shared HTML ready."
+          volumeMounts:
+            - name: shared-html
+              mountPath: /usr/share/nginx/html
+      containers:
+        - name: web
+          image: "{{ .Values.webapp.image.repository }}:{{ .Values.webapp.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.webapp.containerPort }}
+          resources:
+            {{- toYaml .Values.webapp.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.webapp.probePath }}
+              port: {{ .Values.webapp.containerPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.webapp.probePath }}
+              port: {{ .Values.webapp.containerPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: shared-html
+              mountPath: /usr/share/nginx/html
+            - name: config-volume
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: shared-html
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-shared-html
+        - name: config-volume
+          configMap:
+            name: {{ .Release.Name }}-nginx-conf
