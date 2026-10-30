@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-web-svc
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Release.Name }}-web
+    # Hata 11a: Podların etiketi 'tier: frontend' iken burada 'tier: gateway' aranıyor (Endpoints: <none>).
+    tier: gateway
+  ports:
+    - name: http
+      port: {{ .Values.webapp.servicePort }}
+      # Hata 11b: Container 8080 portunu dinlerken targetPort 80'e yönlendiriliyor (502 Bad Gateway).
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-isolation-policy
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+    - Ingress
+  ingress:
+    # Hata 4: Yalnızca 'tier: backend' etiketine izin verilmiş.
+    # Oysa istemciler 'tier: frontend' (web) ve 'tier: batch' (migrator & auditor) etiketine sahiptir.
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: backend
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-web-svc
+                port:
+                  number: {{ .Values.webapp.servicePort }}
