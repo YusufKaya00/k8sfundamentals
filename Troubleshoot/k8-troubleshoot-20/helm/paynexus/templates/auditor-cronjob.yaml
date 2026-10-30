@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-auditor
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: {{ .Values.cronjob.schedule }}
+  suspend: {{ .Values.cronjob.suspend }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{ .Release.Name }}-auditor
+            tier: batch
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: auditor
+              image: "{{ .Values.db.image.repository }}:{{ .Values.db.image.tag }}"
+              envFrom:
+                - configMapRef:
+                    name: {{ .Release.Name }}-config
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-secret
+                      key: POSTGRES_PASSWORD
+              command:
+                - sh
+                - -c
+                - |
+                  echo "Running PayNexus financial ledger audit reconciliation..."
+                  psql -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME} -c "SELECT count(*) AS total_settled_tx FROM transactions;"
+                  echo "Audit reconciliation completed successfully."
