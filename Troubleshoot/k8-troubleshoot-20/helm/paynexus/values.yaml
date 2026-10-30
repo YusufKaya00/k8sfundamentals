@@ -1,0 +1,45 @@
+namespace: paynexus-prod
+
+webapp:
+  replicas: 3
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.27-alpine"
+  containerPort: 8080
+  servicePort: 80
+  probePath: /status
+  resources:
+    limits:
+      cpu: "200m"
+      memory: "4Mi"
+
+db:
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  port: 5432
+  storageClassName: "managed-csi-premium-v2"
+  storageSize: 2Gi
+  user: "payuser"
+  database: "paynexus"
+  passwordPlain: "NexusMasterPass2026!"
+
+sharedStorage:
+  storageClassName: "managed-csi"
+  accessMode: "ReadWriteOnce"
+  size: 2Gi
+
+cronjob:
+  schedule: "*/1 * * * *"
+  suspend: true
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  minAvailable: 3
+
+ingress:
+  className: traefik
