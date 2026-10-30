@@ -4,7 +4,7 @@ metadata:
   name: {{ .Release.Name }}-auditor
   namespace: {{ .Values.namespace }}
 spec:
-  schedule: {{ .Values.cronjob.schedule }}
+  schedule: {{ .Values.cronjob.schedule | quote }}
   suspend: {{ .Values.cronjob.suspend }}
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
