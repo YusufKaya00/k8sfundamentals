@@ -1,0 +1,6 @@
+apiVersion: v2
+name: paynexus
+description: PayNexus Enterprise Real-Time Payment Gateway & Transaction Ledger Platform
+type: application
+version: 4.2.0
+appVersion: "4.2.0"
