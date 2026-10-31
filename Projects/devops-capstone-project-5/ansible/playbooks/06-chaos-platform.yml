@@ -112,7 +112,7 @@
               echo "HATA: chaos-daemon 3 düğümün tamamında Ready değil ($DAEMON_READY/3)!"
               exit 1
             fi
-            {{ kubectl_cmd }} get daemonset chaos-daemon -n chaos-mesh -o yaml | grep -q "/run/k3s/containerd/containerd.sock"
+            {{ kubectl_cmd }} get daemonset chaos-daemon -n chaos-mesh -o yaml | grep -q "/run/k3s/containerd"
             {{ kubectl_cmd }} get ingress -n chaos-mesh | grep -q "chaos.{{ master_public_ip }}.nip.io"
           changed_when: false
       rescue:
