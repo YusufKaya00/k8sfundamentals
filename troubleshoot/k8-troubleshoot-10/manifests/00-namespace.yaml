@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chronos-prod
+  labels:
+    app.kubernetes.io/part-of: chronos
+    environment: production

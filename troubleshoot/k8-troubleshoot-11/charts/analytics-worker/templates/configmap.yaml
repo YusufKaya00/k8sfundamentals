@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "analytics-worker.fullname" . }}-config
+  labels:
+    {{- include "analytics-worker.labels" . | nindent 4 }}
+data:
+  REDIS_HOST: {{ .Values.backend.redis.host | quote }}
+  REDIS_PORT: {{ .Values.backend.redis.port | quote }}
+  worker.py: |
+    import http.server
+    import json
+    import os
+    import socket
+    import sys
+    import urllib.parse
+
+    def get_redis_config():
+        host = os.environ.get("REDIS_HOST")
+        if not host:
+            try:
+                with open("/app/REDIS_HOST", "r") as f:
+                    host = f.read().strip()
+            except Exception:
+                host = "127.0.0.1"
+
+        port_str = os.environ.get("REDIS_PORT")
+        if not port_str:
+            try:
+                with open("/app/REDIS_PORT", "r") as f:
+                    port_str = f.read().strip()
+            except Exception:
+                port_str = "6379"
+
+        try:
+            port = int(port_str)
+        except ValueError:
+            port = 6379
+
+        return host, port
+
+    def check_redis(host, port, timeout=2.0):
+        try:
+            s = socket.create_connection((host, port), timeout=timeout)
+            s.sendall(b"*1\r\n$4\r\nPING\r\n")
+            resp = s.recv(1024)
+            s.close()
+            if b"+PONG" in resp:
+                return True, "PONG"
+            return True, "connected"
+        except Exception as e:
+            return False, str(e)
+
+    class WorkerHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
+            sys.stderr.flush()
+
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            host, port = get_redis_config()
+
+            if parsed.path in ('/health', '/ready'):
+                is_ok, msg = check_redis(host, port)
+                if is_ok:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "status": "ready" if parsed.path == '/ready' else "healthy",
+                        "redis": "connected",
+                        "host": host,
+                        "port": port
+                    }).encode('utf-8'))
+                else:
+                    sys.stderr.write(f"Connection refused: Redis at {host}:{port} is unreachable: {msg}\n")
+                    sys.stderr.flush()
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "status": "unavailable",
+                        "redis": f"Connection refused ({msg})",
+                        "host": host,
+                        "port": port
+                    }).encode('utf-8'))
+            elif parsed.path == '/metrics':
+                is_ok, _ = check_redis(host, port)
+                val = 1 if is_ok else 0
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"# HELP pulsestream_worker_up Worker health status\n# TYPE pulsestream_worker_up gauge\npulsestream_worker_up {val}\n".encode('utf-8'))
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    def main():
+        host, port = get_redis_config()
+        sys.stderr.write(f"Starting analytics worker on port 9100...\n")
+        sys.stderr.write(f"Target Redis endpoint: {host}:{port}\n")
+        sys.stderr.flush()
+
+        is_ok, msg = check_redis(host, port)
+        if not is_ok:
+            sys.stderr.write(f"Initial Redis check: Connection refused ({msg})\n")
+            sys.stderr.flush()
+        else:
+            sys.stderr.write(f"Initial Redis check: Connected ({msg})\n")
+            sys.stderr.flush()
+
+        server = http.server.ThreadingHTTPServer(('0.0.0.0', 9100), WorkerHandler)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        server.server_close()
+
+    if __name__ == '__main__':
+        main()

@@ -1,0 +1,15 @@
+replicaCount: 1
+
+nodeSelector:
+  tier: web
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: false
+
+ports:
+  web:
+    port: 8000
+    targetPort: 8000
+    nodePort: 30080

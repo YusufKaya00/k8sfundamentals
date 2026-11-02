@@ -1,0 +1,6 @@
+---
+- name: Deploy and Unseal NexusVault Stateful Node
+  hosts: vault_nodes
+  gather_facts: false
+  roles:
+    - vault-agent

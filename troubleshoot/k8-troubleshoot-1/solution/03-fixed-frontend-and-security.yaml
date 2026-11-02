@@ -1,0 +1,111 @@
+# ==============================================================================
+# ÇÖZÜM 3: Düzeltilmiş Frontend Web, NetworkPolicy ve HPA
+# ==============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-web
+  namespace: ecom-prod
+  labels:
+    app: frontend-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend-web
+  template:
+    metadata:
+      labels:
+        app: frontend-web
+    spec:
+      # DÜZELTME: Lokal kümede bulunmayan 'eu-west-1a' yerine standart Linux OS etiketi kullanıldı
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: web
+          image: docker.io/library/nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: ecom-prod
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+      name: http
+  selector:
+    app: frontend-web
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ecom-network-policy
+  namespace: ecom-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: catalog-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend-web
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DÜZELTME 1: Kube-system içindeki CoreDNS'e (Port 53 UDP & TCP) izin verildi!
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # DÜZELTME 2: PostgreSQL veritabanına erişim
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-db
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: catalog-hpa
+  namespace: ecom-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: catalog-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50

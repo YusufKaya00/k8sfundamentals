@@ -1,0 +1,6 @@
+apiVersion: v2
+name: catalog-worker
+description: OmniCore In-Memory Product Catalog & Inventory Indexing Engine
+type: application
+version: 1.0.0
+appVersion: "1.6.0"

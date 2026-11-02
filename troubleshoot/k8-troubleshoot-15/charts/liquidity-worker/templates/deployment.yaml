@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: liquidity-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: liquidity-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: quantflow
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: liquidity-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: liquidity-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: quantflow
+    spec:
+      nodeSelector:
+        tier: web
+      initContainers:
+        - name: wait-for-redis
+          image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag }}"
+          imagePullPolicy: {{ .Values.initImage.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z -w 2 {{ .Values.redis.host }} {{ .Values.redis.port }}; do
+                echo "Waiting for Redis at {{ .Values.redis.host }}:{{ .Values.redis.port }}..."
+                sleep 2
+              done
+              echo "Redis is reachable at {{ .Values.redis.host }}:{{ .Values.redis.port }}."
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python3
+            - -u
+            - /app/worker.py
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.service.targetPort | quote }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.path }}
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.path }}
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: worker-code
+              mountPath: /app/worker.py
+              subPath: worker.py
+              readOnly: true
+      volumes:
+        - name: worker-code
+          configMap:
+            name: liquidity-worker-config

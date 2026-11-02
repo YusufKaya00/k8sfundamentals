@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "traefik.fullname" . }}
+  labels:
+    {{- include "traefik.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "traefik.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: web
+      port: 80
+      targetPort: {{ .Values.ports.web.port }}
+      nodePort: {{ .Values.ports.web.nodePort }}
+      protocol: TCP

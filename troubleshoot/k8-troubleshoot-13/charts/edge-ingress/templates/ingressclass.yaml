@@ -1,0 +1,8 @@
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: {{ .Values.controller.ingressClass | default "edge-ingress" }}
+  labels:
+    {{- include "edge-ingress.labels" . | nindent 4 }}
+spec:
+  controller: novaedge.io/ingress-controller

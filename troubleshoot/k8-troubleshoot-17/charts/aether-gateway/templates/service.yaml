@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: aether-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: aethermesh
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: aether-gateway

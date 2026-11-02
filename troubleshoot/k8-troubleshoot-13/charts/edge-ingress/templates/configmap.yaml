@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "edge-ingress.fullname" . }}-config
+  labels:
+    {{- include "edge-ingress.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    events {
+      worker_connections 1024;
+    }
+    http {
+      include       /etc/nginx/mime.types;
+      default_type  application/json;
+      sendfile        on;
+      keepalive_timeout  65;
+
+      server {
+        listen {{ .Values.controller.containerPort }};
+        server_name api.novaedge.io _;
+
+        location /healthz {
+          return 200 '{"status":"ok","controller":"edge-ingress","ingress_class":"{{ .Values.controller.ingressClass }}"}\n';
+        }
+
+        location /stream {
+          proxy_pass http://stream-api:8080;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_connect_timeout 5s;
+          proxy_read_timeout 10s;
+        }
+
+        location / {
+          return 404 '{"error":"default_backend","message":"no ingress route matched the requested host or path"}\n';
+        }
+      }
+    }

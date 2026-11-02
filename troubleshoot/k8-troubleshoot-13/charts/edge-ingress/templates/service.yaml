@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "edge-ingress.fullname" . }}
+  labels:
+    {{- include "edge-ingress.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy | default "Cluster" }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      {{- if or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer") }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+      protocol: TCP
+  selector:
+    {{- include "edge-ingress.selectorLabels" . | nindent 4 }}

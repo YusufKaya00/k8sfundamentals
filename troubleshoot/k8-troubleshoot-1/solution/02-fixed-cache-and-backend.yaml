@@ -1,0 +1,166 @@
+# ==============================================================================
+# ÇÖZÜM 2: Düzeltilmiş Redis StatefulSet ve Backend API Mikroservisleri
+# ==============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: ecom-prod
+  labels:
+    app: redis
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true # Bootstrap döngüsel kilitlenmesini önler
+  ports:
+    - port: 6379
+      name: redis
+  selector:
+    app: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: ecom-prod
+spec:
+  # DÜZELTME: Service metadata.name 'redis-service' ile birebir eşitlendi!
+  serviceName: "redis-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: docker.io/library/redis:7.2-alpine
+          ports:
+            - containerPort: 6379
+              name: redis
+          command: ["redis-server", "--appendonly", "yes"]
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-api
+  namespace: ecom-prod
+  labels:
+    app: catalog-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: catalog-api
+  template:
+    metadata:
+      labels:
+        app: catalog-api
+    spec:
+      containers:
+        - name: catalog
+          image: docker.io/library/python:3.11-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Catalog servisi başlatılıyor, önbellek ısınıyor..."
+              sleep 10
+              python3 -m http.server 8080
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecom-secret
+                  key: database_password # DÜZELTME: Doğru secret key adı
+          # DÜZELTME 1: startupProbe eklendi (yavaş açılışta podu korur)
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8080
+            failureThreshold: 20
+            periodSeconds: 2
+          # DÜZELTME 2: livenessProbe sadece startupProbe geçtikten sonra devreye girer
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            # DÜZELTME 3: requests.cpu eklendi, böylece HPA hesaplama yapabilir
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  namespace: ecom-prod
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+  selector:
+    # DÜZELTME: Pod etiketleriyle birebir eşleşecek şekilde 'tier: backend' kaldırıldı
+    app: catalog-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-api
+  namespace: ecom-prod
+  labels:
+    app: order-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-api
+  template:
+    metadata:
+      labels:
+        app: order-api
+    spec:
+      containers:
+        - name: order
+          image: docker.io/library/python:3.11-alpine
+          command: ["python3", "-m", "http.server", "8080"]
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: ecom-prod
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      # DÜZELTME: Container'ın dinlediği 8080 portuna yönlendirildi!
+      targetPort: 8080
+      name: http
+  selector:
+    app: order-api

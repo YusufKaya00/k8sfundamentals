@@ -1,0 +1,10 @@
+replicaCount: 1
+
+nodeSelector:
+  tier: web
+
+backend:
+  redis:
+    host: "pulse-redis"
+    port: 6379
+

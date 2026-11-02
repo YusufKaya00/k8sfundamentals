@@ -1,0 +1,31 @@
+---
+- name: Verify production cluster_id was preserved (not regenerated)
+  slurp:
+    src: "/tmp/nexusvault-lab5/etc/nexusvault/expected_cluster_id.txt"
+  register: expected_id_raw
+
+- name: Assert cluster_id matches original production state
+  assert:
+    that:
+      - vault_cluster_id == (expected_id_raw.content | b64decode | trim)
+    fail_msg: "CRITICAL STATE LOSS: vault_cluster_id ({{ vault_cluster_id }}) does not match original production ID ({{ expected_id_raw.content | b64decode | trim }})! Restore terraform.tfstate from backup!"
+
+- name: Unseal NexusVault when seal threshold equals 2
+  set_fact:
+    vault_remain_sealed: false
+  # [FAULT 505] Inventory variables from INI files are parsed as strings ("2"), so '== 2' evaluates to False!
+  # Must use 'vault_seal_threshold | int == 2'
+  when: vault_seal_threshold == 2
+
+- name: Render NexusVault configuration file
+  template:
+    src: vault-config.json.j2
+    dest: "/tmp/nexusvault-lab5/etc/nexusvault/vault-config.json"
+    mode: '0600'
+
+- name: Start or Reload NexusVault Daemon
+  shell: |
+    pkill -f "nexusvault_daemon_lab5.py" 2>/dev/null || true
+    nohup python3 {{ role_path }}/files/nexusvault_daemon_lab5.py /tmp/nexusvault-lab5/etc/nexusvault/vault-config.json > /tmp/nexusvault-lab5/var/log/vault.log 2>&1 &
+    sleep 1
+  changed_when: false
