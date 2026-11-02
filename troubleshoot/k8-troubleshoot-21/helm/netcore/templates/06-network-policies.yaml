@@ -1,0 +1,74 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress-policy
+  namespace: {{ .Values.global.primaryNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: api
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.secureNamespace }}
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-isolation-policy
+  namespace: {{ .Values.global.secureNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: security
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.primaryNamespace }}
+        - podSelector:
+            matchLabels:
+              role: api-gateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.vault.networkPolicyPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cache-isolation-policy
+  namespace: {{ .Values.global.primaryNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: cache
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: api
+      ports:
+        - protocol: TCP
+          port: 6379
