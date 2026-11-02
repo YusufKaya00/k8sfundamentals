@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aether-prod
+  labels:
+    environment: production
+    app.kubernetes.io/part-of: aethermesh

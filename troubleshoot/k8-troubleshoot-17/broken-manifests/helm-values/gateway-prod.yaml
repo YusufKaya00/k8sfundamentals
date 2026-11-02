@@ -1,0 +1,13 @@
+replicaCount: 1
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8081
+
+gateway:
+  authToken: "invalid-token"
+
+upstream:
+  host: "settlement-api"
+  port: 8000
