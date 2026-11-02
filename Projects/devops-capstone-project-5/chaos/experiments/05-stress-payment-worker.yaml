@@ -27,4 +27,4 @@ spec:
       load: 80
     memory:
       workers: 1
-      size: "200MB"              # Limitin altında tut; OOM testi için limit üstüne çıkar (bilinçli olarak!)
+      size: "600MB"              # Limitin altında tut; OOM testi için limit üstüne çıkar (bilinçli olarak!)
