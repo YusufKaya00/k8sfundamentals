@@ -93,7 +93,11 @@ flowchart TD
 Deploy the faulty production state using the automated setup script:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-16
+cd /home/ysf/k8sfundamentals/troubleshoot/k8-troubleshoot-16
+# Deploy the broken incident state for practice:
+./broken-manifests/setup-broken.sh
+
+# Or deploy the standard manifests:
 ./setup.sh
 ```
 
@@ -379,7 +383,11 @@ Bu Büyük Final Labı, şimdiye kadar işlenen tüm kritik Kubernetes ve SRE so
 Bozuk üretim ortamını kümeye dağıtmak için kurulum betiğini çalıştırın:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-16
+cd /home/ysf/k8sfundamentals/troubleshoot/k8-troubleshoot-16
+# Pratik yapmak için bozuk ortamı kurun:
+./broken-manifests/setup-broken.sh
+
+# Veya standart manifestleri kurun:
 ./setup.sh
 ```
 

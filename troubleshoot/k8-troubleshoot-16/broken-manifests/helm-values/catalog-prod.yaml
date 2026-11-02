@@ -1,0 +1,23 @@
+replicaCount: 1
+
+db:
+  host: "omnicore-db"
+  port: 5433
+
+redis:
+  host: "omnicore-redis"
+  port: 6379
+
+startupProbe:
+  path: "/healthz"
+  periodSeconds: 2
+  timeoutSeconds: 2
+  failureThreshold: 2
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 16Mi
+  limits:
+    cpu: 250m
+    memory: 32Mi
