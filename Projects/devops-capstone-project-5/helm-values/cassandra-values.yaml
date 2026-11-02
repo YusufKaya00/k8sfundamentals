@@ -77,17 +77,17 @@ resources:
 
 livenessProbe:
   enabled: true
-  initialDelaySeconds: 90
-  periodSeconds: 20
-  timeoutSeconds: 10
-  failureThreshold: 6
+  initialDelaySeconds: 180
+  periodSeconds: 30
+  timeoutSeconds: 45
+  failureThreshold: 8
 
 readinessProbe:
   enabled: true
-  initialDelaySeconds: 60
-  periodSeconds: 15
-  timeoutSeconds: 10
-  failureThreshold: 6
+  initialDelaySeconds: 90
+  periodSeconds: 20
+  timeoutSeconds: 45
+  failureThreshold: 8
 
 # ------------------------------------------------------------------------------
 # 5. DÜĞÜM SEÇİCİ VE TAINT TOLERASYONU (VM-WORKER-DATA İZOLASYONU)
