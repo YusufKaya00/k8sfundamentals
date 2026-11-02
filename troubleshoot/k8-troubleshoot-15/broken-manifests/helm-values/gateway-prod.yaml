@@ -1,0 +1,15 @@
+replicaCount: 1
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8081
+  nodePort: 30085
+  externalTrafficPolicy: Cluster
+
+upstream:
+  host: "risk-engine"
+  port: 8000
+
+gateway:
+  signatureToken: "legacy-invalid"

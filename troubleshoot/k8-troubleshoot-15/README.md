@@ -89,7 +89,11 @@ flowchart TD
 Deploy the faulty production state using the automated setup script:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-15
+cd /home/ysf/k8sfundamentals/troubleshoot/k8-troubleshoot-15
+# Deploy the broken incident state for practice:
+./broken-manifests/setup-broken.sh
+
+# Or deploy the standard manifests:
 ./setup.sh
 ```
 
@@ -350,7 +354,11 @@ Olay senaryosu aşağıdaki 3 düğümlü (node) OKE küme topolojisi üzerinde 
 Bozuk üretim ortamını kümeye dağıtmak için kurulum betiğini çalıştırın:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-15
+cd /home/ysf/k8sfundamentals/troubleshoot/k8-troubleshoot-15
+# Pratik yapmak için bozuk ortamı kurun:
+./broken-manifests/setup-broken.sh
+
+# Veya standart manifestleri kurun:
 ./setup.sh
 ```
 
