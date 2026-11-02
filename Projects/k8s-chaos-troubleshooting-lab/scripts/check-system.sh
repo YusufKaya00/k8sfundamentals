@@ -34,7 +34,7 @@ echo ""
 echo "======================================================================"
 echo " 3. UYGULAMA SAĞLIK VE BAĞIMLILIK DURUMU (/api/status)"
 echo "======================================================================"
-curl -s --max-time 5 "http://app.${APP_IP}.nip.io/api/status" | jq '{overall_health, pod, dependencies}' || echo "❌ API Yanıt Vermiyor (502/503 veya Timeout)!"
+curl -s --max-time 10 "http://app.${APP_IP}.nip.io/api/status" | jq '{overall_health, pod, dependencies}' || echo "❌ API Yanıt Vermiyor (502/503 veya Timeout)!"
 
 echo ""
 echo "======================================================================"
