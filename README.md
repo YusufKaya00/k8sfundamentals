@@ -47,6 +47,7 @@ k8sfundamentals/
     ├── k8-troubleshoot-18/          # NovaStore v2.4 Storefront Live Crisis (6-Fault Cascading Production Outage on AKS)
     ├── k8-troubleshoot-19/          # OmniPulse v3.0 Full-Stack Capstone on AKS (12-Fault Master Kubernetes Object & Interview Review)
     ├── k8-troubleshoot-20/          # PayNexus v4.2.0 Real-Time Financial Settlement Crisis on AKS (Multi-Workload Helm Outage)
+    ├── k8-troubleshoot-21/          # NetCore v5.0 Next-Gen Kubernetes Networking Mesh Crisis (10 Pure K8s Network & DNS Failures)
     ├── tf-troubleshoot-1/           # Terraform Lab 1 (Azure): State Drift, Import (already exists), prevent_destroy
     ├── tf-troubleshoot-2/           # Terraform Lab 2 (local): State Lock, Lost State recovery, Refactor (moved / state mv)
     ├── tf-troubleshoot-3/           # Terraform Lab 3 (local): Broken code (5 errors incl. Cycle), -replace / secret rotation
@@ -145,6 +146,7 @@ k8sfundamentals/
 * [**k8-troubleshoot-18:** NovaStore v2.4 Storefront Live Crisis (AKS + Helm)](./troubleshoot/k8-troubleshoot-18/README.md) — 6-fault cascading production outage on AKS covering CSI StorageClass (`managed-csi`), Secret key matching, NetworkPolicy podSelector/port filtering, ImagePullBackOff tag fix, Nginx readiness/liveness probe paths, and Service selector/targetPort routing.
 * [**k8-troubleshoot-19:** OmniPulse v3.0 Full-Stack Capstone on AKS (Master Object & Interview Review)](./troubleshoot/k8-troubleshoot-19/README.md) — 12-fault comprehensive Kubernetes object review on AKS (`StatefulSet`, Headless DNS, `PVC` `ReadWriteOnce` vs `ReadWriteMany` across multiple pods/nodes, `Job` immutability, `CronJob`, `DaemonSet`, `InitContainer`, `podAntiAffinity`, `OOMKilled`, `HPA`, `PDB`, `NetworkPolicy`, `Service`, and `Ingress`).
 * [**k8-troubleshoot-20:** PayNexus v4.2.0 Real-Time Financial Settlement Platform Crisis on AKS](./troubleshoot/k8-troubleshoot-20/README.md) — Multi-workload enterprise outage following a major Helm rollout: PostgreSQL StatefulSet storage binding, DB migration Job immutability, multi-node shared report volume deadlock, Node security DaemonSet scheduling, and Web Ingress gateway routing.
+* [**k8-troubleshoot-21:** NetCore v5.0 Pure Kubernetes Networking & DNS Mesh Crisis](./troubleshoot/k8-troubleshoot-21/README.md) — 10 pure Kubernetes networking defects (IngressClass & rewrite, named targetPort indirection, CoreDNS UDP/TCP 53 egress blocking, cross-namespace DNS FQDN, NetworkPolicy OR vs AND array syntax, loopback bind `127.0.0.1` vs `0.0.0.0`, L4 UDP vs TCP mismatch, StatefulSet headless DNS drift, `externalTrafficPolicy: Local`, and DaemonSet nodeSelector & selector drift).
 
 ---
 
