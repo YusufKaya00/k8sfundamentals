@@ -674,13 +674,16 @@ def payment_worker_loop(stop_event: Optional[threading.Event] = None) -> None:
             ch.queue_declare(queue=config.RABBITMQ_DLQ, durable=True)
             ch.basic_qos(prefetch_count=1)
 
-            method_frame, header_frame, body = ch.basic_get(queue=config.RABBITMQ_QUEUE, auto_ack=False)
-            if method_frame and body:
+            def _on_msg(channel, method_frame, header_frame, body):
                 headers = (header_frame.headers if header_frame and header_frame.headers else {}) or {}
                 process_single_payment_message(body=body, headers=headers)
-                ch.basic_ack(delivery_tag=method_frame.delivery_tag)
-            else:
-                time.sleep(1.0)
+                channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+
+            ch.basic_consume(queue=config.RABBITMQ_QUEUE, on_message_callback=_on_msg, auto_ack=False)
+            while not (stop_event and stop_event.is_set()):
+                conn.process_data_events(time_limit=1.0)
+                if stop_event:
+                    break
         except Exception as exc:
             logger.debug("RabbitMQ payment worker beklemede: %s", exc)
             time.sleep(2.0)
