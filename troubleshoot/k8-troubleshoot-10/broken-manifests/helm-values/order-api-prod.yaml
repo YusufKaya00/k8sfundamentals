@@ -1,0 +1,19 @@
+replicaCount: 3
+
+nodeSelector:
+  tier: web
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - order-api
+        topologyKey: "kubernetes.io/hostname"
+
+extraEnv:
+  - name: INVENTORY_HOST
+    value: "legacy-inventory-svc"

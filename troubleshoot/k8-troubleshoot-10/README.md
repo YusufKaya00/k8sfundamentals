@@ -44,7 +44,9 @@ The incident scenario is grounded strictly in the following 3-node cluster topol
 Execute the bundled setup script to deploy the initial broken production state:
 
 ```bash
-./setup.sh
+# Deploy broken environment to start the incident:
+./broken-manifests/setup-broken.sh
+# (or ./setup.sh)
 ```
 
 Or execute the deployment steps manually:
@@ -348,7 +350,9 @@ Senaryo aşağıdaki 3 node'lu küme topolojisine dayanmaktadır:
 Kurulum betiğini çalıştırın:
 
 ```bash
-./setup.sh
+# Bozuk ortamı başlatmak için:
+./broken-manifests/setup-broken.sh
+# (veya ./setup.sh)
 ```
 
 İlk durumu gözlemleyin:
