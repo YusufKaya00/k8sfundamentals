@@ -1,0 +1,74 @@
+global:
+  primaryNamespace: netcore-prod
+  secureNamespace: netcore-secure
+
+gateway:
+  replicas: 1
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.27-alpine"
+  containerPort: 8080
+  servicePort: 80
+  namedPort: http-gateway
+  externalTrafficPolicy: Local
+  probePath: /healthz
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+api:
+  replicas: 2
+  image:
+    repository: python
+    tag: "3.12-alpine"
+  port: 8000
+  bindHost: "127.0.0.1"
+  serviceProtocol: UDP
+  probePath: /healthz
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+vault:
+  replicas: 1
+  image:
+    repository: python
+    tag: "3.12-alpine"
+  port: 8443
+  networkPolicyPort: 9443
+  token: "VaultSecurityToken#2026!"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+cache:
+  image:
+    repository: redis
+    tag: "7.2-alpine"
+  port: 6379
+  storageClassName: "default"
+  storageSize: 1Gi
+  serviceName: netcore-cache-headless
+
+ingress:
+  enabled: true
+  className: edge-nginx
+  host: netcore.local
+  path: /api/v1/network/status
+  pathType: Prefix
+
+daemonset:
+  nodeSelectorLabel: "network.infrastructure.azure.com/telemetry"
+  nodeSelectorValue: "enabled"
