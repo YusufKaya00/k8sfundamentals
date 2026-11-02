@@ -14,7 +14,7 @@ spec:
       restartPolicy: OnFailure
       # Hata 5: serviceAccountName tanımı eksik bırakıldığı için 'default' SA kullanılır
       # ve Kubernetes API'si 403 Forbidden döner.
-      # serviceAccountName: {{ .Release.Name }}-migrator-sa
+      serviceAccountName: {{ .Release.Name }}-migrator-sa
       initContainers:
         - name: verify-rbac-and-db-pod
           image: "{{ .Values.db.image.repository }}:{{ .Values.db.image.tag }}"
@@ -45,7 +45,7 @@ spec:
           env:
             # Hata 7: configMap'ten gelen DB_HOST ezilmiş! 127.0.0.1 yerine {{ .Release.Name }}-db olmalıdır.
             - name: DB_HOST
-              value: "127.0.0.1"
+              value: {{ .Release.Name }}-db
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:

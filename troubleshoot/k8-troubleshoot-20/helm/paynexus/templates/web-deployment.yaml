@@ -19,14 +19,16 @@ spec:
         podAntiAffinity:
           # Hata 10: 2 Düğümlü kümede zorunlu (required) anti-affinity ve 3 replika
           # 3. podun sonsuza kadar Pending kalmasına yol açar.
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: app
-                    operator: In
-                    values:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                   - key: app
+                     operator: In
+                     values:
                       - {{ .Release.Name }}-web
-              topologyKey: kubernetes.io/hostname
+                topologyKey: kubernetes.io/hostname
       initContainers:
         - name: wait-for-db-and-html
           image: "{{ .Values.db.image.repository }}:{{ .Values.db.image.tag }}"
@@ -65,7 +67,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 5
           livenessProbe:
             httpGet:
               path: {{ .Values.webapp.probePath }}
@@ -73,7 +75,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 5
           volumeMounts:
             - name: shared-html
               mountPath: /usr/share/nginx/html

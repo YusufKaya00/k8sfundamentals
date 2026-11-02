@@ -17,7 +17,7 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
         # Hata 9: AKS düğümlerinde bu özel etiket bulunmadığı için DaemonSet DESIRED: 0 kalır.
-        security.azure.com/agent-v4: "enabled"
+        # security.azure.com/agent-v4: "enabled"
       tolerations:
         - operator: Exists
       containers:
@@ -35,7 +35,7 @@ spec:
             - name: log-spool
               mountPath: /var/log
               # Hata 9b: Salt okunur bağlandığı için dosya yazma hatası verir.
-              readOnly: true
+              readOnly: false
       volumes:
         - name: log-spool
           emptyDir: {}

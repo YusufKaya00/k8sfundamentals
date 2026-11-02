@@ -8,12 +8,12 @@ spec:
   selector:
     app: {{ .Release.Name }}-web
     # Hata 11a: Podların etiketi 'tier: frontend' iken burada 'tier: gateway' aranıyor (Endpoints: <none>).
-    tier: gateway
+    tier: frontend
   ports:
     - name: http
       port: {{ .Values.webapp.servicePort }}
       # Hata 11b: Container 8080 portunu dinlerken targetPort 80'e yönlendiriliyor (502 Bad Gateway).
-      targetPort: 80
+      targetPort: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -33,6 +33,13 @@ spec:
         - podSelector:
             matchLabels:
               tier: backend
+        - podSelector:
+            matchLabels:
+              tier: frontend
+        - podSelector:
+            matchLabels:
+              tier: batch
+
       ports:
         - protocol: TCP
           port: 5432
