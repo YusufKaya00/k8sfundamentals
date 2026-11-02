@@ -20,7 +20,7 @@ replicaCount: 2
 image:
   repository: yusufk00/resiliencestream
   tag: "latest"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 # ------------------------------------------------------------------------------
 # 🔴 [TROUBLESHOOT HATASI #1] — Deney 4'te Patlayan Yer!

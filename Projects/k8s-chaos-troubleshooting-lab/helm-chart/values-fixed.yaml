@@ -10,7 +10,7 @@ replicaCount: 2
 image:
   repository: yusufk00/resiliencestream
   tag: "latest"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 # ✅ ÇÖZÜM #1: Liveness Probe `/healthz` uç noktasına alındı ve timeout 3s yapıldı.
 apiProbes:
