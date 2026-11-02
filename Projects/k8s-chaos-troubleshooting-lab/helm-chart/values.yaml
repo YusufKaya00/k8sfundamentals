@@ -128,7 +128,7 @@ pdb:
   minAvailable: 1
 
 hpa:
-  enabled: true
+  enabled: false
   paymentWorkerEnabled: false
   minReplicas: 2
   maxReplicas: 4
