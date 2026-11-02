@@ -27,7 +27,8 @@ The environment exercises **over 17 integrated Kubernetes object types**:
 Spin up the broken environment on your cluster (Minikube, Kind, or OKE) with a single command:
 
 ```bash
-kubectl apply -f manifests/
+# Apply broken manifests to start the incident:
+kubectl apply -f broken-manifests/
 ```
 
 Inspect initial cluster health:
@@ -174,7 +175,8 @@ Laboratuvar içinde **17'den fazla farklı Kubernetes nesnesi** birbirine entegr
 Laboratuvarı yerel Kubernetes kümenizde (Minikube, Kind veya OKE) başlatmak için tek bir komut çalıştırmanız yeterlidir:
 
 ```bash
-kubectl apply -f manifests/
+# Bozuk ortamı başlatmak için:
+kubectl apply -f broken-manifests/
 ```
 
 Şimdi durumu gözlemleyin:
