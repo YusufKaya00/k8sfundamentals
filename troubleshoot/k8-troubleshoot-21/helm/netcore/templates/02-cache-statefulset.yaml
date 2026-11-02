@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: netcore-cache
+  namespace: {{ .Values.global.primaryNamespace }}
+spec:
+  clusterIP: None
+  selector:
+    app: netcore-cache
+    tier: cache
+  ports:
+    - name: redis
+      port: {{ .Values.cache.port }}
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: netcore-cache
+  namespace: {{ .Values.global.primaryNamespace }}
+spec:
+  serviceName: {{ .Values.cache.serviceName }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netcore-cache
+      tier: cache
+  template:
+    metadata:
+      labels:
+        app: netcore-cache
+        tier: cache
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.cache.image.repository }}:{{ .Values.cache.image.tag }}"
+          command:
+            - redis-server
+            - --protected-mode
+            - "no"
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: cache-data
+              mountPath: /data
+      volumes:
+        - name: cache-data
+          emptyDir: {}
