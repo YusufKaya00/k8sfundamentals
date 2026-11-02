@@ -21,6 +21,13 @@ spec:
     spec:
       nodeSelector:
         tier: web
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: frontend
+              topologyKey: "kubernetes.io/hostname" 
     
       containers:
         - name: web
@@ -30,7 +37,7 @@ spec:
               name: http
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: 8080
             periodSeconds: 5
             failureThreshold: 3

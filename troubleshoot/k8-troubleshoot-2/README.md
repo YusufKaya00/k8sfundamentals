@@ -28,7 +28,8 @@ The incident scenario is grounded strictly in the following 3-node cluster topol
 Apply all broken production manifests to the cluster:
 
 ```bash
-kubectl apply -f manifests/
+# Apply broken manifests to trigger the incident:
+kubectl apply -f broken-manifests/
 ```
 
 Watch initial pod status:
@@ -190,7 +191,8 @@ Laboratuvar senaryosu şu fiziksel topoloji üzerinde kurgulanmıştır:
 Tüm bozuk manifestoları tek komutla kümeye uygulayın:
 
 ```bash
-kubectl apply -f manifests/
+# Bozuk ortamı başlatmak için:
+kubectl apply -f broken-manifests/
 ```
 
 Pod'ların ilk durumunu izleyin:
