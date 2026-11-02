@@ -29,8 +29,8 @@ fi
 # Eğer yerel makinedeysek dosyaları vm-master üzerine kopyala ve orada çalıştır
 if [[ "$(hostname)" != "vm-master" ]]; then
   echo "-> [1/4] Lab dosyaları vm-master (${MASTER_IP}) sunucusuna aktarılıyor..."
-  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "mkdir -p ~/k8s-chaos-troubleshooting-lab"
-  scp -o StrictHostKeyChecking=no -r "${LAB_DIR}/helm-chart" "${LAB_DIR}/chaos-workflows" "${LAB_DIR}/scripts" ysf@"${MASTER_IP}":~/k8s-chaos-troubleshooting-lab/ >/dev/null
+  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "mkdir -p ~/chaos-troubleshooting-1"
+  scp -o StrictHostKeyChecking=no -r "${LAB_DIR}/helm-chart" "${LAB_DIR}/chaos-workflows" "${LAB_DIR}/scripts" ysf@"${MASTER_IP}":~/chaos-troubleshooting-1/ >/dev/null
 
   echo "-> [2/4] ArgoCD otomatik senkronizasyonu (auto-sync) devre dışı bırakılıyor (Helm değişikliklerinizi ezmemesi için)..."
   ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "kubectl patch application resiliencestream -n argocd --type merge -p '{\"spec\":{\"syncPolicy\":null}}' 2>/dev/null || true"
@@ -39,7 +39,7 @@ if [[ "$(hostname)" != "vm-master" ]]; then
   ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "kubectl delete podchaos,networkchaos,dnschaos,stresschaos,iochaos,workflow --all -n chaos-mesh --ignore-not-found=true >/dev/null 2>&1 || true"
 
   echo "-> [4/4] Helm Chart (${VALUES_FILE}) 'app' namespace'ine uygulanıyor..."
-  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "helm upgrade --install resiliencestream ~/k8s-chaos-troubleshooting-lab/helm-chart -n app -f ~/k8s-chaos-troubleshooting-lab/helm-chart/${VALUES_FILE} --wait --timeout 120s"
+  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "helm upgrade --install resiliencestream ~/chaos-troubleshooting-1/helm-chart -n app -f ~/chaos-troubleshooting-1/helm-chart/${VALUES_FILE} --wait --timeout 120s"
   ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "kubectl get pods -n app -o wide"
 else
   echo "-> [1/3] ArgoCD otomatik senkronizasyonu devre dışı bırakılıyor..."
