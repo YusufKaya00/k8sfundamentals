@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.primaryNamespace }}
+  labels:
+    kubernetes.io/metadata.name: {{ .Values.global.primaryNamespace }}
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.secureNamespace }}
+  labels:
+    kubernetes.io/metadata.name: {{ .Values.global.secureNamespace }}
+    security-zone: restricted
