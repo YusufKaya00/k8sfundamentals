@@ -1,0 +1,172 @@
+# ==============================================================================
+# K8S CHAOS & TROUBLESHOOTING LAB — BAŞLANGIÇ DEĞERLERİ (values.yaml)
+# ==============================================================================
+# BU DOSYADA 3 ADET KASITLI YAPILANDIRMA HATASI (TROUBLESHOOT SENARYOSU) VARDIR!
+#
+# Deney 1, 2 ve 3 (🟢 KONTROL TESTLERİ) bu dosyayla sorunsuz geçer.
+# Deney 4, 5 ve 6 (🔴 TROUBLESHOOTING TESTLERİ) ise aşağıdaki 3 hatadan dolayı
+# Chaos Mesh üzerinden test edildiğinde SİSTEMİ PATLATIR!
+#
+# Göreviniz:
+# Chaos testini tarayıcıdan (Chaos Mesh UI) uyguladıktan sonra hatayı teşhis etmek,
+# bu dosyadaki [TROUBLESHOOT HATASI #1, #2, #3] bölümlerini düzeltip
+# `helm upgrade resiliencestream ./helm-chart -n app -f ./helm-chart/values.yaml`
+# komutuyla sistemi iyileştirmektir.
+# ==============================================================================
+
+# 1. ORDER-API KOPYA SAYISI (Deney 1: Pod Kill kontrol testi için 2 replika)
+replicaCount: 2
+
+image:
+  repository: yusufk00/resiliencestream
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# ------------------------------------------------------------------------------
+# 🔴 [TROUBLESHOOT HATASI #1] — Deney 4'te Patlayan Yer!
+# ------------------------------------------------------------------------------
+# HATA NEDİR?: `order-api` için `livenessProbe.path` değeri yanlışlıkla `/readyz`
+# (PostgreSQL bağlantısını kontrol eden uç nokta) olarak ayarlanmış ve `timeoutSeconds: 1`
+# verilmiştir!
+# NE OLUR?: PostgreSQL'e Chaos Mesh ile 600ms-1000ms gecikme veya kesinti verildiğinde
+# `/readyz` yavaşlar veya 503 döner. Kubelet "uygulama kilitlendi" sanarak SAĞLAM olan
+# tüm `order-api` podlarını öldürüp yeniden başlatır (Cascading Restart)!
+#
+# NASIL ÇÖZÜLÜR?:
+# 1. `livenessProbe.path` değerini `"/healthz"` yapın (sadece Python sürecini kontrol etsin).
+# 2. `livenessProbe.timeoutSeconds` değerini `3`, `failureThreshold` değerini `3` yapın.
+# ------------------------------------------------------------------------------
+apiProbes:
+  livenessProbe:
+    path: "/readyz"          # <--- 🔴 HATA BURADA! ("/healthz" olmalı)
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 1        # <--- 🔴 ÇOK AGRESİF! (3 olmalı)
+    failureThreshold: 2      # <--- 🔴 ÇOK DÜŞÜK! (3 olmalı)
+  readinessProbe:
+    path: "/readyz"
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+
+# ------------------------------------------------------------------------------
+# 🔴 [TROUBLESHOOT HATASI #2] — Deney 5'te Patlayan Yer!
+# ------------------------------------------------------------------------------
+# HATA NEDİR?: `paymentWorker.replicaCount: 1` (Tek kopya / Single Point of Failure)
+# olarak bırakılmış ve HPA kapalı (`hpa.paymentWorkerEnabled: false`)!
+# NE OLUR?: Chaos Mesh'ten `payment-worker` poduna `Pod Failure` uygulandığında
+# RabbitMQ `payments` kuyruğunu okuyan (`consumers`) sayısı `0`'a düşer ve
+# tüm müşteri ödemeleri kuyrukta birikir (`messages_ready` sürekli artar)!
+#
+# NASIL ÇÖZÜLÜR?:
+# `paymentWorker.replicaCount` değerini `2` yapın!
+# ------------------------------------------------------------------------------
+workers:
+  analyticsConsumer:
+    enabled: true
+    replicaCount: 1
+  paymentWorker:
+    enabled: true
+    replicaCount: 1          # <--- 🔴 HATA BURADA! (Yüksek erişilebilirlik için 2 olmalı)
+
+# ------------------------------------------------------------------------------
+# 🔴 [TROUBLESHOOT HATASI #3] — Deney 6'da Patlayan Yer!
+# ------------------------------------------------------------------------------
+# HATA NEDİR?: `analyticsConsumer` için bellek üst sınırı (`limits.memory`) sadece
+# `80Mi` olarak çok dar verilmiştir!
+# NE OLUR?: Python + Kafka + Cassandra sürücüsü zaten ~55-65MB RAM kullanır.
+# Chaos Mesh ile ufak bir bellek yükü (`StressChaos: 40MB`) geldiğinde Linux Kernel
+# OOM Killer podu anında `OOMKilled (Exit Code 137)` ile öldürür ve Kafka'da
+# `LAG` (işlenmemiş mesaj farkı) birikir!
+#
+# NASIL ÇÖZÜLÜR?:
+# `analyticsResources.limits.memory` değerini `256Mi` yapın!
+# ------------------------------------------------------------------------------
+analyticsResources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 80Mi             # <--- 🔴 HATA BURADA! (OOMKilled olmaması için 256Mi olmalı)
+
+paymentResources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 192Mi
+
+# order-api Kaynak Sınırları
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+nodeSelector:
+  tier: app
+
+tolerations: []
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: app.9.205.90.176.nip.io
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+hpa:
+  enabled: true
+  paymentWorkerEnabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 75
+
+serviceMonitor:
+  enabled: true
+  interval: 5s
+  scrapeTimeout: 4s
+  path: /metrics
+  additionalLabels:
+    release: monitoring
+
+# Küme İçi (CoreDNS) Servis Adresleri
+env:
+  KAFKA_BOOTSTRAP: "kafka.data.svc.cluster.local:9092"
+  KAFKA_TOPIC: "orders.events"
+  KAFKA_GROUP: "analytics-consumer"
+  CASSANDRA_HOSTS: "cassandra.data.svc.cluster.local"
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_USER: "resilience"
+  CASSANDRA_PASSWORD: "AdminPassword2026!"
+  CASSANDRA_KEYSPACE: "resilience"
+  POSTGRES_HOST: "postgres-postgresql.data.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "resilience"
+  POSTGRES_PASSWORD: "AdminPassword2026!"
+  POSTGRES_DB: "resilience"
+  RABBITMQ_HOST: "rabbitmq.messaging.svc.cluster.local"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: "resilience"
+  RABBITMQ_PASSWORD: "AdminPassword2026!"
+  RABBITMQ_QUEUE: "payments"
+  RABBITMQ_DLQ: "payments.dlq"
+  RABBITMQ_MAX_RETRIES: "3"
+  REDIS_HOST: "redis-master.messaging.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "AdminPassword2026!"
+  DEP_TIMEOUT_SECONDS: "2"
+  HEALTH_PROBE_INTERVAL: "5"
+  PAYMENT_FAILURE_RATE: "0.0"
