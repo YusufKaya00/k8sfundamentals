@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rate-limiter-pvc
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: rate-limiter
+    app.kubernetes.io/part-of: paystream
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: oci-bv
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rate-limiter
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: rate-limiter
+    app.kubernetes.io/part-of: paystream
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis-cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rate-limiter
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: rate-limiter
+    app.kubernetes.io/part-of: paystream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rate-limiter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rate-limiter
+        app.kubernetes.io/part-of: paystream
+    spec:
+      containers:
+        - name: redis
+          image: docker.io/library/redis:7.2-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: rate-limiter-pvc

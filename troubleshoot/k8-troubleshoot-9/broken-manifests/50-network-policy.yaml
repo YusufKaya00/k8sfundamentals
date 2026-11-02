@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-api-netpol
+  namespace: paystream-prod
+  labels:
+    app.kubernetes.io/name: payment-api
+    app.kubernetes.io/part-of: paystream
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-gateway
+      ports:
+        - protocol: TCP
+          port: 8000
