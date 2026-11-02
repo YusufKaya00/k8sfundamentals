@@ -321,10 +321,23 @@ def publish_payment_task_rabbitmq(order: Dict[str, Any], retry_count: int = 0, t
 # için masterless mimarisiyle yüksek yazma hızı sunar. Lab ortamında (4 GB RAM worker)
 # `SimpleStrategy` ve `replication_factor: 1` ile çalışır; prod ortamında ise
 # `NetworkTopologyStrategy` ve `replication_factor: 3` + `LOCAL_QUORUM` kullanılır.
-def write_event_to_cassandra(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Kafka'dan tüketilen sipariş olayını Cassandra `resilience.order_events` tablosuna yazar."""
-    def _op() -> Dict[str, Any]:
-        start_ts = time.perf_counter()
+_CASS_CLUSTER: Optional[Any] = None
+_CASS_SESSION: Optional[Any] = None
+_CASS_LOCK = threading.Lock()
+
+
+def _get_cassandra_session():
+    """Cassandra için kalıcı/yeniden kullanılabilir singleton oturum.
+
+    Neden prod'da böyledir?
+    Cassandra sürücüsü küme topolojisi ve token-ring eşitlemesi yaptığı için
+    her çağrıda yeni Cluster() açıp kapatmak 5-6 saniye sürer ve timeout'a yol açar.
+    Oturum bir kez açıldığında sorgular <10ms içinde tamamlanır.
+    """
+    global _CASS_CLUSTER, _CASS_SESSION
+    with _CASS_LOCK:
+        if _CASS_SESSION is not None and _CASS_CLUSTER is not None and not _CASS_CLUSTER.is_shutdown:
+            return _CASS_SESSION
         from cassandra.auth import PlainTextAuthProvider
         from cassandra.cluster import Cluster
 
@@ -336,12 +349,34 @@ def write_event_to_cassandra(event: Dict[str, Any]) -> Dict[str, Any]:
             contact_points=config.CASSANDRA_HOSTS,
             port=config.CASSANDRA_PORT,
             auth_provider=auth,
-            connect_timeout=config.DEP_TIMEOUT_SECONDS,
-            control_connection_timeout=config.DEP_TIMEOUT_SECONDS,
+            connect_timeout=max(10.0, config.DEP_TIMEOUT_SECONDS * 5),
+            control_connection_timeout=max(10.0, config.DEP_TIMEOUT_SECONDS * 5),
         )
+        session = cluster.connect()
+        session.default_timeout = max(5.0, config.DEP_TIMEOUT_SECONDS)
+        _CASS_CLUSTER = cluster
+        _CASS_SESSION = session
+        return _CASS_SESSION
+
+
+def _reset_cassandra_session():
+    global _CASS_CLUSTER, _CASS_SESSION
+    with _CASS_LOCK:
+        if _CASS_CLUSTER is not None:
+            try:
+                _CASS_CLUSTER.shutdown()
+            except Exception:
+                pass
+        _CASS_CLUSTER = None
+        _CASS_SESSION = None
+
+
+def write_event_to_cassandra(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Kafka'dan tüketilen sipariş olayını Cassandra `resilience.order_events` tablosuna yazar."""
+    def _op() -> Dict[str, Any]:
+        start_ts = time.perf_counter()
         try:
-            session = cluster.connect()
-            session.default_timeout = config.DEP_TIMEOUT_SECONDS
+            session = _get_cassandra_session()
             session.execute(
                 f"""
                 CREATE KEYSPACE IF NOT EXISTS {config.CASSANDRA_KEYSPACE}
@@ -376,8 +411,9 @@ def write_event_to_cassandra(event: Dict[str, Any]) -> Dict[str, Any]:
             latency = time.perf_counter() - start_ts
             DEP_LATENCY.labels("cassandra").observe(latency)
             return {"status": "UP", "keyspace": config.CASSANDRA_KEYSPACE, "latency_ms": round(latency * 1000, 2)}
-        finally:
-            cluster.shutdown()
+        except Exception:
+            _reset_cassandra_session()
+            raise
 
     return BREAKERS["cassandra"].call(lambda: retry(_op, attempts=2, base=0.05, cap=0.3))
 
