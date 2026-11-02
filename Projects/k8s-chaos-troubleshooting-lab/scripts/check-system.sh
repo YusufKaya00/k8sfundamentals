@@ -46,7 +46,16 @@ echo ""
 echo "======================================================================"
 echo " 5. APACHE KAFKA CONSUMER GROUP & LAG KONTROLÜ (analytics-consumer)"
 echo "======================================================================"
-run_k8s "kubectl exec -n data kafka-controller-0 -- /opt/bitnami/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group analytics-consumer 2>/dev/null"
+run_k8s "kubectl exec -n app deploy/order-api -- python3 -c '
+from kafka import KafkaAdminClient, KafkaConsumer, TopicPartition
+c = KafkaConsumer(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\")
+tp = TopicPartition(\"orders.events\", 0)
+end = c.end_offsets([tp])[tp]
+a = KafkaAdminClient(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\")
+offs = a.list_consumer_group_offsets(\"analytics-consumer\")
+cur = offs.get(tp).offset if tp in offs else 0
+print(f\"GROUP: analytics-consumer | TOPIC: orders.events | PARTITION: 0 | CURRENT-OFFSET: {cur} | LOG-END-OFFSET: {end} | LAG: {max(0, end - cur)}\")
+'"
 
 echo ""
 echo "======================================================================"
