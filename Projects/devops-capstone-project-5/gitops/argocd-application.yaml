@@ -50,10 +50,17 @@ spec:
     server: "https://kubernetes.default.svc"
     namespace: app
 
-  # 3. OTOMATİK SENKRONİZASYON VE SAPMA ÖNLEME (DRIFT RECONCILIATION) POLİTİKASI
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+        
+# 3. OTOMATİK SENKRONİZASYON VE SAPMA ÖNLEME (DRIFT RECONCILIATION) POLİTİKASI
   syncPolicy:
     automated:
       prune: true      # Git'ten kaldırılan kaynakları kümeden otomatik sil
       selfHeal: true   # Kümede yapılan manuel müdahaleleri (drift) otomatik ez ve Git durumuna döndür
     syncOptions:
-      - CreateNamespace=true  # Hedef `app` namespace'i yoksa otomatik oluştur
+      - CreateNamespace=true           # Hedef `app` namespace'i yoksa otomatik oluştur
+      - RespectIgnoreDifferences=true  # ---> EKLENEN KISIM 2: Sync yaparken ignoreDifferences kuralına uy <---
