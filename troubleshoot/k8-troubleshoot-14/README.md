@@ -88,8 +88,8 @@ flowchart TD
 Deploy the faulty production state using the automated setup script:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-14
-./setup.sh
+./broken-manifests/setup-broken.sh
+# (or ./setup.sh)
 ```
 
 Inspect the initial cluster status in `aegis-prod`:
@@ -466,8 +466,8 @@ flowchart TD
 Arızalı üretim ortamını dağıtmak için kurulum betiğini çalıştırın:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-14
-./setup.sh
+./broken-manifests/setup-broken.sh
+# (veya ./setup.sh)
 ```
 
 `aegis-prod` namespace'indeki başlangıç durumunu inceleyin:
