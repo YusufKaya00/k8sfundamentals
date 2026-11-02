@@ -498,26 +498,12 @@ def _probe_single_dependency(dep: str) -> Dict[str, Any]:
             finally:
                 consumer.close()
         elif dep == "cassandra":
-            from cassandra.auth import PlainTextAuthProvider
-            from cassandra.cluster import Cluster
-
-            auth = PlainTextAuthProvider(
-                username=config.CASSANDRA_USER,
-                password=config.CASSANDRA_PASSWORD,
-            )
-            cluster = Cluster(
-                contact_points=config.CASSANDRA_HOSTS,
-                port=config.CASSANDRA_PORT,
-                auth_provider=auth,
-                connect_timeout=config.DEP_TIMEOUT_SECONDS,
-                control_connection_timeout=config.DEP_TIMEOUT_SECONDS,
-            )
             try:
-                session = cluster.connect()
-                session.default_timeout = config.DEP_TIMEOUT_SECONDS
+                session = _get_cassandra_session()
                 session.execute("SELECT release_version FROM system.local;")
-            finally:
-                cluster.shutdown()
+            except Exception:
+                _reset_cassandra_session()
+                raise
 
         latency = time.perf_counter() - start_ts
         DEP_LATENCY.labels(dep).observe(latency)
