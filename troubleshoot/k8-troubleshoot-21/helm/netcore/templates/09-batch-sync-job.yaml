@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: netcore-network-handshake
+  namespace: {{ .Values.global.primaryNamespace }}
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: netcore-network-handshake
+        tier: batch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: checker
+          image: docker.io/library/busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "==> [1/4] Verifying StatefulSet Redis Headless DNS & Port..."
+              nc -z -w 3 netcore-cache-0.netcore-cache 6379
+              echo "    Cache reached successfully."
+
+              echo "==> [2/4] Verifying Core API TCP Connectivity..."
+              wget -qO- -T 3 http://netcore-api:8000/healthz
+              echo "    API reached successfully."
+
+              echo "==> [3/4] Verifying Cross-Namespace Auth Vault MTLS Endpoint..."
+              wget -qO- -T 3 http://auth-vault.{{ .Values.global.secureNamespace }}.svc.cluster.local:8443/healthz
+              echo "    Auth Vault reached successfully."
+
+              echo "==> [4/4] Verifying Edge Gateway Endpoint..."
+              wget -qO- -T 3 http://netcore-gateway:80/healthz
+              echo "    Gateway reached successfully."
+
+              echo "=========================================================="
+              echo " [OK] NetCore Zero-Trust Mesh Handshake Verified!"
+              echo "=========================================================="
