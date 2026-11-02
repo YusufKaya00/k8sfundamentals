@@ -34,7 +34,7 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: api-config
-                  key: DB_HOST
+                  key: DATABASE_HOST
                   optional: true
             - name: DB_PORT
               valueFrom:

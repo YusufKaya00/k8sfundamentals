@@ -40,7 +40,7 @@ spec:
         - key: "workload"
           operator: "Equal"
           value: "database"
-          effect: "NoSchedule"
+          effect: "NoExecute"
 
     
       containers:
