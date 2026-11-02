@@ -1,0 +1,28 @@
+# ==============================================================================
+# DENEY 04 (🔴 TROUBLESHOOT TESTİ #1 — SİSTEM PATLAR!)
+# Hedef: PostgreSQL (`postgres-postgresql-0`, `namespace: data`) 1200ms Ağ Gecikmesi
+# Neden Patlar?: `values.yaml` içinde `order-api` Liveness Probe yanlışlıkla
+#                `/readyz` (DB kontrolü) uç noktasına bağlanmış ve `timeoutSeconds: 1`
+#                verilmiştir! DB 1200ms yavaşladığında Kubelet tüm `order-api`
+#                podlarını öldürüp yeniden başlatır (RESTARTS artar, 502/503 döner)!
+# Çözüm: `values.yaml` içinde `livenessProbe.path: "/healthz"` ve `timeoutSeconds: 3`
+#        yapıp `helm upgrade` çalıştırmak!
+# ==============================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: exp04-troubleshoot-postgres-delay
+  namespace: chaos-mesh
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - data
+    labelSelectors:
+      app.kubernetes.io/name: postgresql
+  delay:
+    latency: "1200ms"
+    jitter: "50ms"
+  direction: to
+  duration: "2m"

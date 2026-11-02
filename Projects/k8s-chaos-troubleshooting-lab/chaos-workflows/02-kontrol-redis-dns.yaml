@@ -1,0 +1,24 @@
+# ==============================================================================
+# DENEY 02 (🟢 KONTROL TESTİ — PATLAMAZ)
+# Hedef: Redis Cache (`redis-master.messaging.svc.cluster.local`) DNS Kesintisi
+# Amaç : Önbellek (Cache) erişilemez olduğunda sistemin çökmediğini,
+#        Graceful Degradation ile doğrudan PostgreSQL'e yazıp `201 Created`
+#        (`status: degraded`) döndüğünü doğrulamak.
+# ==============================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: DNSChaos
+metadata:
+  name: exp02-kontrol-redis-dns
+  namespace: chaos-mesh
+spec:
+  action: error
+  mode: all
+  patterns:
+    - "redis-master.messaging.svc.cluster.local"
+    - "redis-master.messaging*"
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  duration: "2m"
