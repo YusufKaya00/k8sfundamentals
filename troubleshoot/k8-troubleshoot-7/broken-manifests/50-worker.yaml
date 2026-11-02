@@ -102,4 +102,4 @@ spec:
           limits:
             cpu: "200m"
             # BUG INC-703: 24Mi limit triggers OOMKilled when 28MB buffer is allocated
-            memory: "50Mi"
+            memory: "24Mi"
