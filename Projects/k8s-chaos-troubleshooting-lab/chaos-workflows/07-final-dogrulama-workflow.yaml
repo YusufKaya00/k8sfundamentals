@@ -1,0 +1,111 @@
+# ==============================================================================
+# FİNAL (🏆 UÇTAN UCA CHAOS MESH WORKFLOW — TÜM SİSTEM DOĞRULAMA AKIŞI)
+# ==============================================================================
+# Ne Zaman Çalıştırılır?:
+# Deney 4, 5 ve 6'daki 3 yapılandırma hatasını `values.yaml` içinde düzeltip
+# `helm upgrade` yaptıktan sonra!
+#
+# Bu Workflow sırasıyla (Serial & Parallel):
+#   Adım 1: `order-api` Pod Kill (Kontrol #1) + Redis DNS Hatası (Kontrol #2)
+#   Adım 2: 15 saniye bekleme (Suspend)
+#   Adım 3: PostgreSQL 1200ms Gecikme (Troubleshoot #1 Doğrulaması -> Podlar ölmemeli!)
+#   Adım 4: `payment-worker` Pod Failure (`mode: one`) (Troubleshoot #2 Doğrulaması -> 2. pod kuyruğu eritmeli!)
+#   Adım 5: `analytics-consumer` 45MB Bellek Stresi (Troubleshoot #3 Doğrulaması -> OOMKilled olmamalı!)
+# ==============================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: final-sistem-dogrulama-workflow
+  namespace: chaos-mesh
+spec:
+  entry: ana-akis
+  templates:
+    - name: ana-akis
+      templateType: Serial
+      deadline: "10m"
+      children:
+        - asama-1-kontrol-testleri
+        - bekleme-1
+        - asama-2-postgres-gecikme-testi
+        - asama-3-payment-worker-ha-testi
+        - asama-4-analytics-bellek-testi
+
+    # Aşama 1: Paralel Kontrol Testleri (Pod Kill + Redis DNS)
+    - name: asama-1-kontrol-testleri
+      templateType: Parallel
+      deadline: "90s"
+      children:
+        - step-pod-kill-api
+        - step-redis-dns-fault
+
+    - name: step-pod-kill-api
+      templateType: PodChaos
+      deadline: "30s"
+      podChaos:
+        action: pod-kill
+        mode: one
+        gracePeriod: 0
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+
+    - name: step-redis-dns-fault
+      templateType: DNSChaos
+      deadline: "60s"
+      dnsChaos:
+        action: error
+        mode: all
+        patterns:
+          - "redis-master.messaging.svc.cluster.local"
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+
+    - name: bekleme-1
+      templateType: Suspend
+      deadline: "15s"
+
+    # Aşama 2: PostgreSQL 1200ms Gecikme (Liveness Probe Düzeltme Doğrulaması)
+    - name: asama-2-postgres-gecikme-testi
+      templateType: NetworkChaos
+      deadline: "60s"
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces: [data]
+          labelSelectors:
+            app.kubernetes.io/name: postgresql
+        delay:
+          latency: "1200ms"
+          jitter: "50ms"
+        direction: to
+
+    # Aşama 3: Payment Worker Pod Failure (2 Replika HA Doğrulaması)
+    - name: asama-3-payment-worker-ha-testi
+      templateType: PodChaos
+      deadline: "60s"
+      podChaos:
+        action: pod-failure
+        mode: one
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: payment-worker
+
+    # Aşama 4: Analytics Consumer 45MB RAM Stresi (256Mi Limit Doğrulaması)
+    - name: asama-4-analytics-bellek-testi
+      templateType: StressChaos
+      deadline: "60s"
+      stressChaos:
+        mode: one
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: analytics-consumer
+        stressors:
+          memory:
+            workers: 1
+            size: "45MB"
