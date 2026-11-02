@@ -19,7 +19,7 @@ db:
     tag: "16-alpine"
   port: 5432
   storageClassName: "managed-csi"
-  storageSize: 2Gi
+  storageSize: 4Gi
   user: "payuser"
   database: "paynexus"
   passwordPlain: "NexusMasterPass2026!"
@@ -27,7 +27,7 @@ db:
 sharedStorage:
   storageClassName: "managed-csi"
   accessMode: "ReadWriteOnce"
-  size: 2Gi
+  size: 4Gi
 
 cronjob:
   schedule: "*/1 * * * *"
