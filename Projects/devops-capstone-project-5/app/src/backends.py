@@ -574,32 +574,41 @@ def analytics_consumer_loop(stop_event: Optional[threading.Event] = None) -> Non
                 config.KAFKA_TOPIC,
                 bootstrap_servers=[config.KAFKA_BOOTSTRAP],
                 group_id=config.KAFKA_GROUP,
-                auto_offset_reset="earliest",
+                auto_offset_reset="latest",
                 enable_auto_commit=True,
-                request_timeout_ms=timeout_ms,
-                api_version_auto_timeout_ms=timeout_ms,
-                consumer_timeout_ms=1000,
+                request_timeout_ms=max(10000, timeout_ms * 5),
+                session_timeout_ms=10000,
+                heartbeat_interval_ms=3000,
+                api_version_auto_timeout_ms=max(5000, timeout_ms * 2),
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             )
-            polled = consumer.poll(timeout_ms=1000, max_records=20)
-            total_lag = 0
-            for tp, records in polled.items():
-                for rec in records:
+            while not (stop_event and stop_event.is_set()):
+                polled = consumer.poll(timeout_ms=1000, max_records=20)
+                total_lag = 0
+                if polled:
+                    for tp, records in polled.items():
+                        for rec in records:
+                            try:
+                                write_event_to_cassandra(rec.value)
+                                KAFKA_CONSUMED.inc()
+                            except CircuitOpenError:
+                                logger.warning("Cassandra devresi açık (OPEN), event bekletiliyor.")
+                            except Exception as exc:
+                                logger.warning("Cassandra yazma hatası: %s", exc)
+                        try:
+                            end_offsets = consumer.end_offsets([tp])
+                            end_offset = end_offsets.get(tp, rec.offset + 1)
+                            lag = max(0, int(end_offset - (rec.offset + 1)))
+                            total_lag += lag
+                        except Exception:
+                            pass
                     try:
-                        write_event_to_cassandra(rec.value)
-                        KAFKA_CONSUMED.inc()
-                    except CircuitOpenError:
-                        logger.warning("Cassandra devresi açık (OPEN), event bekletiliyor.")
-                    except Exception as exc:
-                        logger.warning("Cassandra yazma hatası: %s", exc)
-                try:
-                    end_offsets = consumer.end_offsets([tp])
-                    end_offset = end_offsets.get(tp, rec.offset + 1)
-                    lag = max(0, int(end_offset - (rec.offset + 1)))
-                    total_lag += lag
-                except Exception:
-                    pass
-            KAFKA_LAG.set(total_lag)
+                        consumer.commit()
+                    except Exception:
+                        pass
+                KAFKA_LAG.set(total_lag)
+                if stop_event:
+                    break
         except Exception as exc:
             logger.debug("Kafka analytics consumer bağlantı/okuma beklemesinde: %s", exc)
             time.sleep(2.0)
