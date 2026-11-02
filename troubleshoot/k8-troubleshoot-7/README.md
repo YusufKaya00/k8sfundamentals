@@ -30,7 +30,8 @@ The incident scenario is grounded strictly in the following 3-node cluster topol
 Apply all manifests to deploy the initial broken state:
 
 ```bash
-kubectl apply -f manifests/
+# Apply broken manifests to trigger the incident:
+kubectl apply -f broken-manifests/
 ```
 
 Inspect the initial broken state across the namespace:
@@ -309,7 +310,8 @@ Olay senaryosu 3 node'lu OKE küme yapısı üzerinde kurgulanmıştır:
 ### 🚀 Ortamın Başlatılması (Hatalı Platformun Dağıtımı)
 
 ```bash
-kubectl apply -f manifests/
+# Bozuk ortamı başlatmak için:
+kubectl apply -f broken-manifests/
 ```
 
 Kümedeki genel durumu gözlemleyin:
