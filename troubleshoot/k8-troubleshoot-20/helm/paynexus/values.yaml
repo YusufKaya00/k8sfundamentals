@@ -12,7 +12,9 @@ webapp:
     limits:
       cpu: "200m"
       memory: "4Mi"
-
+    requests:
+      cpu: "100m"
+      memory: "2Mi"
 db:
   image:
     repository: postgres
