@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: netcore-metrics-svc
+  namespace: {{ .Values.global.primaryNamespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: netcore-netprobe
+    tier: metrics-agent
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: 9100
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: netcore-netprobe
+  namespace: {{ .Values.global.primaryNamespace }}
+spec:
+  selector:
+    matchLabels:
+      app: netcore-netprobe
+      tier: telemetry
+  template:
+    metadata:
+      labels:
+        app: netcore-netprobe
+        tier: telemetry
+    spec:
+      nodeSelector:
+        {{ .Values.daemonset.nodeSelectorLabel }}: {{ .Values.daemonset.nodeSelectorValue | quote }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: probe
+          image: docker.io/library/busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                date -u +"%Y-%m-%dT%H:%M:%SZ netprobe_status=ACTIVE" >> /var/log/netprobe.log
+                sleep 15
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: log-dir
+              mountPath: /var/log
+              readOnly: true
+      volumes:
+        - name: log-dir
+          emptyDir: {}
