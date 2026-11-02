@@ -29,7 +29,8 @@ The incident scenario is grounded strictly in the following 3-node cluster topol
 Apply all broken manifests to the cluster:
 
 ```bash
-kubectl apply -f manifests/
+# Apply broken manifests to trigger the incident:
+kubectl apply -f broken-manifests/
 ```
 
 Watch initial status:
@@ -230,7 +231,8 @@ Olay müdahale senaryosu doğrudan aşağıdaki 3-node küme yapısına dayanmak
 Hatalı manifestoları kümeye uygulayın:
 
 ```bash
-kubectl apply -f manifests/
+# Bozuk ortamı başlatmak için:
+kubectl apply -f broken-manifests/
 ```
 
 Başlangıç durumunu gözlemleyin:
