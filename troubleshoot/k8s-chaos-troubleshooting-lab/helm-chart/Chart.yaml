@@ -1,0 +1,6 @@
+apiVersion: v2
+name: resiliencestream
+description: K8s Chaos Engineering & Troubleshooting Lab Helm Chart (FastAPI + Kafka + RabbitMQ + PostgreSQL + Redis)
+type: application
+version: 0.2.0
+appVersion: "1.0.0"
