@@ -1,0 +1,56 @@
+# =============================================================================
+# 02-namespaces-and-quotas.yaml
+# OCI OKE Production Laboratuvarı: Namespace, ResourceQuota ve LimitRange
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: production
+    managed-by: platform-team
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-quota
+  namespace: production
+  labels:
+    environment: production
+spec:
+  hard:
+    # CPU ve Bellek Kotaları (3 x VM.Standard.E5.Flex worker node kapasitesine uygun)
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    # Obje Sayısı Kotaları
+    pods: "20"
+    services: "10"
+    count/services.loadbalancer: "2"
+    count/persistentvolumeclaims: "10"
+    # OCI Block Volume Toplam Depolama Kotası
+    requests.storage: 200Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: production-limit-range
+  namespace: production
+  labels:
+    environment: production
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      min:
+        cpu: 50m
+        memory: 64Mi

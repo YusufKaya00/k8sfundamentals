@@ -1,0 +1,58 @@
+---
+- name: "Tüm Sunucularda Ön Hazırlık (Swap, Kernel Modülleri, Paketler)"
+  hosts: all
+  become: true
+  tasks:
+    - name: "Swap alanını geçici olarak kapat"
+      command: swapoff -a
+      changed_when: false
+
+    - name: "Swap alanını fstab üzerinden kalıcı olarak kapat"
+      replace:
+        path: /etc/fstab
+        regexp: '^(\s*[^#\s]+\s+[^#\s]+\s+swap\s+.*)$'
+        replace: '# \1'
+
+    - name: "Gerekli kernel modüllerini yükle (overlay, br_netfilter)"
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: "Kernel modüllerini açılışta kalıcı yap"
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: "Kubernetes için sysctl ağ parametrelerini ayarla"
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+        sysctl_file: /etc/sysctl.d/k8s.conf
+      loop:
+        - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { name: 'net.ipv4.ip_forward', value: '1' }
+
+    - name: "Gerekli temel sistem paketlerini yükle"
+      apt:
+        name:
+          - curl
+          - wget
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - iptables
+          - ipset
+          - socat
+          - conntrack
+        state: present
+        update_cache: true

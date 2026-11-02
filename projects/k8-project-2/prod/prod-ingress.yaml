@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prod-ingress
+  namespace: production
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.lab.internal
+      http:
+        paths:
+          # /metrics çağrıları metrik servisine gider
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: metrics-service
+                port:
+                  number: 9090
+          # Kalan tüm çağrılar ana web servisine gider
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-api-service
+                port:
+                  number: 8000

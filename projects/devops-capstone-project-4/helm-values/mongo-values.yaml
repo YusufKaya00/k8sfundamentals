@@ -1,0 +1,73 @@
+# ==============================================================================
+# MONGODB 7 (bitnami/mongodb) — DOKÜMAN TABANLI (NOSQL) VERİTABANI KATMANI
+# ==============================================================================
+# MİMARİ AMAÇ:
+# MongoDB, OmniStream platformumuzun Polyglot Persistence (Çoklu Veritabanı)
+# mimarisinde esnek şemalı (schema-less) JSON/BSON olay dokümanlarını, telemetri
+# yüklerini (payloads) ve denetim kayıtlarını saklayan NoSQL veritabanımızdır.
+#
+# FİZİKSEL DÜĞÜM İZOLASYONU (DEDICATED NOSQL NODE):
+# MongoDB'nin WiredTiger depolama motoru, mevcut sistem belleğinin bir kısmını
+# dahili önbellek (internal cache) olarak ayırır. PostgreSQL veya Kafka ile aynı
+# düğümde çalışırsa bellek baskısı (Memory Pressure) yaratabileceği için tamamen
+# kendisine tahsis edilmiş "vm-worker-nosql" (Standard_B1ms: 1 vCPU / 2 GB RAM)
+# sunucusuna izole edilmiştir.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. MİMARİ TOPOLOJİ (STANDALONE)
+# ------------------------------------------------------------------------------
+# Çoklu ReplicaSet (Arbiter + Secondary) yerine tekil ve hızlı "standalone" mimari
+# seçilerek kaynak tüketimi minimize edilmiştir.
+# Uygulama "mongodb.data.svc.cluster.local:27017" DNS adresi üzerinden bağlanır.
+architecture: standalone
+
+# ------------------------------------------------------------------------------
+# 2. KİMLİK DOĞRULAMA VE YETKİLENDİRME (RBAC & AUTH)
+# ------------------------------------------------------------------------------
+# Root kullanıcısı şifresi ile birlikte sadece "appdb" veritabanı üzerinde okuma/yazma
+# (readWrite) yetkisine sahip "appuser" kullanıcısını otomatik oluşturur.
+auth:
+  rootPassword: "MongoRootPassword123!"
+  usernames: ["appuser"]
+  passwords: ["AppMongoPassword123!"]
+  databases: ["appdb"]
+
+# ------------------------------------------------------------------------------
+# 3. KAYNAK KISITLAMALARI (RESOURCE REQUESTS & LIMITS)
+# ------------------------------------------------------------------------------
+# Bitnami'nin varsayılan kaynak profilini ("small"/"medium") devre dışı bırakıyoruz:
+resourcesPreset: "none"
+
+# 1 vCPU / 2 GB RAM'li vm-worker-nosql düğümünde কখনো (asla) Insufficient CPU
+# veya OOMKilled hatası alınmaması için optimize edilmiş değerler:
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    cpu: 600m
+    memory: 768Mi
+
+# ------------------------------------------------------------------------------
+# 4. DÜĞÜM SEÇİCİ VE TAINT TOLERASYONU (VM-WORKER-NOSQL İZOLASYONU)
+# ------------------------------------------------------------------------------
+# MongoDB pod'unu yalnızca "tier: db-nosql" etiketine sahip sunucuya yönlendirir:
+nodeSelector:
+  tier: db-nosql
+
+# vm-worker-nosql üzerindeki "dedicated=db-nosql:NoSchedule" Taint'ini aşmasını sağlar:
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: db-nosql
+    effect: NoSchedule
+
+# ------------------------------------------------------------------------------
+# 5. KALICI DEPOLAMA (PERSISTENCE — LOCAL-PATH CSI)
+# ------------------------------------------------------------------------------
+# BSON koleksiyonlarının ve indekslerinin pod yeniden başlasa dahi korunması için
+# varsayılan "local-path" StorageClass üzerinden 4 GB disk alanı bağlanır.
+persistence:
+  enabled: true
+  size: 4Gi

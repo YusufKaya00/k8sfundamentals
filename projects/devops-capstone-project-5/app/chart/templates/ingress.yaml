@@ -1,0 +1,31 @@
+# ==============================================================================
+# RESILIENCESTREAM NGINX INGRESS ŞABLONU (templates/ingress.yaml)
+# ==============================================================================
+# Dış dünyadan `http://app.<APP_IP>.nip.io` adresine gelen HTTP isteklerini
+# `order-api` ClusterIP servisine yönlendirir.
+# Proje 4 Dersi #7: `host` alanı asla büyük harf veya `<APP_IP>` gibi geçersiz
+# RFC-1123 karakterleri içermemelidir; aksi halde NGINX Ingress admission webhook
+# objeyi reddeder ve ArgoCD `SyncFailed` durumuna düşer.
+# ==============================================================================
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | default "nginx" }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: order-api
+                port:
+                  number: {{ .Values.service.port | default 80 }}
+{{- end }}

@@ -1,0 +1,86 @@
+# ==============================================================================
+# Enterprise Production Values: kube-prometheus-stack on OCI OKE
+# ==============================================================================
+
+# 1. PROMETHEUS SUNUCUSU (StatefulSet + OCI Block Volume)
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    retentionSize: "40GiB"
+    
+    # Gerçek OCI Block Volume PVC Yapılandırması
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: "oci-bv"
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+    # Prodüksiyon Kaynak Limitleri
+    resources:
+      requests:
+        cpu: 300m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+# 2. GRAFANA (Kalıcı Dashboard ve Kullanıcı Verisi)
+grafana:
+  adminPassword: "prom-operator"
+  
+  # Disk Persistence (Pod çökse de dashboard'lar ve ayarlar gitmez)
+  persistence:
+    enabled: true
+    storageClassName: "oci-bv"
+    accessModes: ["ReadWriteOnce"]
+    size: 50Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# 3. ALERTMANAGER (Kalıcı Sessize Alma & State Yönetimi)
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: "oci-bv"
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+# 4. PROMETHEUS NODE EXPORTER (Tüm Node'ları İzleme)
+# 10.0.10.122 (DB Node) üzerindeki taint'i tolere eder
+prometheus-node-exporter:
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "database"
+      effect: "NoSchedule"
+
+# 5. KUBE-STATE-METRICS (Kubernetes Nesne Durumları)
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi

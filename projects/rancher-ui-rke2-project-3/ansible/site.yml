@@ -1,0 +1,13 @@
+---
+# ==============================================================
+# PROJE 3: RANCHER UI ODAKLI RKE2 ALTYAPI VE DASHBOARD KURULUMU
+# ==============================================================
+
+# 1. Adım: Tüm sunucularda Swap kapatma, kernel modülleri, paketler
+- import_playbook: playbooks/01-common.yml
+
+# 2. Adım: vm-master üzerinde RKE2 Server ve Rancher Dashboard
+- import_playbook: playbooks/02-master-rancher.yml
+
+# 3. Adım: Worker sunucularını RKE2 kümesine bağlama
+- import_playbook: playbooks/03-workers-join.yml

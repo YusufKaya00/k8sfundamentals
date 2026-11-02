@@ -1,0 +1,25 @@
+# ==============================================================================
+# RESILIENCESTREAM POD DISRUPTION BUDGET ŞABLONU (templates/pdb.yaml)
+# ==============================================================================
+# Neden PodDisruptionBudget (PDB) prod ortamında zorunludur?
+# Deney 08 (`kubectl drain vm-worker-app`) gibi planlı düğüm bakımlarında
+# (Voluntary Disruption), Kubernetes Eviction API tüm pod'ları aynı anda tahliye
+# etmeye çalışabilir. `minAvailable: 1` kuralı sayesinde ikinci `order-api`
+# pod'u yeni bir düğümde `Ready` olmadan son kalan pod'un silinmesine izin verilmez!
+# ==============================================================================
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-api-pdb
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: order-api
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/component: order-api
+{{- end }}

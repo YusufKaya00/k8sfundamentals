@@ -1,0 +1,71 @@
+# ==============================================================================
+# REDIS 7 (bitnami/redis) — BELLEK İÇİ ÖNBELLEK VE GERÇEK ZAMANLI SAYAÇLAR
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Redis, OmniStream mimarisinde mikrosaniye seviyesinde (sub-millisecond) önbellekleme
+# (caching), gerçek zamanlı olay sayaçları ve son işlenen Kafka mesajlarının anlık
+# durumunu tutmak için kullanılır.
+#
+# NEDEN vm-worker-stream DÜĞÜMÜNDE KAFKA İLE BİRLİKTE KONUMLANDIRILDI?
+# Redis tek iş parçacıklı (single-threaded event loop) C tabanlı çok hafif bir
+# motordur; yalnızca ~30-60 MB RAM ve çok düşük CPU tüketir. Bu nedenle yayın/akış
+# katmanımız olan "vm-worker-stream" (Standard_B1ms: 1 vCPU / 2 GB RAM) düğümünde
+# Kafka (KRaft) ile yan yana (co-located) çalışacak şekilde tasarlanmıştır.
+# Toplam istek: Kafka (100m CPU, 450Mi RAM) + Redis (50m CPU, 64Mi RAM) = 150m CPU,
+# 514Mi RAM -> 2 GB RAM'li sunucuda %100 güvenli çalışma alanı bırakır!
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. MİMARİ TOPOLOJİ (STANDALONE MODU)
+# ------------------------------------------------------------------------------
+# Varsayılan "replication" (1 Master + 3 Replica) mimarisi yerine tek bir "standalone"
+# Master pod'u (redis-master-0) kurarak gereksiz replika pod'larının kaynak tüketmesini
+# engelliyoruz. Uygulama "redis-master.data.svc.cluster.local:6379" üzerinden bağlanır.
+architecture: standalone
+
+# ------------------------------------------------------------------------------
+# 2. KİMLİK DOĞRULAMA VE GÜVENLİK (AUTH)
+# ------------------------------------------------------------------------------
+# Üretim standartları gereği şifresiz (unauthenticated) Redis erişimini kapatıyoruz.
+# Mikroservislerimiz Redis'e bağlanırken bu parolayı kullanır.
+auth:
+  enabled: true
+  password: "RedisStrongPassword123!"
+
+# ------------------------------------------------------------------------------
+# 3. MASTER POD PLANLAMASI, İZOLASYONU VE KAYNAK LİMİTLERİ
+# ------------------------------------------------------------------------------
+master:
+  # Bitnami'nin varsayılan yüksek kaynak şablonlarını devre dışı bırakıyoruz:
+  resourcesPreset: "none"
+
+  # Kaynak İstekleri ve Sınırları (Standard_B1ms düğümü için optimize edildi):
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+  # Düğüm Seçici (Node Selector):
+  # Redis pod'unu yalnızca "tier: stream" etiketine sahip vm-worker-stream
+  # sunucusuna yönlendirir.
+  nodeSelector:
+    tier: stream
+
+  # Taint Tolerasyonu:
+  # vm-worker-stream üzerindeki "dedicated=stream:NoSchedule" Taint'ini aşabilmesi
+  # için gerekli olan tolerasyon kuralıdır.
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: stream
+      effect: NoSchedule
+
+  # Kalıcı Depolama (AOF / RDB Persistence):
+  # Bellek içi verilerin pod yeniden başlatıldığında kaybolmaması için Local-Path CSI
+  # üzerinden 2 GB disk alanı bağlanır.
+  persistence:
+    enabled: true
+    size: 2Gi

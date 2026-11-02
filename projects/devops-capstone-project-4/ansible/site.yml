@@ -1,0 +1,58 @@
+---
+# ==============================================================================
+# OMNISTREAM KURUMSAL DEVSECOPS, GITOPS, KAFKA & GÖZLEMLENEBİLİRLİK PLATFORMU
+# ANA ORKESTRASYON PLAYBOOK'U (site.yml)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu master playbook, sıfırdan oluşturulan 5 adet Ubuntu 24.04 LTS Azure sanal
+# makinesini (1x Standard_B2s_v2 Master + 4x Standard_B1ms Worker) tek bir komutla
+# (`ansible-playbook -i hosts.ini site.yml`) uçtan uca üretime hazır bir RKE2
+# Kubernetes platformuna dönüştürür.
+#
+# KATMANLI YÜRÜTME SIRASI (5 FAZLI OTOMASYON):
+# 1. Faz (01-os-hardening.yml)      : Tüm sunucularda Swap kapatma, Linux çekirdek
+#                                     modülleri (overlay, br_netfilter) ve Kafka/Prometheus
+#                                     için zorunlu sysctl (vm.max_map_count, inotify) ayarları.
+# 2. Faz (02-rke2-master.yml)       : vm-master üzerinde RKE2 Control Plane, NGINX Ingress
+#                                     Admission Webhook hazırlık beklemesi, Helm 3 ve
+#                                     Taint-Tolerant Local-Path CSI StorageClass kurulumu.
+# 3. Faz (03-rke2-workers.yml)      : Master'dan katılım anahtarının (node-token) güvenli
+#                                     çekilmesi ve 4 worker sunucusunun RKE2 Agent olarak
+#                                     kümeye dahil edilmesi.
+# 4. Faz (04-node-isolation.yml)    : 5 düğümde fiziksel iş yükü izolasyonu için Label ve
+#                                     NoSchedule Taint politikalarının uygulanması,
+#                                     Rancher Default Project uyumlu Namespace'lerin açılması.
+# 5. Faz (05-platform-services.yml) : Cert-Manager, Rancher UI, ArgoCD, Prometheus+Grafana,
+#                                     Kafka (KRaft), Redis, PostgreSQL, MongoDB ve
+#                                     OmniStream FastAPI uygulamasının GitOps ile dağıtımı.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# FAZ 1: İŞLETİM SİSTEMİ SERTLEŞTİRME VE LINUX ÇEKİRDEK (KERNEL) OPTİMİZASYONU
+# ------------------------------------------------------------------------------
+- name: "Faz 1: İşletim Sistemi Sertleştirme ve Kernel Parametreleri (Tüm Düğümler)"
+  import_playbook: playbooks/01-os-hardening.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 2: RKE2 CONTROL PLANE, INGRESS WEBHOOK VE LOCAL-PATH CSI DEPOLAMA KURULUMU
+# ------------------------------------------------------------------------------
+- name: "Faz 2: RKE2 Control Plane (Master) ve Kalıcı Depolama Altyapısı Kurulumu"
+  import_playbook: playbooks/02-rke2-master.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 3: WORKER DÜĞÜMLERİNİN RKE2 KÜMESİNE KATILIMI (AGENT BOOTSTRAP)
+# ------------------------------------------------------------------------------
+- name: "Faz 3: 4 Adet Worker Düğümünün RKE2 Kümesine Bağlanması"
+  import_playbook: playbooks/03-rke2-workers.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 4: 5 DÜĞÜMLÜ İŞ YÜKÜ İZOLASYONU (LABELS, TAINTS & RANCHER NAMESPACES)
+# ------------------------------------------------------------------------------
+- name: "Faz 4: Düğüm İzolasyonu (Label & Taint) ve Namespace Mimarisi"
+  import_playbook: playbooks/04-node-isolation.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 5: PLATFORM SERVİSLERİ, VERİTABANLARI, KAFKA VE GITOPS UYGULAMA DAĞITIMI
+# ------------------------------------------------------------------------------
+- name: "Faz 5: Rancher, ArgoCD, Monitoring, Kafka + 3 DB ve OmniStream Dağıtımı"
+  import_playbook: playbooks/05-platform-services.yml

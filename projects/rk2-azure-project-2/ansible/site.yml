@@ -1,0 +1,11 @@
+---
+# ==============================================================================
+# RKE2 5-Node Enterprise Cluster + Rancher Dashboard + Multi-Tier App
+# Master Orchestration Playbook
+# ==============================================================================
+
+- import_playbook: playbooks/01-common.yml
+- import_playbook: playbooks/02-master.yml
+- import_playbook: playbooks/03-workers.yml
+- import_playbook: playbooks/04-labels-storage.yml
+- import_playbook: playbooks/05-rancher-workloads.yml

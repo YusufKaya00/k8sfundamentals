@@ -1,0 +1,143 @@
+---
+# ==============================================================================
+# FAZ 1: İŞLETİM SİSTEMİ SERTLEŞTİRME VE LINUX KERNEL OPTİMİZASYONU
+# Dosya: playbooks/01-os-hardening.yml
+# Hedef: Tüm Düğümler (hosts: all -> 1 Master + 4 Worker)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Ham bir Ubuntu Linux sunucusu varsayılan çekirdek (kernel) ayarlarıyla üretim
+# seviyesinde bir Kubernetes (RKE2), Apache Kafka ve Prometheus TSDB yükünü
+# kaldıramaz. Bu playbook kümedeki 5 sunucunun tamamını RKE2 kurulumundan önce
+# işletim sistemi seviyesinde hazırlar:
+#   1. Kubelet QoS (Quality of Service) garantisi için Swap belleği tamamen kapatır.
+#   2. Container dosya sistemi (OverlayFS) ve CNI ağ köprülemesi için kernel
+#      modüllerini (`overlay`, `br_netfilter`) yükler.
+#   3. Paket yönlendirme, iptables köprüleme, inotify dosya izleyicileri ve
+#      Kafka/Prometheus bellek haritalama (`vm.max_map_count`) sysctl ayarlarını yapar.
+# ==============================================================================
+
+- name: "Faz 1: Tüm Sunucularda İşletim Sistemi Sertleştirme ve Kernel Tuning"
+  hosts: all
+  become: true
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: SWAP (TAKAS ALANI) BELLEĞİNİN DEVRE DIŞI BIRAKILMASI
+    # --------------------------------------------------------------------------
+    # NEDEN SWAP KAPATILIR?
+    # Kubernetes Scheduler ve Kubelet, pod'ların bellek sınırlarını (memory.limits)
+    # Linux cgroups v2 üzerinden deterministik olarak yönetir. Eğer sunucuda Swap
+    # açıksa, bellek sınırını aşan bir konteyner RAM yerine diske (Swap'a) yazılmaya
+    # başlar. Disk I/O hızı RAM'den binlerce kat yavaş olduğu için tüm düğüm donar
+    # (thrashing), Kubelet sağlık kontrolleri zaman aşımına uğrar ve RKE2 servisi
+    # başlamayı reddeder.
+    - name: "Aktif Swap alanını çalışma zamanında (runtime) anında kapat"
+      command: swapoff -a
+      changed_when: false
+
+    - name: "Sunucu yeniden başlatıldığında Swap'ın açılmaması için /etc/fstab'dan kaldır"
+      replace:
+        path: /etc/fstab
+        regexp: '^(\s*[^#\s]+\s+[^#\s]+\s+swap\s+.*)$'
+        replace: '# \1'
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: CONTAINER RUNTIME VE CNI İÇİN GEREKLİ KERNEL MODÜLLERİ
+    # --------------------------------------------------------------------------
+    # - overlay: Containerd'nin Docker/OCI imaj katmanlarını (layers) kopyalamadan
+    #   birleştirerek (Copy-on-Write) çalıştırmasını sağlayan OverlayFS sürücüsüdür.
+    # - br_netfilter: Linux sanal ağ köprülerinden (virtual bridge - cni0/flannel.1)
+    #   geçen L2 Ethernet çerçevelerinin L3 iptables/netfilter güvenlik duvarı ve
+    #   kube-proxy NAT kuralları tarafından denetlenebilmesini sağlar. Bu modül
+    #   olmazsa farklı düğümlerdeki pod'lar ClusterIP servislerine erişemez!
+    - name: "Gerekli Linux çekirdek modüllerini (overlay, br_netfilter) belleğe yükle"
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: "Kernel modüllerinin her reboot sonrasında otomatik yüklenmesi için kalıcı yap"
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          # RKE2 Containerd (OverlayFS) ve Canal CNI (Bridge Netfilter) modülleri
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: KUBERNETES, KAFKA VE PROMETHEUS İÇİN SYSCTL KERNEL TUNING
+    # --------------------------------------------------------------------------
+    # ÇOK KRİTİK ÜRETİM PARAMETRELERİ AÇIKLAMASI:
+    #
+    # 1) net.ipv4.ip_forward = 1
+    #    Linux çekirdeğinin bir ağ arayüzünden (ör. eth0) gelen IP paketlerini sanal
+    #    pod arayüzlerine (cali*/veth*) yönlendirmesine (routing) izin verir.
+    #
+    # 2) net.bridge.bridge-nf-call-iptables = 1 & ip6tables = 1
+    #    Sanal köprü (bridge) üzerinden geçen pod-to-pod trafiğinin kube-proxy
+    #    tarafından yazılan iptables DNAT/SNAT kurallarına girmesini zorunlu kılar.
+    #
+    # 3) fs.inotify.max_user_instances = 8192 & fs.inotify.max_user_watches = 524288
+    #    NEDEN ZORUNLU?
+    #    Linux'ta varsayılan `max_user_instances` değeri yalnızca 128'dir!
+    #    Kubelet, cAdvisor, Prometheus Node Exporter, ArgoCD, tailing log ajanları ve
+    #    FastAPI (uvicorn reload/watch) dosya ve dizin değişikliklerini izlemek için
+    #    çekirdekte `inotify` dosya tanımlayıcıları açar. Varsayılan 128 sınırı dolduğunda
+    #    pod'lar `Failed to create inotifywatch: Too many open files` hatasıyla çöker!
+    #    Bu sınırları 8192 örnek ve 524.288 izleyiciye çıkararak bu darboğazı tamamen önlüyoruz.
+    #
+    # 4) vm.max_map_count = 262144
+    #    NEDEN KAFKA VE PROMETHEUS İÇİN HAYATİ ÖNEME SAHİPTİR?
+    #    Linux'ta bir sürecin (process) oluşturabileceği maksimum bellek haritalı
+    #    bölge (`mmap` - memory-mapped VMA) sayısı varsayılan olarak 65530'dur.
+    #    - Apache Kafka: Mesaj kuyruğundaki her bir topic bölümünün (partition)
+    #      `.log`, `.index` ve `.timeindex` segment dosyalarını doğrudan `mmap()`
+    #      sistem çağrısıyla sanal belleğe haritalayarak sıfır kopyalama (zero-copy)
+    #      hızında okur/yazar.
+    #    - Prometheus TSDB: Zaman serisi bloklarını (head chunks & persistent blocks)
+    #      diskten belleğe `mmap()` ile bağlar.
+    #    Eğer `vm.max_map_count` düşük kalırsa, Kafka veya Prometheus yeni bir log
+    #    segmenti açarken `java.io.IOException: Map failed` / `OutOfMemoryError: Map failed`
+    #    hatası vererek aniden kapanır. 262144 değeri kurumsal üretim standardıdır.
+    - name: "Kubernetes CNI, Kafka ve Prometheus için sysctl çekirdek parametrelerini uygula"
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+        sysctl_file: /etc/sysctl.d/99-k8s-omnistream.conf
+      loop:
+        - { name: 'net.ipv4.ip_forward', value: '1' }
+        - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { name: 'fs.inotify.max_user_instances', value: '8192' }
+        - { name: 'fs.inotify.max_user_watches', value: '524288' }
+        - { name: 'vm.max_map_count', value: '262144' }
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: TEMEL SİSTEM, AĞ VE DEPOLAMA PAKETLERİNİN KURULUMU
+    # --------------------------------------------------------------------------
+    # - iptables, ipset, conntrack, socat: RKE2 Kubelet, kube-proxy ve port-forward
+    #   mekanizmalarının paket filtreleme ve bağlantı takibi için zorunlu araçları.
+    # - open-iscsi, nfs-common: Kalıcı depolama (CSI) sürücülerinin ihtiyaç duyduğu
+    #   çekirdek seviyesi dosya sistemi yardımcı paketleri.
+    - name: "Gerekli temel sistem ve ağ yönetim paketlerini kur"
+      apt:
+        name:
+          - curl
+          - wget
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - iptables
+          - ipset
+          - socat
+          - conntrack
+          - open-iscsi
+          - nfs-common
+          - jq
+        state: present
+        update_cache: true

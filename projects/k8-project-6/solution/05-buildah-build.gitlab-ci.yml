@@ -1,0 +1,29 @@
+# ==============================================================================
+# Unprivileged / Rootless Container Build with Buildah
+# ==============================================================================
+# NOT: Kaniko (Haziran 2025'te Google tarafindan donduruldu) ve DinD (Guvenlik acigi)
+# yerine Pod Security Standards Restricted uyumlu Buildah kullanilir.
+
+build-container-image:
+  stage: build
+  image:
+    name: quay.io/buildah/stable:latest
+  variables:
+    # Rootless K8s podlarinda chroot ve vfs surucusu ile calis
+    STORAGE_DRIVER: vfs
+    BUILDAH_ISOLATION: chroot
+    BUILDAH_FORMAT: oci
+    # Hedef Registry (GitLab Container Registry veya DockerHub/OCIR)
+    IMAGE_TAG: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    IMAGE_LATEST: "$CI_REGISTRY_IMAGE:latest"
+  before_script:
+    - echo "Registry kimlik dogrulamasi yapiliyor..."
+    - buildah login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - echo "Rootless Buildah ile imaj derleniyor (Sifir docker.sock baglantisi)..."
+    - buildah bud -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
+    - echo "Imaj registry'ye yukleniyor..."
+    - buildah push "$IMAGE_TAG"
+    - buildah push "$IMAGE_LATEST"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

@@ -1,0 +1,33 @@
+# Uygulama ayarlari (hassas olmayan konfigurasyon) - ConfigMap
+# Hassas bilgiler (kullanici adi / sifre) "postgres-creds" Secret'inda tutulur.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: staging
+  labels:
+    app: web
+    environment: staging
+data:
+  LOG_LEVEL: "debug"
+  PORT: "8080"
+  CACHE_ENABLED: "false"
+  APP_ENV: "staging"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: production
+  labels:
+    app: web
+    environment: production
+data:
+  LOG_LEVEL: "info"
+  PORT: "8080"
+  CACHE_ENABLED: "true"
+  APP_ENV: "production"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"

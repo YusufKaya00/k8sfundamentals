@@ -1,0 +1,54 @@
+# ==============================================================================
+# OMNISTREAM SRE ALARM KURALLARI (PrometheusRule CRD)
+# ==============================================================================
+# Bu dosya Prometheus Operator (`kube-prometheus-stack`) tarafından otomatik
+# olarak algılanır (`release: monitoring` etiketi sayesinde) ve hem Prometheus
+# hem de Grafana -> Alerting -> Alert Rules ekranına 3 kritik SRE alarmı ekler!
+#
+# Kurulum Komutu (`vm-master` üzerinde):
+#   kubectl apply -f omnistream-prometheus-rules.yaml
+# ==============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: omnistream-sre-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: omnistream.rules
+      interval: 15s
+      rules:
+        # 1. VERİTABANI / KAFKA ÇÖKME ALARMI (CRITICAL)
+        - alert: OmniStreamDatabaseDown
+          expr: omnistream_db_health_status == 0
+          for: 15s
+          labels:
+            severity: critical
+            team: platform-sre
+          annotations:
+            summary: "KRITIK: OmniStream {{ $labels.backend }} veritabani/akis katmani COKTU!"
+            description: "{{ $labels.backend }} servisi 15 saniyeden uzun suredir yanit vermiyor (omnistream_db_health_status == 0)."
+
+        # 2. KAFKA KRAFT MESAJ YAYINLAMA HATASI ALARMI (WARNING)
+        - alert: OmniStreamKafkaPublishErrors
+          expr: increase(omnistream_kafka_events_published_total{status="error"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            team: streaming-sre
+          annotations:
+            summary: "UYARI: Kafka KRaft (omnistream-events) mesaj yayinlama hatasi algilandi!"
+            description: "Son 5 dakika icinde Kafka'ya mesaj yazilirken hata olustu."
+
+        # 3. 5-NODE RKE2 SUNUCU YÜKSEK RAM / OOMKILLED RİSKİ ALARMI (WARNING)
+        - alert: RKE2NodeHighMemoryUsage
+          expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+          for: 2m
+          labels:
+            severity: warning
+            team: infra-sre
+          annotations:
+            summary: "UYARI: RKE2 Dugumu ({{ $labels.instance }}) RAM kullanimi %85 uzerinde!"
+            description: "Standard_B1ms (2 GB RAM) sunucuda OOMKilled riski: Anlik RAM kullanimi %{{ $value | printf \"%.1f\" }}."

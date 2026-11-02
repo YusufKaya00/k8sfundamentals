@@ -1,0 +1,116 @@
+---
+# ==============================================================================
+# FAZ 4: 5 DÜĞÜMLÜ İŞ YÜKÜ İZOLASYONU (LABELS, TAINTS & RANCHER NAMESPACES)
+# Dosya: playbooks/04-node-isolation.yml
+# Hedef: vm-master (kubectl üzerinden tüm küme topolojisini yapılandırır)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Kurumsal Kubernetes mimarilerinde tüm pod'ların rastgele sunuculara dağılmasına
+# asla izin verilmez. Özellikle 1 vCPU / 2 GB RAM (`Standard_B1ms`) sınırına sahip
+# bulut sunucularında bir veritabanı ile bir mesaj kuyruğu aynı makineye düşerse
+# birbirlerinin RAM ve Disk I/O bant genişliğini tüketerek "Noisy Neighbor" (Gürültülü
+# Komşu) ve `OOMKilled` (Bellek Yetersizliği) çökmelerine yol açar.
+#
+# Bu playbook, Kubernetes'in iki temel zamanlama (Scheduling) mekanizmasını birlikte
+# kullanarak %100 deterministik fiziksel izolasyon sağlar:
+#   1. Node Label (`tier=...`): "Pod'un hangi sunucuyu İSTEDİĞİNİ" (`nodeSelector`)
+#      belirten pozitif çekim kuralıdır.
+#   2. Node Taint (`dedicated=...:NoSchedule`): "Sunucunun uygun tolerasyonu olmayan
+#      yabancı pod'ları REDDETMESİNİ" sağlayan negatif koruma kalkanıdır!
+#
+# 5 DÜĞÜM İZOLASYON MATRİSİ:
+# - vm-master        : Taint=`CriticalAddonsOnly=true:NoSchedule` (Sadece Yönetim & Monitoring)
+# - vm-worker-stream : Label=`tier=stream`   | Taint=`dedicated=stream:NoSchedule`   (Kafka + Redis)
+# - vm-worker-sql    : Label=`tier=db-sql`   | Taint=`dedicated=db-sql:NoSchedule`   (PostgreSQL 16)
+# - vm-worker-nosql  : Label=`tier=db-nosql` | Taint=`dedicated=db-nosql:NoSchedule` (MongoDB 7)
+# - vm-worker-app    : Label=`tier=app`      | Taint=YOK (OmniStream FastAPI App & GitLab Runner)
+# ==============================================================================
+
+- name: "Faz 4: 5 Düğümün Hazırlık Kontrolü, Fiziksel Taint/Label İzolasyonu ve Namespace Mimarisi"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: 5 DÜĞÜMÜN TAMAMININ KÜMEYE KATILDIĞINI VE READY OLDUĞUNU DOĞRULA
+    # --------------------------------------------------------------------------
+    # 03-rke2-workers.yml adımında başlatılan 4 worker'ın RKE2 Server'a kaydolup
+    # Canal CNI pod'larını başlatması 30-90 saniye sürebilir. 5 düğümün tamamı
+    # listede görünene ve `Ready` durumuna geçene kadar bekliyoruz.
+    - name: "Toplam 5 düğümün (1 Master + 4 Worker) kümeye kaydolmasını bekle"
+      shell: "{{ kubectl_cmd }} get nodes --no-headers | wc -l"
+      register: registered_nodes
+      until: registered_nodes.stdout | int >= 5
+      retries: 36
+      delay: 10
+      changed_when: false
+
+    - name: "Kümedeki 5 düğümün tamamının 'Ready' durumuna geçmesini bekle"
+      shell: "{{ kubectl_cmd }} wait --for=condition=ready nodes --all --timeout=240s"
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: VM-MASTER DÜĞÜMÜNÜN TAINT İLE KORUMA ALTINA ALINMASI
+    # --------------------------------------------------------------------------
+    # vm-master (8 GB RAM) üzerinde etcd, API Server, Rancher, ArgoCD ve
+    # Prometheus/Grafana çalışacaktır. Sıradan uygulama veya veritabanı pod'larının
+    # master sunucusuna sızmasını önlemek için `CriticalAddonsOnly=true:NoSchedule`
+    # Taint'i basıyoruz.
+    - name: "vm-master düğümüne CriticalAddonsOnly=true:NoSchedule Taint'i uygula"
+      shell: |
+        {{ kubectl_cmd }} taint nodes vm-master CriticalAddonsOnly=true:NoSchedule --overwrite=true
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: 4 WORKER DÜĞÜMÜNÜN ETİKETLENMESİ (LABELS) VE İZOLE EDİLMESİ (TAINTS)
+    # --------------------------------------------------------------------------
+    # NEDEN vm-worker-app ÜZERİNDE TAINT YOK?
+    # `vm-worker-stream`, `vm-worker-sql` ve `vm-worker-nosql` düğümlerinde sıkı
+    # `NoSchedule` Taint'leri bulunduğu için, özel bir tolerasyonu olmayan standart
+    # küme bileşenleri (ör. CoreDNS autoscaler, cert-manager pod'ları veya uygulama
+    # pod'ları) doğal olarak Taint'siz olan `vm-worker-app` düğümünde güvenle çalışır.
+    - name: "vm-worker-stream düğümünü Kafka ve Redis için izole et (tier=stream)"
+      shell: |
+        {{ kubectl_cmd }} label nodes vm-worker-stream tier=stream --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-stream dedicated=stream:NoSchedule --overwrite=true
+      changed_when: true
+
+    - name: "vm-worker-sql düğümünü PostgreSQL 16 için izole et (tier=db-sql)"
+      shell: |
+        {{ kubectl_cmd }} label nodes vm-worker-sql tier=db-sql --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-sql dedicated=db-sql:NoSchedule --overwrite=true
+      changed_when: true
+
+    - name: "vm-worker-nosql düğümünü MongoDB 7 için izole et (tier=db-nosql)"
+      shell: |
+        {{ kubectl_cmd }} label nodes vm-worker-nosql tier=db-nosql --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-nosql dedicated=db-nosql:NoSchedule --overwrite=true
+      changed_when: true
+
+    - name: "vm-worker-app düğümünü FastAPI Uygulaması ve CI/CD için etiketle (tier=app, Taint YOK)"
+      shell: |
+        {{ kubectl_cmd }} label nodes vm-worker-app tier=app --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-app dedicated- || true
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: NAMESPACE OLUŞTURMA VE RANCHER DEFAULT PROJECT ENTEGRASYONU
+    # --------------------------------------------------------------------------
+    # ÇOK ÖNEMLİ RANCHER UI DETAYI:
+    # `kubectl create namespace` ile komut satırından oluşturulan Namespace'ler
+    # Rancher Web Arayüzünde varsayılan olarak "Not in a Project" (Bir Projeye Ait Değil)
+    # kategorisine düşer ve üst menüdeki "Default Project" filtresinde gizlenir!
+    # Eğer Rancher kurulmuşsa veya kurulduktan sonra Default Project ID'si oluşmuşsa
+    # bu namespace'lerin Rancher tarafından temiz bir şekilde tanınması için önceden
+    # `data`, `app`, `argocd`, `monitoring` ve `cattle-system` namespace'lerini
+    # standart etiketlerle hazırlıyoruz.
+    - name: "Platform ve uygulama Namespace'lerini (data, app, argocd, monitoring, cattle-system) oluştur"
+      shell: |
+        for ns in data app argocd monitoring cattle-system; do
+          {{ kubectl_cmd }} create namespace $ns --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -
+          {{ kubectl_cmd }} label namespace $ns kubernetes.io/metadata.name=$ns --overwrite=true
+          {{ kubectl_cmd }} label namespace $ns platform.omnistream.io/managed-by=ansible --overwrite=true
+        done
+      changed_when: true

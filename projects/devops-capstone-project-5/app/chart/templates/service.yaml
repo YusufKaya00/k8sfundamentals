@@ -1,0 +1,71 @@
+# ==============================================================================
+# RESILIENCESTREAM KUBERNETES SERVICE ŞABLONLARI (templates/service.yaml)
+# ==============================================================================
+# Neden hem `order-api` hem de worker'lar için Service tanımlanır?
+# 1. `order-api` Service: NGINX Ingress üzerinden gelen kullanıcı/k6 HTTP trafiğini
+#    hazır (`Ready`) olan 2 `order-api` pod'una dağıtır.
+# 2. `analytics-consumer` ve `payment-worker` Service'leri: Prometheus Operator'ün
+#    (`ServiceMonitor`) her üç bileşenin `/metrics` uç noktasını 5 saniyede bir
+#    kazıyabilmesi (`rs_kafka_consumer_lag`, `rs_rabbitmq_messages_processed_total`)
+#    için standart `http` portunu dışa açar.
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-api
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: order-api
+spec:
+  type: {{ .Values.service.type | default "ClusterIP" }}
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: order-api
+  ports:
+    - name: http
+      port: {{ .Values.service.port | default 80 }}
+      targetPort: http
+      protocol: TCP
+---
+{{- if .Values.workers.analyticsConsumer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-consumer
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: analytics-consumer
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: analytics-consumer
+  ports:
+    - name: http
+      port: {{ .Values.service.port | default 80 }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+---
+{{- if .Values.workers.paymentWorker.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-worker
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: payment-worker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: payment-worker
+  ports:
+    - name: http
+      port: {{ .Values.service.port | default 80 }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

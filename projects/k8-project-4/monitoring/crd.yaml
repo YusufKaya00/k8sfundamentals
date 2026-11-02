@@ -1,0 +1,24 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: order-metrics-servicemonitor
+  # ServiceMonitor'u servisin bulundugu namespace'e yaziyoruz
+  namespace: production
+  labels:
+    # Prometheus Operator'un bunu yakalamasi icin Helm release adi sarttir:
+    release: kubeprostack
+spec:
+  # Hangi servisi hedef alacagini belirten etiket filtresi
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: custom-order-exporter
+  # Hedef namespace kisitlamasi
+  namespaceSelector:
+    matchNames:
+      - production
+  # Metrik toplama kurallari
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

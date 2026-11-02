@@ -1,0 +1,68 @@
+---
+# ==============================================================================
+# RESILIENCESTREAM: PROD SEVİYESİ KAOS MÜHENDİSLİĞİ, GITOPS & GÖZLEMLENEBİLİRLİK
+# ANA ORKESTRASYON PLAYBOOK'U (site.yml)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu master playbook, sıfırdan oluşturulan 3 adet Ubuntu 24.04 LTS Azure sanal
+# makinesini (`vm-master` B2s_v2 8 GB + `vm-worker-data` B2s 4 GB + `vm-worker-app`
+# B2s 4 GB) tek bir komutla (`ansible-playbook -i hosts.ini site.yml`) uçtan uca
+# üretime hazır bir RKE2 Kubernetes ve Kaos Mühendisliği platformuna dönüştürür.
+#
+# KATMANLI YÜRÜTME SIRASI (6 FAZLI OTOMASYON + SMOKE TEST DOĞRULAMASI):
+# 1. Faz (01-os-hardening.yml)      : Tüm sunucularda Swap kapatma, Linux çekirdek
+#                                     modülleri (overlay, br_netfilter, sch_netem) ve
+#                                     Kafka/Cassandra/Prometheus için zorunlu sysctl ayarları.
+# 2. Faz (02-rke2-master.yml)       : vm-master üzerinde RKE2 Control Plane, NGINX Ingress
+#                                     Admission Webhook hazırlık beklemesi, Helm 3 ve
+#                                     Taint-Tolerant Local-Path CSI StorageClass kurulumu.
+# 3. Faz (03-rke2-workers.yml)      : Master'dan katılım anahtarının (node-token) güvenli
+#                                     çekilmesi ve 2 worker sunucusunun RKE2 Agent olarak
+#                                     kümeye dahil edilmesi.
+# 4. Faz (04-node-isolation.yml)    : 3 düğümde fiziksel iş yükü izolasyonu için Label ve
+#                                     NoSchedule Taint politikalarının uygulanması,
+#                                     8 kurumsal Namespace'in oluşturulması.
+# 5. Faz (05-platform-services.yml) : Cert-Manager, Rancher UI, ArgoCD, kube-prometheus-stack
+#                                     (Prometheus 5s + Alertmanager + Grafana), Kafka KRaft,
+#                                     Cassandra (768M Heap), PostgreSQL, RabbitMQ, Redis ve
+#                                     ResilienceStream uygulamasının GitOps ile dağıtımı.
+# 6. Faz (06-chaos-platform.yml)    : RKE2 containerd soketi (`/run/k3s/containerd/containerd.sock`)
+#                                     ile Chaos Mesh + Chaos DNS Server kurulumu, RBAC ve
+#                                     `chaos.<MASTER_IP>.nip.io` Ingress doğrulaması.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# FAZ 1: İŞLETİM SİSTEMİ SERTLEŞTİRME VE LINUX ÇEKİRDEK (KERNEL) OPTİMİZASYONU
+# ------------------------------------------------------------------------------
+- name: "Faz 1: İşletim Sistemi Sertleştirme ve Kernel Parametreleri (Tüm Düğümler)"
+  import_playbook: playbooks/01-os-hardening.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 2: RKE2 CONTROL PLANE, INGRESS WEBHOOK VE LOCAL-PATH CSI DEPOLAMA KURULUMU
+# ------------------------------------------------------------------------------
+- name: "Faz 2: RKE2 Control Plane (Master) ve Kalıcı Depolama Altyapısı Kurulumu"
+  import_playbook: playbooks/02-rke2-master.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 3: WORKER DÜĞÜMLERİNİN RKE2 KÜMESİNE KATILIMI (AGENT BOOTSTRAP)
+# ------------------------------------------------------------------------------
+- name: "Faz 3: 2 Adet Worker Düğümünün (data & app) RKE2 Kümesine Bağlanması"
+  import_playbook: playbooks/03-rke2-workers.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 4: 3 DÜĞÜMLÜ İŞ YÜKÜ İZOLASYONU (LABELS, TAINTS & NAMESPACES)
+# ------------------------------------------------------------------------------
+- name: "Faz 4: Düğüm İzolasyonu (Label & Taint) ve 8 Namespace Mimarisi"
+  import_playbook: playbooks/04-node-isolation.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 5: PLATFORM SERVİSLERİ, VERİ KATMANI, MESAJLAŞMA VE GITOPS UYGULAMA DAĞITIMI
+# ------------------------------------------------------------------------------
+- name: "Faz 5: Rancher, ArgoCD, Monitoring, Data (Kafka/Cassandra/PG), Messaging (RabbitMQ/Redis) ve App"
+  import_playbook: playbooks/05-platform-services.yml
+
+# ------------------------------------------------------------------------------
+# FAZ 6: CHAOS MESH KAOS MÜHENDİSLİĞİ PLATFORMU KURULUMU (RKE2 CONTAINERD)
+# ------------------------------------------------------------------------------
+- name: "Faz 6: Chaos Mesh Kaos Platformu ve Game Day Altyapısının Kurulumu"
+  import_playbook: playbooks/06-chaos-platform.yml

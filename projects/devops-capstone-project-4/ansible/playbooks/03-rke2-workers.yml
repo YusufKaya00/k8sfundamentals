@@ -1,0 +1,89 @@
+---
+# ==============================================================================
+# FAZ 3: WORKER DÜĞÜMLERİNİN RKE2 KÜMESİNE KATILIMI (RKE2 AGENT BOOTSTRAP)
+# Dosya: playbooks/03-rke2-workers.yml
+# Hedef: master (Token okuma) -> workers (4x Standard_B1ms Worker Sunucusu)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# RKE2 mimarisinde işçi düğümler (`rke2-agent`), kontrol düzlemine (`vm-master`)
+# katılırken iki temel bilgiye ihtiyaç duyar:
+#   1. RKE2 Supervisor API Adresi (`https://10.20.1.4:9345`): Port 9345, RKE2'nin
+#      düğüm kaydı (node registration), sertifika imzalama (CSR) ve konfigürasyon
+#      dağıtımı için kullandığı özel kontrol portudur (Kubernetes API portu 6443'ten
+#      önce bu port üzerinden el sıkışma yapılır).
+#   2. Küme Katılım Anahtarı (`node-token`): `vm-master` üzerinde RKE2 Server ilk
+#      başladığında `/var/lib/rancher/rke2/server/node-token` dosyasında kriptografik
+#      bir token üretilir.
+#
+# Bu playbook önce `vm-master` üzerinden bu token'ı Ansible'ın `slurp` modülüyle
+# Base64 formatında güvenli bir şekilde belleğe çeker, çözer (`b64decode`) ve
+# ardından 4 worker sunucusuna (`vm-worker-stream`, `vm-worker-sql`, `vm-worker-nosql`,
+# `vm-worker-app`) paralel olarak enjekte ederek `rke2-agent` servisini başlatır.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# BÖLÜM 1: VM-MASTER SUNUCUSUNDAN KÜME KATILIM ANAHTARINI (NODE-TOKEN) ALMA
+# ------------------------------------------------------------------------------
+- name: "Faz 3.1: Master Sunucusundan RKE2 Katılım Token'ını (node-token) Oku"
+  hosts: master
+  become: true
+  tasks:
+    # slurp modülü uzak sunucudaki bir dosyayı SSH üzerinden Base64 ile kodlayarak
+    # Ansible belleğine alır. Böylece dosya içindeki özel karakterler veya satır
+    # sonları taşıma sırasında bozulmaz.
+    - name: "/var/lib/rancher/rke2/server/node-token dosyasını Base64 olarak oku"
+      slurp:
+        src: /var/lib/rancher/rke2/server/node-token
+      register: master_node_token_b64
+
+    # b64decode filtresiyle Base64 metnini düz metne çeviriyor ve trim ile sondaki
+    # yeni satır (\n) karakterini temizleyerek hostvars içine kaydediyoruz.
+    - name: "Base64 Token'ı çöz ve küme genelinde erişilebilir değişkene (rke2_cluster_token) ata"
+      set_fact:
+        rke2_cluster_token: "{{ master_node_token_b64.content | b64decode | trim }}"
+
+# ------------------------------------------------------------------------------
+# BÖLÜM 2: 4 WORKER SUNUCUSUNDA RKE2-AGENT KURULUMU VE KÜMEYE KATILIM
+# ------------------------------------------------------------------------------
+- name: "Faz 3.2: Tüm Worker Sunucularında RKE2 Agent Kurulumu ve Kümeye Bağlanma"
+  hosts: workers
+  become: true
+  vars:
+    rke2_version: "v1.31.2+rke2r1"
+    master_private_ip: "10.20.1.4"
+
+  tasks:
+    - name: "Worker düğümlerinde /etc/rancher/rke2 yapılandırma dizinini oluştur"
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+
+    # ÇOK ÖNEMLİ:
+    # - server: https://10.20.1.4:9345 -> Azure VNet içindeki düşük gecikmeli özel
+    #   IP adresini kullanır (Public IP üzerinden çıkmaz, trafik VNet içinde kalır).
+    # - token: Master düğümünün hostvars belleğinden dinamik olarak çekilir.
+    # İzin '0600' yapılarak küme katılım anahtarının sadece root tarafından okunması sağlanır.
+    - name: "Worker /etc/rancher/rke2/config.yaml dosyasını Master IP ve Token ile yapılandır"
+      copy:
+        dest: /etc/rancher/rke2/config.yaml
+        content: |
+          server: https://{{ master_private_ip }}:9345
+          token: "{{ hostvars[groups['master'][0]]['rke2_cluster_token'] }}"
+        mode: '0600'
+
+    # INSTALL_RKE2_TYPE="agent" ortam değişkeni, kurulum betiğine bu sunucunun bir
+    # Control Plane değil, yalnızca Kubelet + Containerd + kube-proxy çalıştıran
+    # bir Worker düğümü olduğunu bildirir.
+    - name: "RKE2 Agent ({{ rke2_version }}) ikili dosyalarını indir ve kur"
+      shell: "curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=agent INSTALL_RKE2_VERSION={{ rke2_version }} sh -"
+      args:
+        creates: /usr/local/bin/rke2
+
+    # rke2-agent systemd servisi başlatıldığında Master'ın 9345 portuna bağlanır,
+    # Kubelet sertifikalarını alır ve düğümü kümeye kaydeder.
+    - name: "rke2-agent systemd servisini etkinleştir ve başlat"
+      systemd:
+        name: rke2-agent
+        state: started
+        enabled: true

@@ -1,0 +1,22 @@
+architecture: standalone
+auth:
+  enabled: true
+  password: "RedisStrongPassword123!"
+master:
+  nodeSelector:
+    tier: infra
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "infra"
+      effect: "NoSchedule"
+  persistence:
+    enabled: true
+    size: 2Gi
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 400m

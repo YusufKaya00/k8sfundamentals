@@ -1,0 +1,190 @@
+# ==============================================================================
+# RESILIENCESTREAM KURUMSAL DEVSECOPS & GITOPS BORU HATTI (.gitlab-ci.yml)
+# ==============================================================================
+# Mimari Akış (4 Aşamalı Zero-Trust DevSecOps Pipeline):
+#
+#   [1. build]          -> Rootless Buildah (`quay.io/buildah/stable`) ile Docker
+#                          daemon gerektirmeden (`privileged: false`) OCI konteyner
+#                          imajı (`yusufk00/resiliencestream`) derlenir ve sonraki
+#                          aşamalara aktarılmak üzere `.tar` arşivi olarak kaydedilir.
+#   [2. scan]           -> Aqua Security Trivy (`aquasec/trivy:latest`) ile derlenen
+#                          imaj arşivi taranır. Hem Debian OS paketlerindeki hem de
+#                          Python kütüphanelerindeki `HIGH` ve `CRITICAL` CVE
+#                          zafiyetleri denetlenir.
+#   [3. push]           -> Güvenlik taramasından geçen doğrulanmış imaj, Docker Hub
+#                          (`docker.io/$DOCKERHUB_USERNAME/resiliencestream`) üzerine
+#                          hem `$CI_COMMIT_SHORT_SHA` hem de `:latest` etiketleriyle
+#                          gönderilir.
+#   [4. gitops-promote] -> Helm Chart içindeki `app/chart/values.yaml` dosyasında
+#                          `image.repository` ve `image.tag` değerleri `yq` ile yeni
+#                          `$CI_COMMIT_SHORT_SHA` sürümüne güncellenir; sonsuz döngüyü
+#                          önlemek için `[skip ci]` mesajıyla commit'lenir ve HEM
+#                          GitLab (`GITLAB_ACCESS_TOKEN:-$GIT_PUSH_TOKEN`) HEM DE
+#                          GitHub (`GITHUB_ACCESS_TOKEN`) depolarına push'lanır.
+#
+# Proje 4 Dersleri (#8):
+# - YAML `script:` satırlarında `: ` (iki nokta + boşluk) içeren komutlar YAML parser
+#   hatasına yol açmaması için `- |` çok satırlı blok veya tek tırnak içinde yazılmıştır.
+# - `[skip ci]` yalnızca bot'un ürettiği commit mesajında kullanılır.
+# - ArgoCD GitHub deposunu izlediği için `gitops_promote` aşaması GitLab ile birlikte
+#   GitHub'a da (`git pull --rebase` + `git push`) senkronize eder.
+# ==============================================================================
+
+stages:
+  - build
+  - scan
+  - push
+  - gitops-promote
+
+variables:
+  PROJECT_DIR: "Projects/devops-capstone-project-5"
+  APP_DIR: "Projects/devops-capstone-project-5/app"
+  CHART_VALUES_FILE: "Projects/devops-capstone-project-5/app/chart/values.yaml"
+  IMAGE_NAME: "docker.io/${DOCKERHUB_USERNAME}/resiliencestream"
+  IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
+  IMAGE_ARCHIVE: "resiliencestream-${CI_COMMIT_SHORT_SHA}.tar"
+  # Kubernetes pod'ları içinde Buildah'ın ek çekirdek yetkisi olmadan (rootless)
+  # çalışabilmesi için dosya sistemi tabanlı `vfs` depolama sürücüsü kullanılır.
+  STORAGE_DRIVER: "vfs"
+  BUILDAH_FORMAT: "oci"
+  BUILDAH_ISOLATION: "chroot"
+
+# ==============================================================================
+# AŞAMA 1: CONTAINER BUILD (ROOTLESS & DAEMONLESS BUILDAH)
+# ==============================================================================
+build_image:
+  stage: build
+  image: quay.io/buildah/stable:latest
+  script:
+    - |
+      echo "🔨 [1/4] Buildah ile güvenli (Rootless/Daemonless) OCI konteyner imajı derleniyor..."
+      buildah version
+      if [ -d "${APP_DIR}" ]; then
+        BUILD_CONTEXT="${APP_DIR}"
+      else
+        BUILD_CONTEXT="app"
+      fi
+      buildah bud \
+        --storage-driver=${STORAGE_DRIVER} \
+        --format=${BUILDAH_FORMAT} \
+        --isolation=${BUILDAH_ISOLATION} \
+        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+        -t "${IMAGE_NAME}:latest" \
+        -f "${BUILD_CONTEXT}/Dockerfile" \
+        "${BUILD_CONTEXT}"
+      echo "📦 Derlenen imaj Trivy güvenlik taraması ve Push aşamaları için .tar arşivine aktarılıyor..."
+      buildah push \
+        --storage-driver=${STORAGE_DRIVER} \
+        "${IMAGE_NAME}:${IMAGE_TAG}" \
+        "docker-archive:${IMAGE_ARCHIVE}:${IMAGE_NAME}:${IMAGE_TAG}"
+      ls -lh "${IMAGE_ARCHIVE}"
+  artifacts:
+    name: "resiliencestream-image-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - "${IMAGE_ARCHIVE}"
+    expire_in: 1 hour
+  rules:
+    - if: '$CI_COMMIT_MESSAGE =~ /\[skip ci\]/i'
+      when: never
+    - when: on_success
+
+# ==============================================================================
+# AŞAMA 2: DEVSECOPS VULNERABILITY SCAN (AQUA TRIVY)
+# ==============================================================================
+trivy_security_scan:
+  stage: scan
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  needs:
+    - job: build_image
+      artifacts: true
+  script:
+    - |
+      echo "🛡️ [2/4] Trivy ile konteyner imajı HIGH ve CRITICAL zafiyetlere karşı taranıyor..."
+      trivy --version
+      trivy image --input "${IMAGE_ARCHIVE}" --severity HIGH,CRITICAL --format json --output trivy-vulnerability-report.json
+      trivy image --input "${IMAGE_ARCHIVE}" --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0
+      echo "✅ Trivy güvenlik taraması tamamlandı -> trivy-vulnerability-report.json"
+  artifacts:
+    name: "trivy-report-${CI_COMMIT_SHORT_SHA}"
+    when: always
+    paths:
+      - trivy-vulnerability-report.json
+    expire_in: 7 days
+  rules:
+    - if: '$CI_COMMIT_MESSAGE =~ /\[skip ci\]/i'
+      when: never
+    - when: on_success
+
+# ==============================================================================
+# AŞAMA 3: CONTAINER REGISTRY PUSH (DOCKER HUB)
+# ==============================================================================
+push_to_dockerhub:
+  stage: push
+  image: quay.io/buildah/stable:latest
+  needs:
+    - job: build_image
+      artifacts: true
+    - job: trivy_security_scan
+  script:
+    - |
+      echo "🚀 [3/4] Doğrulanmış imaj Docker Hub kayıt defterine yükleniyor..."
+      buildah login -u "${DOCKERHUB_USERNAME}" -p "${DOCKERHUB_TOKEN}" docker.io
+      buildah pull --storage-driver=${STORAGE_DRIVER} "docker-archive:${IMAGE_ARCHIVE}"
+      buildah push --storage-driver=${STORAGE_DRIVER} "${IMAGE_NAME}:${IMAGE_TAG}" "docker://${IMAGE_NAME}:${IMAGE_TAG}"
+      buildah push --storage-driver=${STORAGE_DRIVER} "${IMAGE_NAME}:${IMAGE_TAG}" "docker://${IMAGE_NAME}:latest"
+      echo "✅ İmaj başarıyla yayınlandı -> ${IMAGE_NAME}:${IMAGE_TAG} ve ${IMAGE_NAME}:latest"
+  rules:
+    - if: '$CI_COMMIT_MESSAGE =~ /\[skip ci\]/i'
+      when: never
+    - when: on_success
+
+# ==============================================================================
+# AŞAMA 4: GITOPS PROMOTE (GITLAB + GITHUB ÇİFT YÖNLÜ SENKRONİZASYON)
+# ==============================================================================
+gitops_promote:
+  stage: gitops-promote
+  image: alpine:3.20
+  needs:
+    - job: push_to_dockerhub
+  before_script:
+    - apk add --no-cache git sed yq
+    - git config --global user.name "ResilienceStream GitOps Bot"
+    - git config --global user.email "gitops-bot@resiliencestream.local"
+  script:
+    - |
+      echo "🔄 [4/4] GitOps Manifestosu (values.yaml) yeni imaj etiketiyle güncelleniyor..."
+      if [ -f "${CHART_VALUES_FILE}" ]; then
+        TARGET_VALUES="${CHART_VALUES_FILE}"
+      else
+        TARGET_VALUES="app/chart/values.yaml"
+      fi
+      echo "Hedef Helm values dosyası -> ${TARGET_VALUES}"
+      yq -i ".image.repository = \"${DOCKERHUB_USERNAME}/resiliencestream\"" "${TARGET_VALUES}"
+      yq -i ".image.tag = \"${IMAGE_TAG}\"" "${TARGET_VALUES}"
+      grep -n -A 4 "image" "${TARGET_VALUES}"
+      git add "${TARGET_VALUES}"
+      if git diff --cached --quiet; then
+        echo "ℹ️ values.yaml zaten güncel, yeni commit gerekmiyor."
+      else
+        git commit -m "chore(gitops) promote resiliencestream image to ${IMAGE_TAG} [skip ci]"
+        PUSH_TOKEN="${GITLAB_ACCESS_TOKEN:-$GIT_PUSH_TOKEN}"
+        if [ -n "${PUSH_TOKEN}" ]; then
+          CLEAN_REPO_URL=$(echo "${CI_REPOSITORY_URL}" | sed -E 's|https?://[^@]+@||')
+          echo "🚀 GitLab deposuna pushlanıyor (${CLEAN_REPO_URL})..."
+          git pull --rebase "https://oauth2:${PUSH_TOKEN}@${CLEAN_REPO_URL}" "${CI_COMMIT_REF_NAME}" || true
+          git push "https://oauth2:${PUSH_TOKEN}@${CLEAN_REPO_URL}" "HEAD:${CI_COMMIT_REF_NAME}"
+        else
+          echo "⚠️ GITLAB_ACCESS_TOKEN veya GIT_PUSH_TOKEN tanımlı değil."
+        fi
+        if [ -n "${GITHUB_ACCESS_TOKEN}" ]; then
+          echo "🚀 GitHub deposuna da (ArgoCD için) senkronize ediliyor..."
+          git push "https://x-access-token:${GITHUB_ACCESS_TOKEN}@github.com/YusufKaya00/k8sfundamentals.git" "HEAD:${CI_COMMIT_REF_NAME}"
+        fi
+      fi
+      echo "🎯 GitOps Promote tamamlandı! ArgoCD yeni sürümü (${IMAGE_TAG}) otomatik olarak RKE2 kümesine uygulayacak."
+  rules:
+    - if: '$CI_COMMIT_MESSAGE =~ /\[skip ci\]/i'
+      when: never
+    - when: on_success

@@ -1,0 +1,29 @@
+# =====================================================================
+# Deney 06 — IOChaos: PostgreSQL disk gecikmesi
+# Hipotez: Disk yazımları yavaşladığında order-api p99 latency alarmı
+#          (RSHighLatencyP99) tetiklenir; readiness bozulmaz, veri kaybolmaz.
+# Game day: chaos/game-days/06-io-latency-postgres.md
+# =====================================================================
+apiVersion: chaos-mesh.org/v1alpha1
+kind: IOChaos
+metadata:
+  name: io-latency-postgres
+  namespace: chaos-mesh
+  labels:
+    experiment: "06"
+spec:
+  action: latency
+  mode: one
+  duration: "2m"
+  selector:
+    namespaces:
+      - data
+    labelSelectors:
+      app.kubernetes.io/name: postgresql
+  volumePath: /bitnami/postgresql  # Bitnami PG veri dizini (PVC mount noktası)
+  path: "/bitnami/postgresql/**/*" # Sadece bu volume altındaki dosyalar
+  delay: "100ms"                   # Her I/O çağrısına 100ms; WAL fsync'i belirgin yavaşlatır
+  percent: 50                      # Çağrıların yarısı etkilenir (tamamı DB'yi kilitleyebilir)
+  methods:
+    - write
+    - fsync

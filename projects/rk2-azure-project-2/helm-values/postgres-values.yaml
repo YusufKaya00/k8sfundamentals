@@ -1,0 +1,23 @@
+auth:
+  postgresPassword: "PgStrongPassword123!"
+  username: "appuser"
+  password: "AppDbPassword123!"
+  database: "appdb"
+primary:
+  nodeSelector:
+    tier: db-sql
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "db-sql"
+      effect: "NoSchedule"
+  persistence:
+    enabled: true
+    size: 4Gi
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 150m
+    limits:
+      memory: 800Mi
+      cpu: 600m

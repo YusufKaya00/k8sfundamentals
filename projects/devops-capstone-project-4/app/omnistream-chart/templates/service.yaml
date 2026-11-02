@@ -1,0 +1,29 @@
+# ==============================================================================
+# OMNISTREAM KUBERNETES SERVICE ŞABLONU (templates/service.yaml)
+# ==============================================================================
+# Bu ClusterIP servisi iki kritik görevi yerine getirir:
+# 1. RKE2 NGINX Ingress Controller'dan gelen dış HTTP trafiğini (Port 80)
+#    pod'ların dinlediği `targetPort: 8000` (Uvicorn) portuna iletir.
+# 2. `ServiceMonitor` kaynağının `selector.matchLabels` üzerinden bu servisi
+#    bulup `name: http` portu üzerinden `/metrics` verilerini kazımasını sağlar.
+#    (DİKKAT: Port adının `http` olarak isimlendirilmesi ServiceMonitor için zorunludur!)
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.service.type | default "ClusterIP" }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port | default 80 }}
+      targetPort: {{ .Values.service.targetPort | default 8000 }}
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}

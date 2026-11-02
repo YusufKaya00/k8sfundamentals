@@ -1,0 +1,32 @@
+# ==============================================================================
+# Prometheus SLO Metric AnalysisTemplate
+# ==============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: payment-success-rate
+  namespace: production
+spec:
+  metrics:
+    - name: success-rate
+      interval: 10s
+      count: 3
+      successCondition: len(result) == 0 || result[0] >= 0.95 # En az %95 basari orani zorunlulugu
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
+          query: |
+            sum(rate(http_requests_total{app="payment-service", status!~"5.*"}[1m])) 
+            / 
+            sum(rate(http_requests_total{app="payment-service"}[1m]))
+    - name: canary-synthetic-check
+      interval: 10s
+      count: 3
+      failureLimit: 1
+      provider:
+        web:
+          url: "http://payment-service-canary.production.svc.cluster.local/"
+          timeoutSeconds: 5
+          jsonPath: "{$.color}" # Yanitin saglikli bir sekilde dondugunu teyit eder

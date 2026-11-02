@@ -1,0 +1,111 @@
+---
+# ==============================================================================
+# FAZ 4: 3 DÜĞÜMLÜ İŞ YÜKÜ İZOLASYONU (LABELS, TAINTS & 8 KURUMSAL NAMESPACE)
+# Dosya: playbooks/04-node-isolation.yml
+# Hedef: vm-master (kubectl üzerinden tüm küme topolojisini yapılandırır)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Kurumsal Kubernetes mimarilerinde durum bilgili (stateful) veritabanları ile
+# durumsuz (stateless) uygulama pod'larının aynı düğümde birbirinin RAM ve Disk
+# I/O kaynaklarını tüketmesine ("Noisy Neighbor" ve `OOMKilled`) izin verilmez.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI?
+# Sözleşmedeki 3 düğümlü izolasyon matrisiyle prod topolojisini birebir kuruyoruz:
+#   - `vm-master`      (10.30.1.4, 8 GB) : Label=`tier=platform` | Taint=`CriticalAddonsOnly=true:NoSchedule`
+#                                          (Rancher, ArgoCD, Prometheus/Grafana/Alertmanager, Chaos Mesh Controller)
+#   - `vm-worker-data` (10.30.1.5, 4 GB) : Label=`tier=data`     | Taint=`dedicated=data:NoSchedule`
+#                                          (Kafka KRaft, Apache Cassandra, PostgreSQL)
+#   - `vm-worker-app`  (10.30.1.6, 4 GB) : Label=`tier=app`      | Taint=YOK
+#                                          (order-api x2, analytics-consumer, payment-worker, RabbitMQ, Redis, GitLab Runner)
+#
+# KURUMSAL NAMESPACE MİMARİSİ (8 NAMESPACE):
+# `data`, `messaging`, `app`, `monitoring`, `argocd`, `cattle-system`, `chaos-mesh`, `gitlab-runner`
+# ==============================================================================
+
+- name: "Faz 4: 3 Düğümün Hazırlık Kontrolü, Fiziksel Taint/Label İzolasyonu ve Namespace Mimarisi"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. ADIM: 3 DÜĞÜMÜN TAMAMININ KÜMEYE KATILDIĞINI VE READY OLDUĞUNU DOĞRULA
+    # --------------------------------------------------------------------------
+    - name: "Toplam 3 düğümün (vm-master, vm-worker-data, vm-worker-app) kümeye kaydolmasını bekle"
+      shell: "{{ kubectl_cmd }} get nodes --no-headers | wc -l"
+      register: registered_nodes
+      until: registered_nodes.stdout | int >= 3
+      retries: 36
+      delay: 10
+      changed_when: false
+
+    - name: "Kümedeki 3 düğümün tamamının 'Ready' durumuna geçmesini bekle"
+      shell: "{{ kubectl_cmd }} wait --for=condition=ready nodes --all --timeout=240s"
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 2. ADIM: VM-MASTER DÜĞÜMÜNÜN ETİKETLENMESİ VE TAINT İLE KORUNMASI
+    # --------------------------------------------------------------------------
+    - name: "vm-master düğümüne tier=platform etiketi ve CriticalAddonsOnly=true:NoSchedule Taint'i uygula"
+      shell: |
+        {{ kubectl_cmd }} label nodes vm-master tier=platform --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-master CriticalAddonsOnly=true:NoSchedule --overwrite=true
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 3. ADIM: WORKER DÜĞÜMLERİNİN ETİKETLENMESİ (LABELS) VE İZOLE EDİLMESİ (TAINTS)
+    # --------------------------------------------------------------------------
+    - name: "vm-worker-data düğümünü Kafka, Cassandra ve PostgreSQL için izole et (tier=data, dedicated=data:NoSchedule)"
+      shell: |
+        {{ kubectl_cmd }} label nodes vm-worker-data tier=data --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-data dedicated=data:NoSchedule --overwrite=true
+      changed_when: true
+
+    - name: "vm-worker-app düğümünü Uygulama, RabbitMQ, Redis ve CI/CD için etiketle (tier=app, Taint YOK)"
+      shell: |
+        {{ kubectl_cmd }} label nodes vm-worker-app tier=app --overwrite=true
+        {{ kubectl_cmd }} taint nodes vm-worker-app dedicated- || true
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 4. ADIM: SÖZLEŞMEDEKİ 8 NAMESPACE'İN OLUŞTURULMASI
+    # --------------------------------------------------------------------------
+    - name: "Sözleşmedeki 8 Namespace'i (data, messaging, app, monitoring, argocd, cattle-system, chaos-mesh, gitlab-runner) oluştur"
+      shell: |
+        for ns in data messaging app monitoring argocd cattle-system chaos-mesh gitlab-runner; do
+          {{ kubectl_cmd }} create namespace $ns --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -
+          {{ kubectl_cmd }} label namespace $ns kubernetes.io/metadata.name=$ns --overwrite=true
+          {{ kubectl_cmd }} label namespace $ns platform.resiliencestream.io/managed-by=ansible --overwrite=true
+        done
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 5. ADIM: SMOKE TEST & DOĞRULAMA BLOĞU (BLOCK / RESCUE)
+    # --------------------------------------------------------------------------
+    - name: "Faz 4 Doğrulama (Smoke Test): 3 Node Ready, Label/Taint ve 8 Namespace Kontrolü"
+      block:
+        - name: "Düğüm etiketlerini, taint'leri ve 8 namespace'in varlığını doğrula"
+          shell: |
+            set -e
+            {{ kubectl_cmd }} get node vm-master -o jsonpath='{.metadata.labels.tier}' | grep -q "^platform$"
+            {{ kubectl_cmd }} get node vm-worker-data -o jsonpath='{.metadata.labels.tier}' | grep -q "^data$"
+            {{ kubectl_cmd }} get node vm-worker-app -o jsonpath='{.metadata.labels.tier}' | grep -q "^app$"
+            {{ kubectl_cmd }} get node vm-worker-data -o jsonpath='{.spec.taints[*].key}' | grep -q "dedicated"
+            for ns in data messaging app monitoring argocd cattle-system chaos-mesh gitlab-runner; do
+              {{ kubectl_cmd }} get namespace "$ns" >/dev/null
+            done
+          changed_when: false
+      rescue:
+        - name: "Faz 4 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 4 (NODE ISOLATION & NAMESPACES) DOĞRULAMASI BAŞARISIZ OLDU!"
+              - "Lütfen vm-master üzerinde şu teşhis komutlarını çalıştırın:"
+              - "  1. Düğüm Durumları : kubectl get nodes -o wide --show-labels"
+              - "  2. Düğüm Taint'leri: kubectl custom-columns='NAME:.metadata.name,TAINTS:.spec.taints' get nodes"
+              - "  3. CNI Pod Durumu  : kubectl get pods -n kube-system -l k8s-app=canal"
+              - "  4. Namespace Listesi: kubectl get ns"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 4 Node Isolation doğrulaması başarısız oldu. Yukarıdaki teşhis komutlarını inceleyin."

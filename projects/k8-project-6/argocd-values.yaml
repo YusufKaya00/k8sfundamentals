@@ -1,0 +1,151 @@
+global:
+  nodeSelector:
+    tier: web
+
+# Harici SSO / OAuth modülünü kapat
+dex:
+  enabled: false
+
+# Bildirim motorunu kapat
+notifications:
+  enabled: false
+
+# Çoklu küme şablonlayıcısını kapat
+applicationSet:
+  enabled: false
+
+# Önbellek katmanı: HA yerine tek replika
+redis:
+  enabled: true
+
+# API & Web UI Sunucusu
+server:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Git Manifest Render Sunucusu
+repoServer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+# GitOps Uzlaştırma (Reconciliation) Motoru
+controller:
+  replicas: stages:
+  - test
+  - build
+  - scan
+  - sbom
+  - deploy
+
+variables:
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  TRIVY_NO_PROGRESS: "true"
+  TRIVY_CACHE_DIR: ".trivycache/"
+  TRIVY_AUTH_URL: $CI_REGISTRY
+  TRIVY_USERNAME: $CI_REGISTRY_USER
+  TRIVY_PASSWORD: $CI_REGISTRY_PASSWORD
+
+# ------------------------------------------------------------------------------
+# Faz 2: Test, Build, Scan, SBOM
+# ------------------------------------------------------------------------------
+
+smoke-test:
+  stage: test
+  image: alpine:3.20
+  script:
+    - echo "Smoke test calisiyor..."
+    - find . -name "rollout.yaml" | grep -q "rollout.yaml"
+
+build-image:
+  stage: build
+  image: quay.io/buildah/stable:v1.37.1
+  variables:
+    STORAGE_DRIVER: "vfs"
+    BUILDAH_ISOLATION: "chroot"
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - echo "Rootless Buildah ile imaj derleniyor..."
+    - cnt=$(buildah from alpine:3.20)
+    - buildah config --label maintainer="DevSecOps Team" $cnt
+    - buildah commit $cnt "$IMAGE_TAG"
+    - buildah commit $cnt "$CI_REGISTRY_IMAGE:latest"
+    - buildah push "$IMAGE_TAG"
+    - buildah push "$CI_REGISTRY_IMAGE:latest"
+
+trivy-scan:
+  stage: scan
+  image:
+    name: docker.io/aquasec/trivy:0.55.0
+    entrypoint: [""]
+  cache:
+    key: trivy-cache
+    paths:
+      - .trivycache/
+  script:
+    - echo "Trivy guvenlik kapisi calisiyor..."
+    - trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed "$IMAGE_TAG"
+
+generate-sbom:
+  stage: sbom
+  image:
+    name: docker.io/aquasec/trivy:0.55.0
+    entrypoint: [""]
+  script:
+    - echo "CycloneDX SBOM raporu uretiliyor..."
+    - trivy image --format cyclonedx --output sbom-report.cdx.json "$IMAGE_TAG"
+  artifacts:
+    name: "sbom-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - sbom-report.cdx.json
+    expire_in: 1 week
+
+# ------------------------------------------------------------------------------
+# Faz 4: GitOps Promotion Bridge (Adım 8 & 9)
+# ------------------------------------------------------------------------------
+
+promote-to-gitops:
+  stage: deploy
+  image:
+    name: alpine/git:latest
+    entrypoint: [""]
+  variables:
+    GITOPS_REPO: "gitlab.com/ysf-group1074641/ysf-project.git"
+    GITOPS_BRANCH: "main"
+  before_script:
+    - git config --global user.email "ci-bot@enterprise.corp"
+    - git config --global user.name "GitOps Automation Bot"
+  script:
+    - echo "1. GitOps deposu klonlaniyor..."
+    - TOKEN="${GITLAB_ACCESS_TOKEN:-$GITOPS_ACCESS_TOKEN}"
+    - git clone "https://oauth2:${TOKEN}@${GITOPS_REPO}" gitops-repo
+    - cd gitops-repo
+    - echo "2. Manifest icindeki imaj etiketi $IMAGE_TAG ile guncelleniyor..."
+    - MANIFEST=$(find . -name "rollout.yaml" | head -n 1)
+    - 'sed -i "s|image: .*|image: $IMAGE_TAG|g" "$MANIFEST"'
+    - echo "3. Guncelleme GitOps reposuna gonderiliyor..."
+    - git add "$MANIFEST"
+    - 'git commit -m "chore(release): promote payment-service to $CI_COMMIT_SHORT_SHA [skip ci]" || echo "No changes to commit"'
+    - git push origin "$GITOPS_BRANCH"
+    - echo "Tamamlandi! ArgoCD yeni imaji canliya alacak."
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

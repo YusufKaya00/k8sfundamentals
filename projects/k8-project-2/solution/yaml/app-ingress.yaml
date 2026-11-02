@@ -1,0 +1,55 @@
+# Ingress kurallari (networking.k8s.io/v1)
+# Ingress nesnesi yalnizca kendi namespace'indeki Service'lere yonlendirme
+# yapabildigi icin her ortam icin ayri bir Ingress tanimlanmistir.
+# Ingress Controller: minikube "ingress" eklentisi (ingress-nginx, class: nginx)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-ingress
+  namespace: staging
+  labels:
+    app: web
+    environment: staging
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: staging.lab.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-ingress
+  namespace: production
+  labels:
+    app: web
+    environment: production
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.lab.internal
+      http:
+        paths:
+          # En uzun eslesen yol once degerlendirilir: /metrics -> postgres-exporter
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: postgres-exporter
+                port:
+                  number: 9187
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80

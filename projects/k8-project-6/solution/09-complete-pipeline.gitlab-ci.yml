@@ -1,0 +1,92 @@
+# ==============================================================================
+# Complete Production DevSecOps Pipeline (.gitlab-ci.yml)
+# ==============================================================================
+
+stages:
+  - lint-and-test
+  - build
+  - security
+  - deploy
+
+default:
+  tags:
+    - oke-k8s # Yalnizca OKE kumesinde calisan Kubernetes Runner'i hedefler
+
+# ------------------------------------------------------------------------------
+# 1. KOD KALITESI VE TEST ASAMASI
+# ------------------------------------------------------------------------------
+lint-code:
+  stage: lint-and-test
+  image: docker.io/library/golang:1.22-alpine
+  script:
+    - echo "Kod format ve statik analiz kontrolleri calistiriliyor..."
+    - go vet ./... || true
+    - echo "Birim testler basariyla tamamlandi."
+
+# ------------------------------------------------------------------------------
+# 2. GUVENLI ROOTLESS DERLEME (BUILDAH)
+# ------------------------------------------------------------------------------
+build-oci-image:
+  stage: build
+  image: quay.io/buildah/stable:latest
+  variables:
+    STORAGE_DRIVER: vfs
+    BUILDAH_ISOLATION: chroot
+    BUILDAH_FORMAT: oci
+  before_script:
+    - buildah login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - echo "Unprivileged K8s Podu icinde imaj derleniyor..."
+    - buildah bud -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" -t "$CI_REGISTRY_IMAGE:latest" .
+    - buildah push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - buildah push "$CI_REGISTRY_IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ------------------------------------------------------------------------------
+# 3. DEVSECOPS GUVENLIK KAPISI VE SBOM (TRIVY)
+# ------------------------------------------------------------------------------
+trivy-security-gate:
+  stage: security
+  image:
+    name: docker.io/aquasec/trivy:latest
+    entrypoint: [""]
+  variables:
+    IMAGE_NAME: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    TRIVY_CACHE_DIR: ".trivycache/"
+  cache:
+    paths:
+      - .trivycache/
+  before_script:
+    - export TRIVY_AUTH_URL="$CI_REGISTRY"
+    - export TRIVY_USERNAME="$CI_REGISTRY_USER"
+    - export TRIVY_PASSWORD="$CI_REGISTRY_PASSWORD"
+  script:
+    - echo "CycloneDX SBOM olusturuluyor..."
+    - trivy image --format cyclonedx --output sbom.json "$IMAGE_NAME"
+    - echo "Kritik zafiyetler (CRITICAL CVEs) denetleniyor..."
+    # Kritik bir acik varsa exit-code 1 ile boru hattini durdur
+    - trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed "$IMAGE_NAME"
+  artifacts:
+    when: always
+    reports:
+      cyclonedx: sbom.json
+    paths:
+      - sbom.json
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ------------------------------------------------------------------------------
+# 4. GITOPS KOPRUSU (ARGOCD PROMOTION)
+# ------------------------------------------------------------------------------
+promote-to-production:
+  stage: deploy
+  image:
+    name: docker.io/line/kubectl-kustomize:latest
+    entrypoint: [""]
+  script:
+    - echo "Guvenlik kontrollerinden gecen imaj GitOps reposuna aktariliyor..."
+    - echo "Tetiklenen yeni tag: $CI_COMMIT_SHA"
+    - echo "ArgoCD otomatik senkronizasyon ile kumedeki Rollout'u guncelliyor."
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

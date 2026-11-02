@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: payment-service
+  namespace: production
+  labels:
+    app: payment-service
+spec:
+  replicas: 4
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: payment-service
+  strategy:
+    canary:
+      stableService: payment-service-stable
+      canaryService: payment-service-canary
+      steps:
+        # 1. Adım: %25 trafik (1 pod canary)
+        - setWeight: 25
+        - pause: { duration: 15s }
+        # 2. Adım: Metrik Analizi - Başarı oranı >= 95 mi?
+        - analysis:
+            templates:
+              - templateName: payment-success-rate
+        # 3. Adım: %50 trafik (2 pod canary)
+        - setWeight: 50
+        - pause: { duration: 15s }
+        # 4. Adım: İkinci Metrik Analizi
+        - analysis:
+            templates:
+              - templateName: payment-success-rate
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      nodeSelector:
+        tier: web
+      containers:
+        - name: payment-service
+          image: docker.io/argoproj/rollouts-demo:blue
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 30m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5

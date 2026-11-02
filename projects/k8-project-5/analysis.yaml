@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: payment-success-rate
+  namespace: production
+spec:
+  metrics:
+    - name: success-rate
+      interval: 10s
+      count: 3
+      failureLimit: 1
+      # Başarı şartı: Dönen oran >= 95 olmalıdır
+      successCondition: result[0] >= 95
+      provider:
+        prometheus:
+          # Küme içi Prometheus DNS adresi (Kendi Prometheus servisinizin adına göre düzenlenebilir)
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
+          query: |
+            (
+              sum(rate(http_requests_total{app="payment-service", status!~"5.*"}[1m]))
+              /
+              sum(rate(http_requests_total{app="payment-service"}[1m]))
+            ) * 100
