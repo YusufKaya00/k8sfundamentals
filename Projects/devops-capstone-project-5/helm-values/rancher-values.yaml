@@ -24,6 +24,18 @@
 replicas: 1
 
 # ------------------------------------------------------------------------------
+# 1.1 BAŞLANGIÇ PROBE ZAMAN AŞIMI (CATALOG RESTORATION OPTİMİZASYONU)
+# ------------------------------------------------------------------------------
+# Rancher ilk açılışta dahili git depolarını (rancher-charts, partner-charts)
+# diske açar. 2 vCPU sanal sunucuda varsayılan 120 sn (failureThreshold: 12)
+# yetmediğinden Kubelet pod'u sürekli SIGKILL ile öldürür ve I/O kilitlenmesi yaşanır.
+# failureThreshold: 45 (450 saniye / 7.5 dk) verilerek temiz başlangıç sağlanır.
+startupProbe:
+  failureThreshold: 45
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+# ------------------------------------------------------------------------------
 # 2. İLK KURULUM (BOOTSTRAP) YÖNETİCİ ŞİFRESİ
 # ------------------------------------------------------------------------------
 bootstrapPassword: "AdminPassword2026!"
