@@ -42,8 +42,8 @@ flowchart TD
 Run the automated provisioning script to deploy the faulty production stack:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-13
-./setup.sh
+./broken-manifests/setup-broken.sh
+# (or ./setup.sh)
 ```
 
 Inspect initial cluster health across `novaedge-prod`:
@@ -249,8 +249,8 @@ flowchart TD
 Arızalı üretim ortamını ayağa kaldırmak için kurulum betiğini çalıştırın:
 
 ```bash
-cd /home/ysf/k8sfundamentals/k8-troubleshoot-13
-./setup.sh
+./broken-manifests/setup-broken.sh
+# (veya ./setup.sh)
 ```
 
 Kümedeki ilk durumu gözlemleyin:

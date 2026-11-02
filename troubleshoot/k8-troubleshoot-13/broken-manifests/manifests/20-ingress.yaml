@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: novaedge-ingress
+  namespace: novaedge-prod
+  labels:
+    app.kubernetes.io/name: novaedge-ingress
+    app.kubernetes.io/part-of: novaedge
+spec:
+  ingressClassName: edge-ingress-internal
+  rules:
+    - host: api.novaedge.io
+      http:
+        paths:
+          - path: /stream
+            pathType: Prefix
+            backend:
+              service:
+                name: stream-api
+                port:
+                  number: 80
