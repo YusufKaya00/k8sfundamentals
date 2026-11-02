@@ -52,6 +52,13 @@ primary:
       cpu: 500m
       memory: 512Mi
 
+  # IOChaos (toda) FUSE mount mekanizması pod mount namespace'i içine girdikten sonra
+  # volumePath (/bitnami/postgresql) yanında kardeş dizin oluşturur.
+  # readOnlyRootFilesystem: true olduğunda toda EROFS (os error 30) ile çöker.
+  containerSecurityContext:
+    enabled: true
+    readOnlyRootFilesystem: false
+
   nodeSelector:
     tier: data
 
