@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-cache
+  namespace: {{ .Values.namespace }}
+spec:
+  clusterIP: None
+  selector:
+    app: {{ .Release.Name }}-cache
+    tier: cache
+  ports:
+    - name: redis
+      port: {{ .Values.cache.port }}
+      targetPort: {{ .Values.cache.port }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-cache
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: {{ .Release.Name }}-cache
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-cache
+      tier: cache
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-cache
+        tier: cache
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.cache.image.repository }}:{{ .Values.cache.image.tag }}"
+          command: ["redis-server", "--requirepass", "$(CACHE_PASS)", "--appendonly", "yes"]
+          env:
+            - name: CACHE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-cache-secret
+                  key: CACHE_TOKEN
+          ports:
+            - containerPort: {{ .Values.cache.port }}
+          volumeMounts:
+            - name: cache-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: cache-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.cache.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.cache.storageSize }}

@@ -1,0 +1,22 @@
+namespace: storefront-prod
+
+webapp:
+  replicas: 2
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.27-alpine-slim-rc99"
+  containerPort: 8080
+  servicePort: 80
+  probePath: /healthz
+
+cache:
+  image:
+    repository: redis
+    tag: "7.2-alpine"
+  port: 6379
+  storageClassName: "managed-csi-fast"
+  storageSize: 2Gi
+  passwordPlain: "ProdCache#2026!"
+
+ingress:
+  className: nginx
