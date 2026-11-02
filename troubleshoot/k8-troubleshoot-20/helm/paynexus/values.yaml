@@ -18,7 +18,7 @@ db:
     repository: postgres
     tag: "16-alpine"
   port: 5432
-  storageClassName: "managed-csi-premium-v2"
+  storageClassName: "managed-csi"
   storageSize: 2Gi
   user: "payuser"
   database: "paynexus"
