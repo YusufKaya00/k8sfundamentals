@@ -18,7 +18,7 @@ replicaCount: 2
 image:
   repository: yusufk00/resiliencestream
   tag: "latest"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 # Alt işçi (worker) bileşenleri için kopya sayıları
 workers:
