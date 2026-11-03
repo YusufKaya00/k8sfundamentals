@@ -10,7 +10,6 @@ gateway:
   containerPort: 8080
   servicePort: 80
   namedPort: gateway-http
-  externalTrafficPolicy: Local
   probePath: /healthz
   resources:
     requests:
