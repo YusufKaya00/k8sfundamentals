@@ -1,0 +1,159 @@
+{
+  "id": null,
+  "uid": "rs-slo-overview",
+  "title": "🎯 ResilienceStream — 01. SLO Overview & Golden Signals",
+  "description": "Proje 5 SLO ve Hata Bütçesi (Error Budget) Panosu: HTTP başarı oranı, p50/p95/p99 gecikme, sipariş sonuçları ve 5 bağımlılığın canlı durumu.",
+  "tags": [
+    "resiliencestream",
+    "slo",
+    "sre",
+    "project5"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "🟢 5 Bağımlılık Canlı Sağlık Durumu (rs_dependency_up: 1=UP, 0=DOWN)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "min by (dependency) (rs_dependency_up)",
+          "legendFormat": "{{ dependency }}"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "DOWN ❌", "color": "red" },
+                "1": { "text": "UP ✅", "color": "green" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "🛡️ HTTP Başarı Oranı SLO (Hedef >= %99)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "100 * (1 - (sum(rate(rs_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(rs_http_requests_total[5m])), 0.0001)))",
+          "legendFormat": "Availability %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 90,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 99 },
+              { "color": "green", "value": 99.5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "🛒 Oluşturulan Siparişler (success / degraded / failed)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (result) (rs_orders_created_total)",
+          "legendFormat": "{{ result }}"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 4,
+      "title": "⏱️ HTTP İstek Gecikmesi (Latency p50 / p95 / p99 — SLO < 1.0s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=\"/api/orders\"}[1m])))",
+          "legendFormat": "p50 (/api/orders)"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=\"/api/orders\"}[1m])))",
+          "legendFormat": "p95 (/api/orders)"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=\"/api/orders\"}[1m])))",
+          "legendFormat": "p99 (/api/orders)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "id": 5,
+      "title": "📈 Saniyedeki HTTP İstek Hızı (RPS — Status Bazlı)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (endpoint, status) (rate(rs_http_requests_total{endpoint!~\"/healthz|/readyz|/metrics\"}[1m]))",
+          "legendFormat": "{{ endpoint }} [{{ status }}]"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    },
+    {
+      "id": 6,
+      "title": "🔌 Bağımlılık Probe Gecikmesi (rs_dependency_latency_seconds p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, dependency) (rate(rs_dependency_latency_seconds_bucket[1m])))",
+          "legendFormat": "{{ dependency }} p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    }
+  ]
+}
