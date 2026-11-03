@@ -1,0 +1,100 @@
+# ==============================================================================
+# APACHE KAFKA (bitnami/kafka) — KRAFT MODU (ZOOKEEPER-LESS) HELM DEĞERLERİ
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Apache Kafka, ResilienceStream platformumuzun Olay Güdümlü (Event-Driven)
+# omurgasıdır. `order-api` tarafından üretilen `orders.events` olaylarını yüksek
+# hızda log segmentlerine yazar ve `analytics-consumer` servisine iletir.
+#
+# NEDEN PROD ORTAMINDA BÖYLEDİR VS LAB ORTAMI?
+# - Prod'da: Kafka KRaft en az 3 Controller + 3 Broker düğümünde, `replication.factor=3`
+#   ve `min.insync.replicas=2` ile çalışır; böylece 1 sunucu tamamen yansa bile
+#   veri kaybı yaşanmaz (`acks=all`).
+# - Lab'da: `vm-worker-data` (`Standard_B2s`: 2 vCPU / 4 GB RAM, `tier=data`,
+#   taint `dedicated=data:NoSchedule`) üzerinde Cassandra ve PostgreSQL ile yan yana
+#   çalıştığı için tek düğümlü birleşik Controller+Broker (`replicaCount: 1`) ve
+#   `-Xmx400m -Xms256m` JVM Heap sınırı kullanıyoruz.
+#   Proje 4 Ders 2 gereği `bitnamilegacy/kafka` imajı ve `allowInsecureImages: true`
+#   zorunlu olarak tanımlanmıştır.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. PROJE 4 DERS 2: BITNAMI LEGACY İMAJ DEPOSU VE GÜVENLİK İZNİ
+# ------------------------------------------------------------------------------
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  repository: bitnamilegacy/kafka
+
+kraft:
+  enabled: true
+
+zookeeper:
+  enabled: false
+
+# ------------------------------------------------------------------------------
+# 2. DİNLEYİCİ (LISTENER) VE GÜVENLİK PROTOKOLÜ YAPILANDIRMASI
+# ------------------------------------------------------------------------------
+# Küme içi DNS: `kafka.data.svc.cluster.local:9092`
+listeners:
+  client:
+    protocol: PLAINTEXT
+  controller:
+    protocol: PLAINTEXT
+  interbroker:
+    protocol: PLAINTEXT
+  external:
+    protocol: PLAINTEXT
+
+# ------------------------------------------------------------------------------
+# 3. BİRLEŞİK CONTROLLER + BROKER MİMARİSİ (VM-WORKER-DATA İZOLASYONU)
+# ------------------------------------------------------------------------------
+controller:
+  replicaCount: 1
+  controllerOnly: false
+  resourcesPreset: "none"
+
+  # JVM Yığın Belleği (Heap) Sınırlandırması:
+  heapOpts: "-Xmx400m -Xms256m"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 450Mi
+    limits:
+      cpu: 600m
+      memory: 900Mi
+
+  # Sözleşme gereği `vm-worker-data` düğümüne (`tier: data`) sabitlenir:
+  nodeSelector:
+    tier: data
+
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: data
+      effect: NoSchedule
+
+  persistence:
+    enabled: true
+    size: 4Gi
+
+# ------------------------------------------------------------------------------
+# 4. HARİCİ BROKER HAVUZUNU KAPATMA
+# ------------------------------------------------------------------------------
+broker:
+  replicaCount: 0
+  resourcesPreset: "none"
+
+# ------------------------------------------------------------------------------
+# 5. OTOMATİK TOPIC OLUŞTURMA VE TEK KOPYA REPLİKASYON AYARLARI
+# ------------------------------------------------------------------------------
+extraConfig: |
+  auto.create.topics.enable=true
+  offsets.topic.replication.factor=1
+  transaction.state.log.replication.factor=1
+  transaction.state.log.min.isr=1
+  default.replication.factor=1
+  min.insync.replicas=1

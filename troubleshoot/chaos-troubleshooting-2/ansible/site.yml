@@ -1,0 +1,35 @@
+---
+# ==============================================================================
+# CHAOS & TROUBLESHOOTING LAB 1: RKE2, DATA/MESSAGING & CHAOS MESH OTOMASYONU
+# ANA ORKESTRASYON PLAYBOOK'U (site.yml)
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Bu master playbook, sıfırdan oluşturulan 3 adet Ubuntu 24.04 LTS Azure sanal
+# makinesini (`vm-master` B2s_v2 8 GB + `vm-worker-data` B2s 4 GB + `vm-worker-app`
+# B2s 4 GB) tek bir komutla (`ansible-playbook -i hosts.ini site.yml`) uçtan uca
+# Chaos & Troubleshooting Lab ortamına dönüştürür.
+#
+# ÖNEMLİ OPTİMİZASYON (SIFIR KASMA / HAFİF MASTER):
+# `vm-master` üzerinde terminal kasmasını ve yüksek RAM tüketimini önlemek için
+# ağır Rancher Server ve ArgoCD bileşenleri çıkarılmış; doğrudan Lab için gerekli
+# olan RKE2 + Chaos Mesh UI + Prometheus/Grafana + Kafka + Cassandra + PostgreSQL +
+# RabbitMQ + Redis + ResilienceStream (Troubleshoot Modu) yığını kurulmaktadır.
+# ==============================================================================
+
+- name: "Faz 1: İşletim Sistemi Sertleştirme ve Kernel Parametreleri (Tüm Düğümler)"
+  import_playbook: playbooks/01-os-hardening.yml
+
+- name: "Faz 2: RKE2 Control Plane (Master) ve Kalıcı Depolama Altyapısı Kurulumu"
+  import_playbook: playbooks/02-rke2-master.yml
+
+- name: "Faz 3: 2 Adet Worker Düğümünün (data & app) RKE2 Kümesine Bağlanması"
+  import_playbook: playbooks/03-rke2-workers.yml
+
+- name: "Faz 4: Düğüm İzolasyonu (Label & Taint) ve Namespace Mimarisi"
+  import_playbook: playbooks/04-node-isolation.yml
+
+- name: "Faz 5: Monitoring, Data (Kafka/Cassandra/PG), Messaging (RabbitMQ/Redis) ve Troubleshoot App Kurulumu"
+  import_playbook: playbooks/05-platform-services.yml
+
+- name: "Faz 6: Chaos Mesh Kaos Platformu ve Game Day Altyapısının Kurulumu"
+  import_playbook: playbooks/06-chaos-platform.yml
