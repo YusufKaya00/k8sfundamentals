@@ -9,9 +9,9 @@
 # ==============================================================================
 
 variable "resource_group_name" {
-  description = "Chaos & Troubleshooting Lab 1 kaynaklarını (VNet, NSG, NAT GW, 3 VM) barındıracak Azure Resource Group adı."
+  description = "Chaos & Troubleshooting Lab 2 kaynaklarını (VNet, NSG, NAT GW, 3 VM) barındıracak Azure Resource Group adı."
   type        = string
-  default     = "rg-chaos-troubleshoot-1"
+  default     = "rg-chaos-troubleshoot-2"
 }
 
 variable "location" {
