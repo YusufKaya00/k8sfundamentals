@@ -60,18 +60,27 @@ Bir SRE'nin kaos testi tasarlarken bildiği ilk altın kural:
 
 ---
 
-## 2. Erişim Adresleri & Hızlı Başlangıç (Tek Komutla Kurulum)
+## 2. Erişim Adresleri & Hızlı Başlangıç (Sıfırdan Terraform + Ansible Kurulumu)
 
-### 2.1. Web Arayüzleri ve Kimlik Bilgileri
-| Servis | Adres (URL) | Kullanıcı Adı / Şifre | Ne İçin Kullanacağız? |
-| :--- | :--- | :--- | :--- |
-| **Chaos Mesh Dashboard** | `http://chaos.9.205.90.183.nip.io` | *(Şifresiz)* | Tüm kaos deneylerini ve workflow akışlarını tarayıcıdan başlatmak/izlemek için |
-| **Grafana Dashboard** | `http://grafana.9.205.90.183.nip.io` | `admin` / `AdminPassword2026!` | Canlı metrikleri, gecikmeleri, p99 grafiklerini ve alarmları izlemek için |
-| **Sipariş API Durumu** | `http://app.9.205.90.176.nip.io/api/status` | *(Açık API)* | 5 bağımlılığın (`postgres`, `kafka`, `rabbitmq`, `redis`, `cassandra`) anlık durumunu görmek için |
-| **Rancher UI** | `https://rancher.9.205.90.183.nip.io` | `admin` / `AdminPassword2026!` | Kümedeki pod ve düğüm durumlarını görsel incelemek için |
+### 2.1. Adım 0A: Sıfırdan Azure Altyapısını ve RKE2 + Kafka/RabbitMQ/Chaos Mesh Yığınını Kurun
+Eğer Azure üzerinde sanal makineleriniz henüz kurulu değilse, bu dizindeki **Terraform** ve **Ansible** otomasyonunu kullanarak 3 sunuculu (`vm-master`, `vm-worker-data`, `vm-worker-app`) RKE2 kümesini, **PostgreSQL + Apache Kafka (KRaft) + Cassandra + RabbitMQ + Redis + Prometheus/Grafana + Chaos Mesh** servislerini ve **Troubleshoot Lab uygulamasını** tek seferde ayağa kaldırın:
 
-### 2.2. Adım 0: Lab Ortamını "Troubleshoot Modunda" Başlatın
-Mevcut çalışan RKE2 kümemiz üzerinde lab ortamını başlatmak için yerel terminalinizde şu komutları çalıştırın:
+```bash
+# 1) Azure üzerinde 3 VM, VNet, NSG ve NAT Gateway'i oluştur (otomatik olarak ansible/hosts.ini ve scripts/.lab-env üretir)
+cd /home/ysf/k8sfundamentals/troubleshoot/chaos-troubleshooting-1/terraform
+terraform init
+terraform apply -auto-approve
+
+# 2) Ansible ile RKE2 Kümesini, Kafka/RabbitMQ/Postgres/Redis/Cassandra, Grafana, Chaos Mesh ve Lab Uygulamasını kur
+cd ../ansible
+ansible-playbook -i hosts.ini site.yml
+```
+
+> [!NOTE]
+> `vm-master` üzerinde terminal kasmasını önlemek için ağır Rancher ve ArgoCD bileşenleri bu labda **kurulmaz**. Tüm kaos deneyleri doğrudan hızlı **Chaos Mesh Web UI**, **Grafana**, **RabbitMQ UI** ve **Helm CLI** üzerinden gerçekleştirilir.
+
+### 2.2. Adım 0B: Lab Ortamını "Troubleshoot Modunda" Sıfırlama & Sağlık Kontrolü
+Kümeniz kurulduktan sonra (veya istediğiniz her an lab'ı başa sarmak için) ana dizinde şu komutları çalıştırın:
 
 ```bash
 cd /home/ysf/k8sfundamentals/troubleshoot/chaos-troubleshooting-1
@@ -83,8 +92,18 @@ cd /home/ysf/k8sfundamentals/troubleshoot/chaos-troubleshooting-1
 ./scripts/check-system.sh
 ```
 
+### 2.3. Web Arayüzleri ve Kimlik Bilgileri
+`terraform apply` veya `ansible-playbook` sonunda ekrana basılan `<MASTER_IP>` ve `<APP_IP>` adresleriyle aşağıdaki panellere erişebilirsiniz:
+
+| Servis | Adres (URL) | Kullanıcı Adı / Şifre | Ne İçin Kullanacağız? |
+| :--- | :--- | :--- | :--- |
+| **Chaos Mesh Dashboard** | `http://chaos.<MASTER_IP>.nip.io` | *(Şifresiz)* | Tüm kaos deneylerini ve workflow akışlarını tarayıcıdan başlatmak/izlemek için |
+| **Grafana Dashboard** | `http://grafana.<MASTER_IP>.nip.io` | `admin` / `AdminPassword2026!` | Canlı metrikleri, gecikmeleri, p99 grafiklerini ve alarmları izlemek için |
+| **RabbitMQ Management UI** | `http://rabbitmq.<APP_IP>.nip.io` | `resilience` / `AdminPassword2026!` | `payments` ve `payments.dlq` kuyruklarını, consumer sayılarını canlı görmek için |
+| **Sipariş API Durumu** | `http://app.<APP_IP>.nip.io/api/status` | *(Açık API)* | 5 bağımlılığın (`postgres`, `kafka`, `rabbitmq`, `redis`, `cassandra`) anlık durumunu görmek için |
+
 > [!TIP]
-> `./scripts/check-system.sh` betiği bir SRE'nin kriz anında baktığı 6 kritik katmanı tek seferde sorgular ve ekrana basar. Her deney öncesinde ve sonrasında bu betiği çalıştırarak sistemin nabzını tutabilirsiniz!
+> `./scripts/check-system.sh` betiği bir SRE'nin kriz anında baktığı 6 kritik katmanı tek seferde sorgular ve ekrana basar (`terraform apply` sonrasında IP adreslerini `scripts/.lab-env` dosyasından otomatik okur). Her deney öncesinde ve sonrasında bu betiği çalıştırarak sistemin nabzını tutabilirsiniz!
 
 ---
 
