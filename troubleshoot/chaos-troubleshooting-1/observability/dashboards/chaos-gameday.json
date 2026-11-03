@@ -2,17 +2,17 @@
   "id": null,
   "uid": "rs-chaos-gameday",
   "title": "🔥 ResilienceStream — 03. Chaos Engineering & Game Day Command Center",
-  "description": "Chaos Mesh deneyleri sırasında Circuit Breaker durumları (0=CLOSED, 1=HALF_OPEN, 2=OPEN), bağımlılık kesintileri, pod restartları ve düğüm bellek/CPU baskısını canlı izleme ekranı.",
+  "description": "Chaos Mesh deneyleri sırasında Circuit Breaker durumları (0=CLOSED, 1=HALF_OPEN, 2=OPEN), bağımlılık kesintileri, pod restartları, kuyruk yığılmaları ve düğüm bellek/CPU baskısını canlı izleme ekranı.",
   "tags": [
     "resiliencestream",
     "chaos-mesh",
     "gameday",
-    "project5"
+    "chaos"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
-  "refresh": "10s",
+  "version": 2,
+  "refresh": "5s",
   "panels": [
     {
       "id": 1,
@@ -96,20 +96,20 @@
     },
     {
       "id": 3,
-      "title": "🔄 Sipariş Graceful Degradation (success vs degraded vs failed)",
+      "title": "🔄 Sipariş Graceful Degradation (success vs degraded vs failed / sn)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (result) (rate(rs_orders_created_total[1m]))",
+          "expr": "sum by (result) (rate(rs_orders_created_total[2m]))",
           "legendFormat": "Orders {{ result }}/s"
         }
       ]
     },
     {
       "id": 4,
-      "title": "♻️ Kubernetes Pod Restart Sayısı (PodChaos & OOMKilled Gözlemi)",
+      "title": "♻️ Kubernetes Pod Restart Sayısı (Liveness Probe & OOMKilled Gözlemi)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -122,7 +122,7 @@
     },
     {
       "id": 5,
-      "title": "🖥️ 3-Node RKE2 Sunucu Bellek Kullanımı (%) — StressChaos & Cassandra Gözlemi",
+      "title": "🖥️ 3-Node RKE2 Sunucu Bellek Kullanımı (%) — StressChaos Gözlemi",
       "type": "gauge",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -150,13 +150,13 @@
     },
     {
       "id": 6,
-      "title": "🔥 Uygulama & Veri Podları CPU Kullanımı (Cores — HPA Tetikleme Gözlemi)",
+      "title": "🔥 Uygulama & Veri Podları CPU Kullanımı (Cores — CPU Throttling & HPA Gözlemi)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"app|data|messaging\", container!=\"\"}[1m]))",
+          "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"app|data|messaging\", container!=\"\"}[2m]))",
           "legendFormat": "{{ namespace }}/{{ pod }}"
         }
       ]
