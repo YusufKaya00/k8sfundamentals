@@ -8,6 +8,11 @@
 # ==============================================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/.lab-env" ]]; then
+  # shellcheck disable=SC1091
+  source "${SCRIPT_DIR}/.lab-env"
+fi
 MASTER_IP="${MASTER_IP:-9.205.90.183}"
 APP_IP="${APP_IP:-9.205.90.176}"
 
