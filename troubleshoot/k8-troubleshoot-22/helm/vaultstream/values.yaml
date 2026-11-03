@@ -1,0 +1,71 @@
+global:
+  coreNamespace: vaultstream-core
+  pciNamespace: vaultstream-pci
+
+proxy:
+  replicas: 1
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: "1.27-alpine"
+  containerPort: 8080
+  servicePort: 80
+  targetPortName: proxy-http-port
+  selectorTier: edge-gateway
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+engine:
+  replicas: 2
+  image:
+    repository: python
+    tag: "3.12-alpine"
+  port: 8081
+  probePort: 8080
+  secretKeyName: signing_key
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+signer:
+  replicas: 1
+  image:
+    repository: python
+    tag: "3.12-alpine"
+  port: 8443
+  networkPolicyPort: 9443
+  signingSecret: "PCI-HSM-SigningKey#2026!"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+ledger:
+  image:
+    repository: redis
+    tag: "7.2-alpine"
+  port: 6379
+  serviceName: ledger-db-internal
+
+ingress:
+  enabled: true
+  className: internal-nginx
+  host: vaultstream.local
+  path: /api/v2/settlement/status
+  pathType: Prefix
+
+auditor:
+  memoryLimit: 32Mi
+  nodeSelectorLabel: "security.azure.com/fips-node"
+  nodeSelectorValue: "true"
