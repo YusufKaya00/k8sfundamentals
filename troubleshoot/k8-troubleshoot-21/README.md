@@ -1,189 +1,21 @@
 # INCIDENT #9105 — NetCore v5.0 Kubernetes Networking Mesh Outage / Ağ Kesintisi
 
-[🇬🇧 English Documentation](#-english-documentation) | [🇹🇷 Türkçe Dokümantasyon](#-türkçe-dokümantasyon)
+[🇹🇷 Türkçe Dokümantasyon (Nereden Başlamalıyım & Adım Adım Teşhis Rehberi)](#-türkçe-dokümantasyon) | [🇬🇧 English Documentation](#-english-documentation)
 
----
-
-# 🇬🇧 English Documentation
-
-## Incident Report: NetCore v5.0 Microservices Mesh Failure
-At 09:15 UTC, the infrastructure platform team deployed **NetCore v5.0**, a high-performance Kubernetes networking and security mesh. The platform connects customer traffic through an Edge Ingress gateway to an internal API, a secure authentication vault located in an isolated security namespace, a distributed stateful cache, and node-level telemetry probes.
-
-Immediately post-deployment, critical alerts triggered:
-* External users receive `502 Bad Gateway` and `504 Gateway Timeout`.
-* The API Gateway reports DNS resolution timeouts and cannot reach the Authentication Vault.
-* Core API refuses connections despite reporting `Running`.
-* Clustered caching peer discovery fails completely.
-* Automated network handshake verification Job (`netcore-network-handshake`) crashes repeatedly.
-* Node telemetry agents are not running on any worker nodes.
-
-Your mission as the on-call SRE is to diagnose the networking layers (Layer 3/4/7, CoreDNS, iptables/kube-proxy, NetworkPolicies, CNI) and restore 100% operational connectivity.
-
----
-
-## Architecture & Network Packet Flow
-
-```mermaid
-flowchart TD
-    Client["Client / External Traffic"] -->|HTTP /:80| Ingress["Ingress Controller (ingress-nginx)"]
-    Ingress -->|Layer 7 Routing| GW_SVC["Service: netcore-gateway (ClusterIP: 8080)"]
-    
-    subgraph NS_PROD["Namespace: netcore-prod"]
-        GW_SVC --> GW_POD["Pod: netcore-gateway"]
-        GW_POD -->|TCP :8000| API_SVC["Service: netcore-api (ClusterIP)"]
-        API_SVC --> API_POD["Pod: netcore-api"]
-        
-        GW_POD -->|Stateful DNS| CACHE_SVC["Headless Service: netcore-cache"]
-        CACHE_SVC --> CACHE_STS["StatefulSet: netcore-cache-0"]
-        
-        GW_POD -->|UDP/TCP :53| DNS["CoreDNS (kube-system)"]
-        
-        DS_PROBE["DaemonSet: netcore-telemetry"] -.->|Node Level Probe| API_POD
-    end
-
-    subgraph NS_SECURE["Namespace: netcore-secure"]
-        GW_POD -->|Cross-NS TCP :8443| VAULT_SVC["Service: auth-vault"]
-        VAULT_SVC --> VAULT_POD["Pod: auth-vault"]
-    end
-```
-
----
-
-## Quickstart & Environment Setup
-
-### 1. (Optional) Provision Cloud Cluster via Terraform (AKS)
-```bash
-cd terraform
-terraform init
-terraform apply -auto-approve
-$(terraform output -raw kubeconfig_command)
-cd ../
-```
-
-### 2. Deploy the Broken NetCore Platform
-```bash
-# Make scripts executable and deploy
-chmod +x setup.sh cleanup.sh
-./setup.sh
-```
-
-Or deploy manually via Helm:
-```bash
-helm upgrade --install netcore ./helm/netcore
-```
-
----
-
-## Acceptance Criteria & Verification
-
-Once you have resolved all networking defects, the following checks must pass:
-
-### 1. Workload & Endpoint Health
-Run the status check across both namespaces:
-```bash
-kubectl get pods,svc,ep,sts,ds,jobs,ingress,netpol -n netcore-prod -o wide
-kubectl get pods,svc,ep,netpol -n netcore-secure -o wide
-```
-* **Endpoints:** `netcore-gateway`, `netcore-api`, `auth-vault`, and `netcore-telemetry` must all have valid endpoints (`ENDPOINTS` is NOT `<none>`).
-* **DaemonSet:** `netcore-telemetry` must be scheduled and ready on all nodes (`DESIRED == READY`).
-* **StatefulSet:** `netcore-cache-0` must be `1/1 Running` and resolvable via headless DNS.
-* **Handshake Job:** `netcore-network-handshake` must succeed (`1/1 Completed`).
-
-### 2. Ingress & HTTP Connectivity Test
-```bash
-export INGRESS_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "127.0.0.1")
-
-# Test Ingress gateway endpoint
-curl -i http://${INGRESS_IP}/api/v1/network/status
-```
-**Expected Output:** `HTTP/1.1 200 OK` with JSON payload confirming `status: healthy` and `network: fully-connected`.
-
-### 3. Cleanup
-```bash
-./cleanup.sh
-```
-
----
-
-## SRE Networking Guide & Interview Concepts
-
-<details>
-<summary><b>🧠 SRE Networking Interview & Linux Kernel Mechanics (Click to expand)</b></summary>
-
-1. **Why does binding to `127.0.0.1` fail inside a Kubernetes container?**
-   * Linux containers have isolated network namespaces. The IP `127.0.0.1` is attached exclusively to the `lo` (loopback) interface.
-   * Incoming traffic from Kubernetes Services or other pods enters through the virtual ethernet device (`eth0`).
-   * When a socket listens only on `127.0.0.1`, the Linux kernel drops or rejects (`TCP RST`) packets arriving on `eth0` with `Connection refused`. Network services intended to receive cluster traffic must listen on `0.0.0.0` (all interfaces).
-
-2. **How does `externalTrafficPolicy: Local` cause dropped packets in multi-node clusters?**
-   * By default (`externalTrafficPolicy: Cluster`), `kube-proxy` load-balances incoming external traffic across all pods cluster-wide, even if it requires an extra network hop across nodes (via SNAT).
-   * With `externalTrafficPolicy: Local`, kube-proxy will **only** route traffic to pods on the node that received the external packet, in order to preserve the original client IP. If a node does not host any pod replica for that service, kube-proxy drops the packet instead of forwarding it to another node.
-
-3. **What is the difference between list items (`-`) in Kubernetes NetworkPolicy `from` selectors?**
-   * Two separate list items under `from:` evaluate as an **OR** condition:
-     ```yaml
-     from:
-     - namespaceSelector: { ... }
-     - podSelector: { ... }
-     ```
-     This allows traffic from ANY pod in the selected namespace, OR from any matching pod in the CURRENT namespace.
-   * To specify an **AND** condition (e.g. only matching pods within a specific namespace), both selectors must be defined in the SAME list item under a single dash:
-     ```yaml
-     from:
-     - namespaceSelector: { ... }
-       podSelector: { ... }
-     ```
-
-4. **Why do pods time out resolving DNS when Egress NetworkPolicies are introduced?**
-   * When an Egress `NetworkPolicy` is applied, the CNI installs a default DROP rule on outgoing traffic.
-   * Pods query the CoreDNS service IP on UDP/TCP port 53. If port 53 is not explicitly whitelisted in the egress rule, DNS queries hang and time out after 30 seconds (`dial udp ... i/o timeout`).
-
-5. **How does Headless Service DNS differ from standard ClusterIP Services?**
-   * A standard Service has a virtual ClusterIP; CoreDNS returns an `A` record pointing to the ClusterIP.
-   * A Headless Service (`clusterIP: None`) returns `A` records pointing directly to the Pod IPs.
-   * For StatefulSets, CoreDNS also generates deterministic SRV and A records in the format `<pod-name>.<serviceName>.<namespace>.svc.cluster.local`. This requires the StatefulSet's `serviceName` to strictly match the Headless Service's `metadata.name`.
-
-</details>
-
----
-
-## Solution Key
-
-<details>
-<summary><b>🔑 Complete Solution Key & Root Causes (Click to expand)</b></summary>
-
-Refer to [SOLUTION.md](file:///home/ysf/k8sfundamentals/troubleshoot/k8-troubleshoot-21/SOLUTION.md) for an in-depth SRE post-mortem. Summary of fixes:
-
-1. **Ingress:** In `helm/netcore/templates/07-ingress.yaml`, set `ingressClassName: nginx` and add rewrite annotation `nginx.ingress.kubernetes.io/rewrite-target: /`.
-2. **Named Port:** In `helm/netcore/templates/05-gateway-deployment.yaml`, change `targetPort: http-gateway` to `gateway-http` (or `8080`).
-3. **CoreDNS Egress:** In `helm/netcore/templates/06-network-policies.yaml`, add port 53 (UDP/TCP) egress permission to `gateway-egress-policy`.
-4. **Cross-Namespace FQDN:** In `helm/netcore/templates/01-config-and-secrets.yaml`, update `GATEWAY_VAULT_ADDR` to `http://auth-vault.netcore-secure.svc.cluster.local:8443`.
-5. **NetworkPolicy AND Syntax & Port:** In `helm/netcore/templates/06-network-policies.yaml`, merge `namespaceSelector` and `podSelector` under a single list item in `vault-isolation-policy`, and correct port from `9443` to `8443`.
-6. **Loopback Bind:** In `helm/netcore/templates/04-api-deployment.yaml`, change `BIND_HOST` from `127.0.0.1` to `0.0.0.0`.
-7. **Service Protocol:** In `helm/netcore/templates/04-api-deployment.yaml`, change `Service/netcore-api` port `protocol: UDP` to `TCP`.
-8. **Headless Service Drift:** In `helm/netcore/templates/02-cache-statefulset.yaml`, change `serviceName: netcore-cache-headless` to `netcore-cache`.
-9. **Traffic Policy:** In `helm/netcore/templates/05-gateway-deployment.yaml`, change `externalTrafficPolicy: Local` to `Cluster`.
-10. **DaemonSet NodeSelector & Service Selector:** In `helm/netcore/templates/08-telemetry-daemonset.yaml`, remove non-existent `nodeSelector` and align `Service/netcore-telemetry` selector to `role: packet-probe`.
-
-</details>
-
----
 ---
 
 # 🇹🇷 Türkçe Dokümantasyon
 
 ## Olay Özeti (Incident Report): NetCore v5.0 Mikroservis Ağ Çöküşü
-Saat 09:15'te altyapı ekibi, yüksek performanslı ağ ve güvenlik platformu olan **NetCore v5.0** sürümünü devreye aldı. Platform; Ingress Gateway üzerinden müşteri trafiğini alıp iç API'ye, izole bir güvenlik namespace'indeki kimlik doğrulama kasasına (`auth-vault`), dağıtık StatefulSet önbelleğe (`netcore-cache`) ve düğüm düzeyindeki telemetri ajanlarına (`netcore-telemetry`) yönlendirecek şekilde tasarlandı.
+Saat 09:15'te altyapı ekibi, yüksek performanslı ağ ve güvenlik platformu olan **NetCore v5.0** sürümünü devreye aldı. Platform; Ingress Gateway üzerinden müşteri trafiğini alıp iç API'ye (`netcore-api`), izole bir güvenlik namespace'indeki kimlik doğrulama kasasına (`auth-vault`), dağıtık StatefulSet önbelleğe (`netcore-cache`) ve düğüm düzeyindeki telemetri ajanlarına (`netcore-netprobe`) yönlendirecek şekilde tasarlandı.
 
 Dağıtımın hemen ardından sistemde tam bir kesinti yaşandı:
-* Dış dünyadan Ingress üzerinden gelen istekler `502 Bad Gateway` ve `504 Gateway Timeout` alıyor.
-* Gateway podu CoreDNS çözümlemesi yapamıyor ve kimlik doğrulama kasasına erişemiyor.
-* Çekirdek API (`netcore-api`) podu `Running` görünmesine rağmen bağlantıları anında reddediyor (`Connection refused`).
-* Dağıtık önbellek podları headless DNS ile birbirini bulamıyor.
-* Otomatik ağ doğrulama Job'ı (`netcore-network-handshake`) sürekli hata verip çöküyor.
-* Düğüm telemetri ajanları hiçbir sunucuya yerleşemiyor (`DESIRED: 0`).
-
-Bir Kıdemli SRE olarak göreviniz; OSI 3, 4 ve 7. katmanları, CoreDNS mimarisini, iptables/kube-proxy kurallarını, NetworkPolicy izolasyonlarını ve CNI davranışlarını inceleyerek bu 10 kritik ağ hatasını çözmektir.
+* Dış dünyadan Ingress üzerinden gelen istekler `404 Not Found` veya `502 / 503` alıyor.
+* Gateway podu (`netcore-gateway`) CoreDNS çözümlemesi yapamıyor (`i/o timeout`) ve kimlik doğrulama kasasına (`auth-vault`) erişemiyor.
+* Çekirdek API (`netcore-api`) podu `Running` görünmesine rağmen diğer podlardan gelen bağlantıları anında reddediyor (`Connection refused`) veya yanıt vermiyor.
+* Dağıtık önbellek podu (`netcore-cache-0`) headless DNS ile bulunamıyor (`bad address`).
+* Otomatik ağ doğrulama Job'ı (`netcore-network-handshake`) sürekli hata verip çöküyor (`CrashLoopBackOff` / `Error`).
+* Düğüm telemetri ajanları (`netcore-netprobe`) hiçbir sunucuya yerleşemiyor (`DESIRED: 0`) veya yerleşse bile `CreateContainerError` / `Read-only file system` hatası veriyor.
 
 ---
 
@@ -192,26 +24,189 @@ Bir Kıdemli SRE olarak göreviniz; OSI 3, 4 ve 7. katmanları, CoreDNS mimarisi
 ```mermaid
 flowchart TD
     Client["Kullanıcı / Dış Trafik"] -->|HTTP /:80| Ingress["Ingress Controller (ingress-nginx)"]
-    Ingress -->|7. Katman Yönlendirme| GW_SVC["Service: netcore-gateway (ClusterIP: 8080)"]
+    Ingress -->|7. Katman Yönlendirme| GW_SVC["Service: netcore-gateway (Port 80 -> 8080)"]
     
     subgraph NS_PROD["Namespace: netcore-prod"]
         GW_SVC --> GW_POD["Pod: netcore-gateway"]
         GW_POD -->|TCP :8000| API_SVC["Service: netcore-api (ClusterIP)"]
         API_SVC --> API_POD["Pod: netcore-api"]
         
-        GW_POD -->|Stateful DNS| CACHE_SVC["Headless Service: netcore-cache"]
+        API_POD -->|Headless DNS :6379| CACHE_SVC["Headless Service: netcore-cache"]
         CACHE_SVC --> CACHE_STS["StatefulSet: netcore-cache-0"]
         
         GW_POD -->|UDP/TCP :53| DNS["CoreDNS (kube-system)"]
         
-        DS_PROBE["DaemonSet: netcore-telemetry"] -.->|Düğüm Ağ Probu| API_POD
+        DS_SVC["Service: netcore-metrics-svc"] --> DS_PROBE["DaemonSet: netcore-netprobe"]
+        JOB["Job: netcore-network-handshake"] -.->|4 Adımlı Ağ Testi| CACHE_SVC & API_SVC & GW_SVC
     end
 
     subgraph NS_SECURE["Namespace: netcore-secure"]
         GW_POD -->|Farklı Namespace TCP :8443| VAULT_SVC["Service: auth-vault"]
+        JOB -.->|Farklı Namespace TCP :8443| VAULT_SVC
         VAULT_SVC --> VAULT_POD["Pod: auth-vault"]
     end
 ```
+
+---
+
+## 🗺️ 1. Dosya Haritası: Hangi YAML Dosyası Neyi Yönetiyor?
+
+`helm/netcore/` altında 10 farklı şablon dosyası ve 1 adet `values.yaml` var. Hepsine aynı anda bakmak yerine aşağıdaki tabloyu **El Kitabı** olarak kullan:
+
+| Dosya Yolu | İçindeki Kubernetes Objeleri | Ne İşe Yarar? |
+| :--- | :--- | :--- |
+| **`helm/netcore/values.yaml`** | Merkezi Helm Değişkenleri | Portlar, protokoller (`UDP/TCP`), bind adresi (`127.0.0.1`), `serviceName`, `ingress.className` ve `daemonset.nodeSelector` gibi **birçok temel ayarın değiştirildiği ana dosya**. |
+| **`templates/00-namespaces.yaml`** | `Namespace/netcore-prod`, `Namespace/netcore-secure` | İki namespace'i ve NetworkPolicy'lerin kullandığı `kubernetes.io/metadata.name` etiketlerini oluşturur *(Bu dosyada hata yoktur)*. |
+| **`templates/01-config-and-secrets.yaml`** | `ConfigMap/netcore-gateway-conf`, `netcore-api-conf`, `auth-vault-conf` | Gateway'in Nginx `proxy_pass` ayarlarını (`http://netcore-api:8000` ve `http://auth-vault:8443`) ve API/Vault Python kodlarını tutar. |
+| **`templates/02-cache-statefulset.yaml`** | `Service/netcore-cache` (Headless) & `StatefulSet/netcore-cache` | Redis önbelleğini ve onun sabit DNS kaydını (`netcore-cache-0.netcore-cache`) üretir. |
+| **`templates/03-vault-deployment.yaml`** | `Service/auth-vault` & `Deployment/auth-vault` | `netcore-secure` namespace'inde `8443` portundan çalışan güvenlik kasası *(Bu dosyada hata yoktur)*. |
+| **`templates/04-api-deployment.yaml`** | `Service/netcore-api` & `Deployment/netcore-api` | `8000` portunda çalışan çekirdek API. `values.yaml` içindeki `api.bindHost` ve `api.serviceProtocol` değerlerini kullanır. |
+| **`templates/05-gateway-deployment.yaml`** | `Service/netcore-gateway` & `Deployment/netcore-gateway` | Dış dünyadan gelen trafiği karşılayan Nginx Gateway. `values.yaml` içindeki `gateway.namedPort` ve `gateway.externalTrafficPolicy` değerlerini kullanır. |
+| **`templates/06-network-policies.yaml`** | `gateway-egress-policy`, `vault-isolation-policy`, `cache-isolation-policy` | Hangi podun hangi poda/porta gidebileceğini kısıtlayan güvenlik duvarı (Firewall) kuralları. |
+| **`templates/07-ingress.yaml`** | `Ingress/netcore-ingress` | Dış HTTP isteklerini (`/api/v1/network/status`) `netcore-gateway` servisine yönlendirir. |
+| **`templates/08-telemetry-daemonset.yaml`** | `Service/netcore-metrics-svc` & `DaemonSet/netcore-netprobe` | Her sunucuda (Node) 1 adet çalışıp `/var/log/netprobe.log` dosyasına durum yazan ajan. |
+| **`templates/09-batch-sync-job.yaml`** | `Job/netcore-network-handshake` | **Senin Pusulan!** Sırasıyla `[1/4] Cache`, `[2/4] API`, `[3/4] Auth Vault` ve `[4/4] Gateway` bağlantısını test eden doğrulama Job'ı *(Bu dosyada hata yoktur, sistemin test aracıdır)*. |
+
+---
+
+## 🧭 2. Nereden Başlamalıyım? (Adım Adım Teşhis Sırası)
+
+Çok fazla YAML olduğunda rastgele dosya açmak yerine, kümedeki **`netcore-network-handshake` Job'ının loglarını** ve **`kubectl get` / `describe` çıktılarını** takip ederek **içeriden dışarıya (Bottom-Up)** doğru ilerle.
+
+Önce genel tabloyu görmek için şu 3 komutu çalıştır:
+```bash
+kubectl get pods,svc,ep,ds,sts,job,ingress -n netcore-prod -o wide
+kubectl get pods,svc,ep,netpol -n netcore-secure -o wide
+kubectl logs -n netcore-prod job/netcore-network-handshake
+```
+
+---
+
+### 🔍 AŞAMA 1: `kubectl get ds` ve `kubectl get ep` ile İlk Bakışta Görünen Hatalar
+
+#### İpucu 1 — DaemonSet Neden `0` Görünüyor ve Başlayınca Neden Çöküyor? (`08-telemetry-daemonset.yaml` & `values.yaml`)
+1. **Ne Görüyorsun?**
+   ```bash
+   kubectl get ds -n netcore-prod
+   kubectl describe ds netcore-netprobe -n netcore-prod
+   kubectl get ep netcore-metrics-svc -n netcore-prod
+   ```
+   - `DESIRED: 0, CURRENT: 0, READY: 0` görüyorsun ve `netcore-metrics-svc` karşısında `ENDPOINTS: <none>` yazıyor!
+2. **Nasıl Yorumlamalısın?**
+   - Bir DaemonSet'in `DESIRED: 0` olması, `spec.template.spec.nodeSelector` içindeki etiketin kümedeki hiçbir Node üzerinde bulunmadığı anlamına gelir (`kubectl get nodes --show-labels` ile kontrol edebilirsin).
+   - Ayrıca `Service/netcore-metrics-svc` (`08-telemetry-daemonset.yaml` satır 8-10) hangi pod etiketlerini (`selector`) arıyor, DaemonSet podlarının (`template.metadata.labels`) gerçek etiketleri ne?
+   - **Dikkat (İkinci Katman):** `nodeSelector`'ı kaldırdıktan sonra podlar oluşacak ama `CrashLoopBackOff` / `Error` verecek! Hemen `kubectl logs -n netcore-prod -l app=netcore-netprobe` komutunu çalıştır: `can't create /var/log/netprobe.log: Read-only file system` hatasını göreceksin. `08-telemetry-daemonset.yaml` içindeki `volumeMounts` bölümüne bak!
+
+#### İpucu 2 — `netcore-gateway` Servisinin Endpoint'i Neden `<none>`? (`05-gateway-deployment.yaml` & `values.yaml`)
+1. **Ne Görüyorsun?**
+   ```bash
+   kubectl get ep netcore-gateway -n netcore-prod
+   kubectl describe svc netcore-gateway -n netcore-prod
+   ```
+   - `netcore-gateway` podu `1/1 Running` olmasına rağmen, `Service/netcore-gateway` altında `Endpoints: <none>` yazıyor (eğer henüz düzeltmediysen) ve `External Traffic Policy: Local` görünüyor!
+2. **Nasıl Yorumlamalısın?**
+   - Pod `Running` ve `Ready` olduğu halde Service `Endpoints: <none>` diyorsa ya Service `selector` etiketleri yanlıştır ya da Service `targetPort` alanında yazan **isimlendirilmiş port (`namedPort`)** ile Deployment içindeki `containerPort.name` uyuşmuyordur!
+   - Ayrıca çok düğümlü (Multi-Node) bir kümede `replicas: 1` olan bir serviste `externalTrafficPolicy: Local` kullanılırsa, diğer düğümlere gelen paketler düşürülür. Bunu `values.yaml` içinden neye çevirmelisin?
+
+---
+
+### 🔍 AŞAMA 2: `netcore-network-handshake` Job Loglarını Takip Ederek 4 Adımı Çözme
+
+Job (`09-batch-sync-job.yaml`) sırasıyla 4 ağ testi yapar. Her bir adımı çözdükten sonra Job'ı yeniden tetikleyip bir sonraki adıma geçebilirsin:
+```bash
+helm upgrade --install netcore ./helm/netcore && \
+kubectl delete job netcore-network-handshake -n netcore-prod --ignore-not-found && \
+helm upgrade --install netcore ./helm/netcore
+```
+
+---
+
+#### 🛑 Job Adım `[1/4]` Hatası: `nc: bad address 'netcore-cache-0.netcore-cache'` (`02-cache-statefulset.yaml` & `values.yaml`)
+1. **Ne Görüyorsun?**
+   ```bash
+   kubectl logs -n netcore-prod job/netcore-network-handshake
+   # Çıktı:
+   # ==> [1/4] Verifying StatefulSet Redis Headless DNS & Port...
+   # nc: bad address 'netcore-cache-0.netcore-cache'
+   ```
+2. **Nasıl Yorumlamalısın?**
+   - `bad address` bir **DNS çözülememe (NXDOMAIN)** hatasıdır.
+   - StatefulSet podlarının `<pod-adı>.<headless-servis-adı>` olarak DNS kaydı alabilmesi için, `StatefulSet` içindeki `spec.serviceName` alanı ile `Headless Service` (`clusterIP: None`) objesinin `metadata.name` alanı **birebir aynı** olmak zorundadır.
+   - `02-cache-statefulset.yaml` ve `values.yaml` (`cache.serviceName`) dosyalarına bak: Servisin adı ne, StatefulSet'in `serviceName` alanına ne yazılmış?
+
+---
+
+#### 🛑 Job Adım `[2/4]` Hatası: `wget: can't connect to remote host: Connection refused` veya `Operation timed out` (`04-api-deployment.yaml` & `values.yaml`)
+1. **Ne Görüyorsun?**
+   ```bash
+   # ==> [2/4] Verifying Core API TCP Connectivity...
+   # wget: can't connect to remote host (10.x.x.x): Connection refused (veya timed out)
+   ```
+2. **Nasıl Yorumlamalısın?**
+   - `netcore-api` podu `Running` görünüyor ama `http://netcore-api:8000/healthz` adresine gidilemiyor!
+   - `04-api-deployment.yaml` ve `values.yaml` (`api:` bölümü) içine bak:
+     1. **Soket Bağlama (`bindHost`):** Uygulama `127.0.0.1` adresini dinlerse yalnızca kendi içinden (`localhost`) gelen istekleri kabul eder, dışarıdan (`eth0`) gelen tüm paketleri `Connection refused` ile reddeder. Kümeye açık olması için ne dinlemelidir? *(Not: Eğer probe'larda `host: "127.0.0.1"` varsa onu da kontrol et).*
+     2. **4. Katman Protokolü (`serviceProtocol`):** HTTP trafiği `TCP` üzerinden çalışır. `Service/netcore-api` hangi protokolle (`UDP` mi `TCP` mi) tanımlanmış?
+
+---
+
+#### 🛑 Job Adım `[3/4]` Hatası: `wget: download timed out` (`auth-vault:8443` Erişimi — `06-network-policies.yaml` & `values.yaml`)
+1. **Ne Görüyorsun?**
+   ```bash
+   # ==> [3/4] Verifying Cross-Namespace Auth Vault MTLS Endpoint...
+   # wget: download timed out
+   ```
+2. **Nasıl Yorumlamalısın?**
+   - `Connection refused` yerine **`timed out`** alıyorsan, paketler yolda bir **NetworkPolicy (Firewall)** tarafından sessizce düşürülüyor (`DROP`) demektir!
+   - Hemen `netcore-secure` namespace'indeki NetworkPolicy'yi incele:
+     ```bash
+     kubectl describe netpol vault-isolation-policy -n netcore-secure
+     ```
+   - `06-network-policies.yaml` içindeki `vault-isolation-policy` ve `values.yaml` (`vault.networkPolicyPort`) dosyalarına bak:
+     1. **Port Hatası:** `auth-vault` podu `8443` portunu dinliyor ama NetworkPolicy hangi porta (`vault.networkPolicyPort: 9443`) izin veriyor?
+     2. **Seçici (Selector) Hatası:** `vault-isolation-policy` içindeki `podSelector` hangi etiketi (`role: api-gateway`) arıyor? Oysa `netcore-gateway` podunda (`05-gateway-deployment.yaml`) ve `netcore-network-handshake` Job podunda (`09-batch-sync-job.yaml`) böyle bir etiket var mı? `netcore-prod` namespace'inden gelen hem Gateway (`tier: gateway`) hem de Handshake Job (`tier: batch`) podlarının `auth-vault`'a erişebilmesi için `from:` kuralını nasıl düzenlemelisin?
+
+---
+
+### 🔍 AŞAMA 3: Gateway'den API ve Vault'a Proxy Geçişi ve Dış Ingress Testi
+
+Job `1/1 Completed` olduktan sonra sıra dışarıdan **Ingress** üzerinden `/api/v1/network/status` ve `/auth/verify` uç noktalarını test etmeye gelir!
+
+#### 🛑 Hata A — Gateway İçinden DNS Çözülememesi (`504 Gateway Timeout` / `lookup ... i/o timeout`)
+1. **Nasıl Teşhis Edersin?**
+   Gateway podunun içinden API'ye veya DNS'e ulaşmayı dene:
+   ```bash
+   kubectl exec -n netcore-prod deploy/netcore-gateway -- wget -qO- -T 3 http://netcore-api:8000/network/status
+   kubectl logs -n netcore-prod deploy/netcore-gateway --tail=20
+   ```
+   - Nginx loglarında `resolver ... timed out` veya `wget: bad address 'netcore-api:8000'` göreceksin!
+2. **Nasıl Yorumlamalısın?**
+   - Neden Job podu DNS çözebilirken `netcore-gateway` podu hiçbir DNS adını çözemiyor?
+   - Çünkü `06-network-policies.yaml` içindeki **`gateway-egress-policy`** sadece `tier: gateway` podlarını kısıtlıyor (`policyTypes: ["Egress"]`)!
+   - `gateway-egress-policy` içindeki `egress:` kurallarına bak: Port `8000` ve `8443`'e çıkış izni verilmiş ama **CoreDNS'in çalıştığı `53` numaralı `UDP` ve `TCP` portlarına** çıkış izni unutulmuş!
+
+#### 🛑 Hata B — Gateway'den Farklı Namespace'teki `auth-vault` Servisine Kısa İsimle Gitme (`01-config-and-secrets.yaml`)
+1. **Nasıl Teşhis Edersin?**
+   `01-config-and-secrets.yaml` içindeki `ConfigMap/netcore-gateway-conf` (satır 33-37) bölümüne bak:
+   ```nginx
+   location /auth/verify {
+       proxy_pass http://auth-vault:8443/vault/verify;
+   }
+   ```
+2. **Nasıl Yorumlamalısın?**
+   - `netcore-gateway` podu **`netcore-prod`** namespace'indedir. `auth-vault` ise **`netcore-secure`** namespace'indedir!
+   - Farklı bir namespace'teki servise sadece kısa adıyla (`http://auth-vault:8443`) gidersen Kubernetes onu `netcore-prod` içinde arar ve bulamaz. Tam FQDN adresini (`http://auth-vault.netcore-secure.svc.cluster.local:8443/vault/verify`) yazmalısın *(ve Nginx'in ConfigMap değişikliğini alması için `kubectl rollout restart deploy/netcore-gateway -n netcore-prod` yapmalısın)*.
+
+#### 🛑 Hata C — Dış Ingress `404 Not Found` Hatası (`07-ingress.yaml` & `values.yaml`)
+1. **Nasıl Teşhis Edersin?**
+   ```bash
+   kubectl get ingress -n netcore-prod
+   kubectl describe ingress netcore-ingress -n netcore-prod
+   ```
+2. **Nasıl Yorumlamalısın?**
+   - `Ingress Class: edge-nginx` yazıyor! Kümedeki Ingress Controller ise `nginx` sınıfını dinliyor (`kubectl get ingressclass` ile görebilirsin). `values.yaml` içinde `ingress.className: nginx` yapmalısın.
+   - Ayrıca `07-ingress.yaml` dosyasında kullanıcı `/api/v1/network/status` adresine istek atıyor (`values.yaml` -> `ingress.path: /api/v1/network/status`), fakat `01-config-and-secrets.yaml` içindeki Gateway Nginx'i **`/network/status`** yolunu dinliyor!
+   - Ya `values.yaml` içindeki `ingress.path` değerini `/network/status` yapmalısın ya da `07-ingress.yaml` içine rewrite kuralı eklemelisin.
 
 ---
 
@@ -228,12 +223,11 @@ cd ../
 
 ### 2. Bozuk NetCore v5.0 Ortamını Ayağa Kaldır
 ```bash
-# Betikleri çalıştırılabilir yap ve başlat
 chmod +x setup.sh cleanup.sh
 ./setup.sh
 ```
 
-Veya doğrudan Helm ile dağıt:
+Veya doğrudan Helm ile dağıt / güncelle:
 ```bash
 helm upgrade --install netcore ./helm/netcore
 ```
@@ -245,24 +239,22 @@ helm upgrade --install netcore ./helm/netcore
 Tüm ağ hatalarını düzelttikten sonra aşağıdaki kontrollerin eksiksiz geçmesi gerekir:
 
 ### 1. İş Yükleri ve Endpoint Sağlığı
-İki namespace'teki tüm kaynakları listeleyin:
 ```bash
 kubectl get pods,svc,ep,sts,ds,jobs,ingress,netpol -n netcore-prod -o wide
 kubectl get pods,svc,ep,netpol -n netcore-secure -o wide
 ```
-* **Endpoints:** `netcore-gateway`, `netcore-api`, `auth-vault` ve `netcore-telemetry` servislerinin arkasında geçerli IP'ler olmalıdır (`<none>` kalmamalıdır).
-* **DaemonSet:** `netcore-telemetry` tüm düğümlerde `Running` olmalıdır (`DESIRED == READY`).
-* **StatefulSet:** `netcore-cache-0` podu `1/1 Running` olmalı ve headless DNS ile çözülebilmelidir.
+* **Endpoints:** `netcore-gateway`, `netcore-api`, `auth-vault`, `netcore-cache` ve `netcore-metrics-svc` servislerinin arkasında geçerli Pod IP'leri olmalıdır (`<none>` kalmamalıdır).
+* **DaemonSet:** `netcore-netprobe` tüm düğümlerde `1/1 Running` olmalıdır (`DESIRED == READY`).
+* **StatefulSet:** `netcore-cache-0` podu `1/1 Running` olmalı ve `netcore-cache-0.netcore-cache` DNS adıyla çözülebilmelidir.
 * **Doğrulama Job'ı:** `netcore-network-handshake` tamamlanmış olmalıdır (`1/1 Completed`).
 
-### 2. Ingress ve HTTP Trafik Testi
+### 2. Gateway ve Ingress HTTP Trafik Testi
 ```bash
-export INGRESS_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "127.0.0.1")
-
-# Ağ durum uç noktasını test et
-curl -i http://${INGRESS_IP}/api/v1/network/status
+# Küme içinden Gateway üzerinden uçtan uca API + Cache ve Auth Vault testi:
+kubectl exec -n netcore-prod deploy/netcore-gateway -- wget -qO- http://127.0.0.1:8080/network/status
+kubectl exec -n netcore-prod deploy/netcore-gateway -- wget -qO- http://127.0.0.1:8080/auth/verify
 ```
-**Beklenen Çıktı:** `HTTP/1.1 200 OK` ve `status: healthy`, `network: fully-connected` yanıtı.
+**Beklenen Çıktı:** `"status": "ONLINE", "stateful_cache": "CONNECTED"` ve `"vault": "active", "handshake": "VERIFIED"`.
 
 ### 3. Lab Sonu Temizlik
 ```bash
@@ -302,7 +294,7 @@ curl -i http://${INGRESS_IP}/api/v1/network/status
 
 4. **Egress NetworkPolicy eklendiğinde podlar neden DNS zaman aşımına düşer?**
    * Bir pod için `policyTypes: ["Egress"]` tanımlandığı anda CNI dışarı çıkan tüm trafiği varsayılan olarak engeller.
-   * Podlar alan adlarını çözmek için CoreDNS servisinin 53 numaralı UDP ve TCP portuna gider. Eğer Egress kuralında 53 portuna açıkça izin verilmemişse DNS paketleri düşürülür ve istekler 30 saniye `i/o timeout` bekler.
+   * Podlar alan adlarını çözmek için CoreDNS servisinin 53 numaralı UDP ve TCP portuna gider. Eğer Egress kuralında 53 portuna açıkça izin verilmemişse DNS paketleri düşürülür ve istekler `i/o timeout` bekler.
 
 5. **Headless Service ile ClusterIP Service arasındaki DNS farkı nedir?**
    * Standart Service sanal bir ClusterIP alır; CoreDNS bu IP'yi dönen tek bir A kaydı verir.
@@ -319,15 +311,64 @@ curl -i http://${INGRESS_IP}/api/v1/network/status
 
 Ayrıntılı kök neden analizi ve Linux ağ açıklamaları için [SOLUTION.md](file:///home/ysf/k8sfundamentals/troubleshoot/k8-troubleshoot-21/SOLUTION.md) dosyasına bakabilirsiniz:
 
-1. **Ingress:** `helm/netcore/templates/07-ingress.yaml` içinde `ingressClassName: nginx` yap ve `nginx.ingress.kubernetes.io/rewrite-target: /` annotation'ını ekle.
-2. **Named Port:** `helm/netcore/templates/05-gateway-deployment.yaml` içinde `targetPort: http-gateway` değerini `gateway-http` (veya `8080`) olarak düzelt.
-3. **CoreDNS Egress:** `helm/netcore/templates/06-network-policies.yaml` dosyasında `gateway-egress-policy` altına port 53 UDP/TCP çıkış kuralı ekle.
-4. **Namespace FQDN:** `helm/netcore/templates/01-config-and-secrets.yaml` içinde `GATEWAY_VAULT_ADDR` değerini `http://auth-vault.netcore-secure.svc.cluster.local:8443` yap.
-5. **NetworkPolicy AND Sözdizimi & Port:** `helm/netcore/templates/06-network-policies.yaml` içinde `vault-isolation-policy` seçicilerini tek tire altında topla ve portu `8443` yap.
-6. **Localhost Bind:** `helm/netcore/templates/04-api-deployment.yaml` içinde `BIND_HOST` değerini `0.0.0.0` yap.
-7. **Protokol:** `helm/netcore/templates/04-api-deployment.yaml` içinde `Service/netcore-api` port tanımındaki `protocol: UDP` değerini `TCP` yap.
-8. **Headless Service:** `helm/netcore/templates/02-cache-statefulset.yaml` içinde `serviceName: netcore-cache-headless` değerini `netcore-cache` yap.
-9. **Traffic Policy:** `helm/netcore/templates/05-gateway-deployment.yaml` içinde `externalTrafficPolicy: Local` değerini `Cluster` yap.
-10. **DaemonSet:** `helm/netcore/templates/08-telemetry-daemonset.yaml` içinde olmayan `nodeSelector`'ı kaldır ve `Service/netcore-telemetry` seçicisini pod etiketleriyle (`role: packet-probe`) eşitle.
+1. **`helm/netcore/values.yaml` Düzeltmeleri:**
+   - `gateway.namedPort`: `http-gateway` -> `gateway-http`
+   - `gateway.externalTrafficPolicy`: `Local` -> `Cluster`
+   - `api.bindHost`: `"127.0.0.1"` -> `"0.0.0.0"`
+   - `api.serviceProtocol`: `UDP` -> `TCP`
+   - `vault.networkPolicyPort`: `9443` -> `8443`
+   - `cache.serviceName`: `netcore-cache-headless` -> `netcore-cache`
+   - `ingress.className`: `edge-nginx` -> `nginx`
+2. **`helm/netcore/templates/01-config-and-secrets.yaml`:**
+   - `netcore-gateway-conf` içinde `proxy_pass http://auth-vault:8443/vault/verify;` satırını `proxy_pass http://auth-vault.netcore-secure.svc.cluster.local:8443/vault/verify;` yap.
+3. **`helm/netcore/templates/06-network-policies.yaml`:**
+   - `gateway-egress-policy` altına CoreDNS için `UDP 53` ve `TCP 53` egress izni ekle.
+   - `vault-isolation-policy` içinde `namespaceSelector` (`netcore-prod`) kuralını düzenle (veya `podSelector` etiketini gerçek pod etiketleriyle eşleştir) ve portun `8443` olduğundan emin ol.
+4. **`helm/netcore/templates/07-ingress.yaml`:**
+   - `metadata.annotations` altına `nginx.ingress.kubernetes.io/rewrite-target: /network/status` ekle (veya `values.yaml` içinde `ingress.path: /network/status` yap).
+5. **`helm/netcore/templates/08-telemetry-daemonset.yaml`:**
+   - `Service/netcore-metrics-svc` içindeki `selector.tier: metrics-agent` değerini `tier: telemetry` yap.
+   - `DaemonSet/netcore-netprobe` içindeki `nodeSelector` bloğunu kaldır ve `volumeMounts` içindeki `readOnly: true` satırını `readOnly: false` yap.
 
 </details>
+
+---
+---
+
+# 🇬🇧 English Documentation
+
+## Incident Report: NetCore v5.0 Microservices Mesh Failure
+At 09:15 UTC, the infrastructure platform team deployed **NetCore v5.0**, a high-performance Kubernetes networking and security mesh. The platform connects customer traffic through an Edge Ingress gateway to an internal API, a secure authentication vault located in an isolated security namespace, a distributed stateful cache, and node-level telemetry probes.
+
+Immediately post-deployment, critical alerts triggered:
+* External users receive `404 Not Found`, `502 Bad Gateway`, or `504 Gateway Timeout`.
+* The API Gateway reports DNS resolution timeouts and cannot reach the Authentication Vault.
+* Core API refuses connections despite reporting `Running`.
+* Clustered caching peer discovery fails completely (`bad address`).
+* Automated network handshake verification Job (`netcore-network-handshake`) crashes repeatedly.
+* Node telemetry agents (`netcore-netprobe`) are not running on any worker nodes (`DESIRED: 0`).
+
+---
+
+## Step-by-Step Diagnostic Roadmap (Where to Start?)
+
+Instead of opening all 10 YAML files at once, follow the **`netcore-network-handshake` Job logs** and `kubectl get / describe` outputs bottom-up:
+
+1. **Check Global Status & Handshake Job Logs:**
+   ```bash
+   kubectl get pods,svc,ep,ds,sts,job,ingress -n netcore-prod -o wide
+   kubectl get pods,svc,ep,netpol -n netcore-secure -o wide
+   kubectl logs -n netcore-prod job/netcore-network-handshake
+   ```
+2. **Fix DaemonSet & Endpoints (`08-telemetry-daemonset.yaml`, `05-gateway-deployment.yaml`, `values.yaml`):**
+   - Inspect why `DaemonSet/netcore-netprobe` has `DESIRED: 0` (`nodeSelector`), why `Service/netcore-metrics-svc` has `ENDPOINTS: <none>` (`selector.tier`), and why the container fails to write `/var/log/netprobe.log` (`readOnly: true`).
+   - Inspect why `Service/netcore-gateway` has `ENDPOINTS: <none>` (`gateway.namedPort`) and why `externalTrafficPolicy: Local` drops cross-node traffic.
+3. **Follow the 4 Steps of `Job/netcore-network-handshake`:**
+   - **Step `[1/4]` (`nc: bad address 'netcore-cache-0.netcore-cache'`):** Check `cache.serviceName` in `values.yaml` vs `Service/netcore-cache` in `02-cache-statefulset.yaml`.
+   - **Step `[2/4]` (`http://netcore-api:8000/healthz`):** Check `api.bindHost` (`127.0.0.1` vs `0.0.0.0`), probe `host`, and `api.serviceProtocol` (`UDP` vs `TCP`) in `values.yaml` and `04-api-deployment.yaml`.
+   - **Step `[3/4]` (`http://auth-vault.netcore-secure.svc.cluster.local:8443/healthz`):** Check `vault.networkPolicyPort` (`9443` vs `8443`) and `from` selector rules in `06-network-policies.yaml` (`vault-isolation-policy`).
+   - **Step `[4/4]` (`http://netcore-gateway:80/healthz`):** Verify `Service/netcore-gateway` endpoints and traffic policy.
+4. **Fix Gateway Proxy, CoreDNS Egress & Ingress (`06-network-policies.yaml`, `01-config-and-secrets.yaml`, `07-ingress.yaml`):**
+   - Allow UDP/TCP port `53` in `gateway-egress-policy` so `netcore-gateway` can resolve DNS via CoreDNS.
+   - Update `http://auth-vault:8443` in `01-config-and-secrets.yaml` (`netcore-gateway-conf`) to use the cross-namespace FQDN `http://auth-vault.netcore-secure.svc.cluster.local:8443`.
+   - Update `ingress.className` to `nginx` and align the Ingress path/rewrite with `/network/status`.
