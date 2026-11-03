@@ -42,7 +42,7 @@ vault:
     repository: python
     tag: "3.12-alpine"
   port: 8443
-  networkPolicyPort: 9443
+  networkPolicyPort: 8443
   token: "VaultSecurityToken#2026!"
   resources:
     requests:
