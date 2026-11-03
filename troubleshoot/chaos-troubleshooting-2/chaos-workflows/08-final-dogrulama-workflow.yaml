@@ -1,0 +1,71 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: final-dogrulama-chaos-suite-v2
+  namespace: chaos-mesh
+spec:
+  entry: full-validation-pipeline
+  templates:
+    - name: full-validation-pipeline
+      templateType: Serial
+      deadline: 12m
+      children:
+        - step-1-postgres-delay-800ms
+        - step-2-payment-worker-ha
+        - step-3-analytics-memory-stress
+        - step-4-order-api-cpu-hpa
+    - name: step-1-postgres-delay-800ms
+      templateType: NetworkChaos
+      deadline: 2m
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces:
+            - data
+          labelSelectors:
+            app.kubernetes.io/name: postgresql
+        delay:
+          latency: "800ms"
+          jitter: "50ms"
+          correlation: "50"
+        direction: to
+    - name: step-2-payment-worker-ha
+      templateType: PodChaos
+      deadline: 2m
+      podChaos:
+        action: pod-failure
+        mode: one
+        selector:
+          namespaces:
+            - app
+          labelSelectors:
+            app.kubernetes.io/component: payment-worker
+    - name: step-3-analytics-memory-stress
+      templateType: StressChaos
+      deadline: 2m
+      stressChaos:
+        mode: one
+        selector:
+          namespaces:
+            - app
+          labelSelectors:
+            app.kubernetes.io/component: analytics-consumer
+        stressors:
+          memory:
+            workers: 1
+            size: "50MB"
+    - name: step-4-order-api-cpu-hpa
+      templateType: StressChaos
+      deadline: 2m
+      stressChaos:
+        mode: all
+        selector:
+          namespaces:
+            - app
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+        stressors:
+          cpu:
+            workers: 1
+            load: 80

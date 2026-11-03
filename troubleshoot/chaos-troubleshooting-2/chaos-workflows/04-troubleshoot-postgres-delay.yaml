@@ -1,0 +1,19 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: troubleshoot-04-postgres-delay-800ms
+  namespace: chaos-mesh
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - data
+    labelSelectors:
+      app.kubernetes.io/name: postgresql
+  delay:
+    latency: "800ms"
+    jitter: "50ms"
+    correlation: "50"
+  direction: to
+  duration: "3m"

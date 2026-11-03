@@ -1,0 +1,22 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: kontrol-02-redis-network-partition
+  namespace: chaos-mesh
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  direction: both
+  target:
+    mode: all
+    selector:
+      namespaces:
+        - messaging
+      labelSelectors:
+        app.kubernetes.io/name: redis
+  duration: "2m"
