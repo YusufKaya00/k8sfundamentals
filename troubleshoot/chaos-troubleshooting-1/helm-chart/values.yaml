@@ -89,7 +89,7 @@ analyticsResources:
     memory: 64Mi
   limits:
     cpu: 200m
-    memory: 80Mi             # <--- 🔴 HATA BURADA! (OOMKilled olmaması için 256Mi olmalı)
+    memory: 256Mi             # <--- 🔴 HATA BURADA! (OOMKilled olmaması için 256Mi olmalı)
 
 paymentResources:
   requests:
