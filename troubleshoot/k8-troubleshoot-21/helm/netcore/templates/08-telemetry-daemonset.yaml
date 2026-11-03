@@ -23,15 +23,14 @@ spec:
   selector:
     matchLabels:
       app: netcore-netprobe
-      
+      tier: telemetry
   template:
     metadata:
       labels:
         app: netcore-netprobe
-        
+        tier: telemetry
     spec:
-      nodeSelector:
-        {{ .Values.daemonset.nodeSelectorLabel }}: {{ .Values.daemonset.nodeSelectorValue | quote }}
+    
       tolerations:
         - operator: Exists
       containers:
