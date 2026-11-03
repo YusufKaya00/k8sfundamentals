@@ -50,14 +50,14 @@ spec:
             httpGet:
               path: {{ .Values.api.probePath }}
               port: 8000
-              host: "127.0.0.1"
+              
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: {{ .Values.api.probePath }}
               port: 8000
-              host: "127.0.0.1"
+              
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
