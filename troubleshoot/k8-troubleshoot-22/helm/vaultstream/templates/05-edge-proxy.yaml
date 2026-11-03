@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-proxy
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: edge-proxy
+    tier: {{ .Values.proxy.selectorTier }}
+  ports:
+    - name: http
+      port: {{ .Values.proxy.servicePort }}
+      targetPort: {{ .Values.proxy.targetPortName }}
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-proxy
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  replicas: {{ .Values.proxy.replicas }}
+  selector:
+    matchLabels:
+      app: edge-proxy
+      tier: proxy
+  template:
+    metadata:
+      labels:
+        app: edge-proxy
+        tier: proxy
+    spec:
+      containers:
+        - name: proxy
+          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: proxy-http
+              containerPort: {{ .Values.proxy.containerPort }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: proxy-http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: proxy-http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: proxy-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: proxy-config
+          configMap:
+            name: edge-proxy-conf

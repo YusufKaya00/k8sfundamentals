@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vaultstream-e2e-audit
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: vaultstream-e2e-audit
+        tier: audit-job
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: auditor
+          image: docker.io/library/busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "==> [1/4] Verifying StatefulSet Ledger Headless DNS & NetworkPolicy..."
+              nc -z -w 3 ledger-db-0.ledger-db 6379
+              echo "    [OK] Ledger DB reached via Headless DNS."
+
+              echo "==> [2/4] Verifying Settlement Engine Readiness & L4 Service..."
+              wget -qO- -T 3 http://settlement-engine:8081/healthz
+              echo ""
+              echo "    [OK] Settlement Engine is Ready and responding."
+
+              echo "==> [3/4] Verifying Cross-Namespace PCI Signer HSM Connectivity..."
+              wget -qO- -T 3 http://pci-signer.{{ .Values.global.pciNamespace }}.svc.cluster.local:8443/pci/verify
+              echo ""
+              echo "    [OK] PCI Signer HSM verified across namespaces."
+
+              echo "==> [4/4] Verifying Edge Proxy E2E Settlement & PCI Routing..."
+              wget -qO- -T 3 http://edge-proxy:80/settlement/status | grep -q '"ledger_db": "CONNECTED"'
+              wget -qO- -T 3 http://edge-proxy:80/pci/verify | grep -q '"signature": "VALID"'
+              echo "    [OK] Edge Proxy routed both /settlement/status and /pci/verify!"
+
+              echo "=========================================================="
+              echo " [SUCCESS] VaultStream v6.0 Zero-Trust Mesh Audit Passed!"
+              echo "=========================================================="

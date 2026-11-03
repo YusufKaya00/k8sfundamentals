@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pci-auditor-svc
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: pci-node-auditor
+    tier: compliance-agent
+  ports:
+    - name: metrics
+      port: 9105
+      targetPort: 9105
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pci-node-auditor
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  selector:
+    matchLabels:
+      app: pci-node-auditor
+      tier: auditor
+  template:
+    metadata:
+      labels:
+        app: pci-node-auditor
+        tier: auditor
+    spec:
+      nodeSelector:
+        {{ .Values.auditor.nodeSelectorLabel }}: {{ .Values.auditor.nodeSelectorValue | quote }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: auditor
+          image: "{{ .Values.engine.image.repository }}:{{ .Values.engine.image.tag }}"
+          command:
+            - python3
+            - -u
+            - -c
+            - |
+              import time
+              buf = bytearray(48 * 1024 * 1024)
+              print("PCI FIPS node audit buffer allocated, starting compliance loop...")
+              while True:
+                  time.sleep(15)
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: {{ .Values.auditor.memoryLimit }}

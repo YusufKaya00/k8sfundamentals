@@ -1,0 +1,74 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ledger-db-isolation
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: settlement
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pci-signer-isolation
+  namespace: {{ .Values.global.pciNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: pci-security
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.coreNamespace }}
+        - podSelector:
+            matchLabels:
+              tier: engine
+      ports:
+        - protocol: TCP
+          port: {{ .Values.signer.networkPolicyPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edge-proxy-egress
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: proxy
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: engine
+      ports:
+        - protocol: TCP
+          port: 8081
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.pciNamespace }}
+      ports:
+        - protocol: TCP
+          port: 8443
