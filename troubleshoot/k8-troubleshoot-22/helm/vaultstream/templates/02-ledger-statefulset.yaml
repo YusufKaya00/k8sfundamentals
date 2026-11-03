@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-db
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  clusterIP: None
+  selector:
+    app: ledger-db
+    tier: database
+  ports:
+    - name: redis
+      port: {{ .Values.ledger.port }}
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ledger-db
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  serviceName: {{ .Values.ledger.serviceName }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledger-db
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: ledger-db
+        tier: database
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.ledger.image.repository }}:{{ .Values.ledger.image.tag }}"
+          command:
+            - redis-server
+            - --protected-mode
+            - "no"
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: ledger-data
+              mountPath: /data
+      volumes:
+        - name: ledger-data
+          emptyDir: {}

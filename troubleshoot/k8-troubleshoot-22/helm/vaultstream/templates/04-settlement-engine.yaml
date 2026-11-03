@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: settlement-engine
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: settlement-engine
+    tier: engine
+  ports:
+    - name: http
+      port: {{ .Values.engine.port }}
+      targetPort: {{ .Values.engine.port }}
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settlement-engine
+  namespace: {{ .Values.global.coreNamespace }}
+spec:
+  replicas: {{ .Values.engine.replicas }}
+  selector:
+    matchLabels:
+      app: settlement-engine
+      tier: engine
+  template:
+    metadata:
+      labels:
+        app: settlement-engine
+        tier: engine
+    spec:
+      initContainers:
+        - name: wait-for-ledger
+          image: docker.io/library/busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Ledger DB at ledger-db-0.ledger-db:6379..."
+              until nc -z -w 2 ledger-db-0.ledger-db 6379; do
+                echo "Ledger DNS or port not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Ledger DB is reachable!"
+      containers:
+        - name: engine
+          image: "{{ .Values.engine.image.repository }}:{{ .Values.engine.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -u
+            - /app/engine.py
+          ports:
+            - name: http
+              containerPort: {{ .Values.engine.port }}
+              protocol: TCP
+          env:
+            - name: HSM_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vaultstream-hsm-secret
+                  key: {{ .Values.engine.secretKeyName }}
+          envFrom:
+            - configMapRef:
+                name: settlement-engine-conf
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.engine.probePort }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.engine.probePort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.engine.resources | nindent 12 }}
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+      volumes:
+        - name: app-code
+          configMap:
+            name: settlement-engine-conf
