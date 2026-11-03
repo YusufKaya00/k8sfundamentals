@@ -9,7 +9,7 @@ gateway:
     tag: "1.27-alpine"
   containerPort: 8080
   servicePort: 80
-  namedPort: http-gateway
+  namedPort: gateway-http
   externalTrafficPolicy: Local
   probePath: /healthz
   resources:
