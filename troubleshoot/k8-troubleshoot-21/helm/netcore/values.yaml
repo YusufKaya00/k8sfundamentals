@@ -65,7 +65,7 @@ ingress:
   enabled: true
   className: nginx
   host: netcore.local
-  path: /api/v1/network/status
+  path: /api/network/status
   pathType: Prefix
 
 daemonset:
