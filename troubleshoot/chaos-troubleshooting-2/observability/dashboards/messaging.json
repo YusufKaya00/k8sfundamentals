@@ -1,0 +1,166 @@
+{
+  "id": null,
+  "uid": "rs-messaging",
+  "title": "📨 ResilienceStream — 02. Messaging (Kafka KRaft vs RabbitMQ + DLQ)",
+  "description": "Kafka event streaming (orders.events -> analytics-consumer -> Cassandra) ve RabbitMQ task queue (payments -> payment-worker -> Postgres + payments.dlq) canlı izleme panosu.",
+  "tags": [
+    "resiliencestream",
+    "kafka",
+    "rabbitmq",
+    "cassandra",
+    "chaos"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "📥 Kafka Offset & Tüketilen Olaylar (Üretilen vs Tüketilen)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max(rs_kafka_topic_end_offset) or sum(rs_orders_created_total)",
+          "legendFormat": "Produced Offset"
+        },
+        {
+          "expr": "max(rs_kafka_group_committed_offset) or sum(rs_kafka_events_consumed_total)",
+          "legendFormat": "Consumed Offset"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 2,
+      "title": "⏳ Kafka Consumer Lag (rs_kafka_consumer_lag — Gerçek Broker Farkı)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max(rs_kafka_consumer_lag) or vector(0)",
+          "legendFormat": "Kafka Lag"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 25 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "🐇 RabbitMQ Kuyruk Durumu (Aktif Consumer, Bekleyen & DLQ)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max(rs_rabbitmq_queue_consumers{queue=\"payments\"}) or vector(0)",
+          "legendFormat": "Active Consumers"
+        },
+        {
+          "expr": "max(rs_rabbitmq_queue_messages_ready{queue=\"payments\"}) or vector(0)",
+          "legendFormat": "Waiting (payments)"
+        },
+        {
+          "expr": "max(rs_rabbitmq_queue_messages_ready{queue=\"payments.dlq\"}) or vector(0)",
+          "legendFormat": "DLQ (payments.dlq)"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 4,
+      "title": "✅ RabbitMQ İşlenen Mesaj Sayaçları (success / retry / dlq)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (result) (rs_rabbitmq_messages_processed_total)",
+          "legendFormat": "{{ result }}"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 5,
+      "title": "📊 Kafka Consumer Lag & Tüketim Hızı (Zaman Serisi)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max(rs_kafka_consumer_lag) or vector(0)",
+          "legendFormat": "Kafka Consumer Lag (mesaj)"
+        },
+        {
+          "expr": "sum(rate(rs_kafka_events_consumed_total[2m])) or vector(0)",
+          "legendFormat": "Kafka Consumed/s"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "🚨 RabbitMQ Kuyruk Derinliği (messages_ready), DLQ & Consumer Sayısı",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max(rs_rabbitmq_queue_messages_ready{queue=\"payments\"}) or vector(0)",
+          "legendFormat": "Bekleyen Mesaj (payments)"
+        },
+        {
+          "expr": "max(rs_rabbitmq_queue_messages_ready{queue=\"payments.dlq\"}) or vector(0)",
+          "legendFormat": "Zehirli Mesaj (payments.dlq)"
+        },
+        {
+          "expr": "max(rs_rabbitmq_queue_consumers{queue=\"payments\"}) or vector(0)",
+          "legendFormat": "Aktif Consumer Sayısı"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "🗄️ Veri & Mesajlaşma Katmanı Probe Gecikmeleri (Kafka, RabbitMQ, Cassandra, Postgres, Redis)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(rs_dependency_latency_seconds_sum[2m]) / clamp_min(rate(rs_dependency_latency_seconds_count[2m]), 0.0001)",
+          "legendFormat": "{{ dependency }} avg latency (s)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    }
+  ]
+}
