@@ -539,4 +539,5 @@ kubectl exec -n messaging redis-master-0 -- redis-cli -a 'AdminPassword2026!' --
 | **Lab'ı Sıfırlama (3 Hatalı Başlangıç Modu):** | `./scripts/setup-lab.sh` |
 | **Tüm Sorunları Otomatik Çözme (Fixed Mod):** | `./scripts/setup-lab.sh --fixed` |
 | **Sistem Röntgeni (Tüm Katmanları Sorgulama):** | `./scripts/check-system.sh` |
-| **Aktif Kaos Deneylerini Anında Durdurma:** | `ssh ysf@9.205.90.183 "kubectl delete podchaos,networkchaos,dnschaos,stresschaos,iochaos,workflow --all -n chaos-mesh"` |
+| **Aktif Kaos Deneylerini Anında Durdurma:** | `ssh ysf@<MASTER_IP> "kubectl delete podchaos,networkchaos,dnschaos,stresschaos,iochaos,workflow --all -n chaos-mesh"` |
+| **Lab Sonu Azure Kaynaklarını Tamamen Silme:** | `cd terraform && terraform destroy -auto-approve` |
