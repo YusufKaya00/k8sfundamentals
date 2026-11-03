@@ -27,7 +27,7 @@ api:
     tag: "3.12-alpine"
   port: 8000
   bindHost: "0.0.0.0"
-  serviceProtocol: UDP
+  serviceProtocol: TCP
   probePath: /healthz
   resources:
     requests:
