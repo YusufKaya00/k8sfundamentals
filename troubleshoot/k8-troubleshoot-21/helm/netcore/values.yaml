@@ -26,7 +26,7 @@ api:
     repository: python
     tag: "3.12-alpine"
   port: 8000
-  bindHost: "127.0.0.1"
+  bindHost: "0.0.0.0"
   serviceProtocol: UDP
   probePath: /healthz
   resources:
