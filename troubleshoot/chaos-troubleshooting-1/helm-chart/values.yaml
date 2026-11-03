@@ -38,11 +38,11 @@ image:
 # ------------------------------------------------------------------------------
 apiProbes:
   livenessProbe:
-    path: "/readyz"          # <--- 🔴 HATA BURADA! ("/healthz" olmalı)
+    path: "/healthz"          # <--- 🔴 HATA BURADA! ("/healthz" olmalı)
     initialDelaySeconds: 10
     periodSeconds: 5
-    timeoutSeconds: 1        # <--- 🔴 ÇOK AGRESİF! (3 olmalı)
-    failureThreshold: 2      # <--- 🔴 ÇOK DÜŞÜK! (3 olmalı)
+    timeoutSeconds: 3        # <--- 🔴 ÇOK AGRESİF! (3 olmalı)
+    failureThreshold: 3      # <--- 🔴 ÇOK DÜŞÜK! (3 olmalı)
   readinessProbe:
     path: "/readyz"
     initialDelaySeconds: 5
