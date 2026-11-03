@@ -58,3 +58,24 @@ spec:
       targetPort: http
       protocol: TCP
 {{- end }}
+---
+{{- if or (not (hasKey .Values "telemetryAgent")) .Values.telemetryAgent.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: telemetry-agent
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: telemetry-agent
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: telemetry-agent
+  ports:
+    - name: http
+      port: {{ .Values.service.port | default 80 }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

@@ -59,7 +59,7 @@ spec:
       protocol: TCP
 {{- end }}
 ---
-{{- if and .Values.telemetryAgent .Values.telemetryAgent.enabled }}
+{{- if or (not (hasKey .Values "telemetryAgent")) .Values.telemetryAgent.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
