@@ -27,6 +27,7 @@ k8sfundamentals/
 │
 └── troubleshoot/
     ├── chaos-troubleshooting-1/     # SRE Incident & Chaos Engineering Lab 1 (Web UI, 3 Resilient Checks, 3 Break-and-Fix Labs & Workflow)
+    ├── chaos-troubleshooting-2/     # SRE Incident & Chaos Engineering Lab 2 (Zero-Spoiler YAML, Live Telemetry Agent, 3 Controls + 4 Multi-Layered Labs)
     ├── k8-troubleshoot-1/           # ShopSphere E-Commerce (11 Cascading Multi-Object Failures)
     ├── k8-troubleshoot-2/           # NovaMarket Platform (7 Deep Topology & Stateful Failures)
     ├── k8-troubleshoot-3/           # ApexPay Gateway (7 Linux Security, VFS & Socket Failures)
@@ -79,7 +80,7 @@ k8sfundamentals/
 
 ## 🌐 Production Cluster Topologies
 
-### Topology A: Azure 3-Tier High-Performance SRE & Chaos Platform (`devops-capstone-project-5` & `chaos-troubleshooting-1`)
+### Topology A: Azure 3-Tier High-Performance SRE & Chaos Platform (`devops-capstone-project-5` & `chaos-troubleshooting-1` / `2`)
 * **Region:** `denmarkeast` (Optimized for Azure for Students regional quota: 6 vCPUs & 3 Public IPs)
 * **Tiered Node Architecture:**
   * **`vm-master` (`10.30.1.4`, Public IP #1):** `Standard_B2s_v2` (2 vCPU, **8 GB RAM**, 4 GB Swap) — RKE2 Control Plane, etcd, Ingress NGINX, Rancher, ArgoCD, Prometheus, Grafana, Alertmanager, Chaos Mesh Dashboard.
@@ -126,6 +127,7 @@ k8sfundamentals/
 ### 2. On-Call SRE Incident Triage & Chaos Engineering Labs (Troubleshooting)
 
 * [**chaos-troubleshooting-1:** SRE Incident & Chaos Engineering Lab 1](./troubleshoot/chaos-troubleshooting-1/README.md) — **Hands-on Chaos Engineering & Root Cause Analysis:** 3 resilient control scenarios (Pod Kill load balancing, Redis DNS error graceful degradation, Kafka 300ms network delay) + 3 break-and-fix incident labs (PostgreSQL delay causing cyclic API restart loops via misconfigured Liveness Probe, single-replica `payment-worker` queue starvation in RabbitMQ, and `analytics-consumer` cgroup memory limit `OOMKilled 137` triggering Kafka LAG spikes). Features step-by-step Chaos Mesh Web UI guides, an operational cheat sheet, and an automated final Chaos Mesh Workflow.
+* [**chaos-troubleshooting-2:** Advanced Zero-Spoiler Chaos Engineering & Telemetry Lab 2](./troubleshoot/chaos-troubleshooting-2/README.md) — **Zero-Spoiler Multi-Layered Chaos Triage:** Comment-free Helm charts, continuous synthetic order traffic + direct Kafka/RabbitMQ broker telemetry (`telemetry-agent`) for real-time Grafana HTTP p50/p95/p99 and lag/DLQ panels, 3 control experiments (20% Packet Loss, Redis Network Partition, Cassandra 500ms Delay), and 4 multi-layered break-and-fix scenarios (Postgres 800ms Delay + Liveness/Timeout, RabbitMQ Pod Failure + 65% DLQ Flood, Analytics Memory Stress OOM + Kafka Topic Drift, and Order API CFS CPU Throttling + Broken HPA `scaleTargetRef`).
 * [**k8-troubleshoot-1:** ShopSphere E-Commerce Incident Triage](./troubleshoot/k8-troubleshoot-1/README.md) — 11 cascading tickets covering StorageClass mismatches, Secret key typos, Headless DNS failures, Service selector drift, Liveness Probe cyclic crashes, HPA metric starvation, DaemonSet taints, and RBAC core API group errors.
 * [**k8-troubleshoot-2:** NovaMarket Platform Outage Triage](./troubleshoot/k8-troubleshoot-2/README.md) — 7 cascading production tickets: `NoExecute` vs `NoSchedule` toleration, ext4 `lost+found` initdb rejection, startupProbe budget starvation, `optional: true` silent failures, Service selector drift, and required anti-affinity deadlocks.
 * [**k8-troubleshoot-3:** ApexPay Financial Gateway Outage Triage](./troubleshoot/k8-troubleshoot-3/README.md) — 7 system-level tickets: NodeAffinity label mismatch, non-root storage permissions (`fsGroup: 999`), excessive CPU requests (`Insufficient cpu`), VFS volume mount code overlay, probe timeout storms, named port resolution, and `127.0.0.1` localhost socket binding.
