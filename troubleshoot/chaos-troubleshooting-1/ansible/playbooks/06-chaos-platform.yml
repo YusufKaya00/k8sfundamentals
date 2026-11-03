@@ -1,0 +1,86 @@
+---
+# ==============================================================================
+# FAZ 6: CHAOS MESH KAOS MÜHENDİSLİĞİ PLATFORMU KURULUMU
+# Dosya: playbooks/06-chaos-platform.yml
+# Hedef: vm-master (Helm 3 ile Chaos Mesh kurulumu ve RKE2 containerd entegrasyonu)
+# ==============================================================================
+
+- name: "Faz 6: Chaos Mesh Kaos Mühendisliği Platformunun RKE2 Üzerine Kurulumu"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+    target_home: "/home/{{ ansible_user | default('ysf') }}"
+
+  tasks:
+    - name: "Chaos Mesh Helm deposunu güncelle"
+      shell: |
+        {{ helm_cmd }} repo add chaos-mesh https://charts.chaos-mesh.org --force-update
+        {{ helm_cmd }} repo update chaos-mesh
+      changed_when: true
+
+    - name: "Chaos Mesh platformunu RKE2 containerd soketi (/run/k3s/containerd/containerd.sock) ile chaos-mesh namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install chaos-mesh chaos-mesh/chaos-mesh \
+          --namespace chaos-mesh \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/chaos-mesh-values.yaml \
+          --set chaosDaemon.runtime=containerd \
+          --set chaosDaemon.socketPath=/run/k3s/containerd/containerd.sock \
+          --set dashboard.ingress.hosts[0].name=chaos.{{ master_public_ip }}.nip.io \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "chaos-controller-manager, chaos-daemon ve chaos-dashboard bileşenlerinin hazır olmasını bekle"
+      shell: |
+        {{ kubectl_cmd }} rollout status deployment/chaos-controller-manager -n chaos-mesh --timeout=180s
+        {{ kubectl_cmd }} rollout status daemonset/chaos-daemon -n chaos-mesh --timeout=180s
+        {{ kubectl_cmd }} rollout status deployment/chaos-dashboard -n chaos-mesh --timeout=180s
+      changed_when: false
+
+    - name: "Chaos & Troubleshooting Lab 1 Erişim Özeti"
+      debug:
+        msg:
+          - "=========================================================================="
+          - "🔥 CHAOS & TROUBLESHOOTING LAB 1 ORTAMI HAZIR!"
+          - "=========================================================================="
+          - "1. Chaos Mesh Web UI : http://chaos.{{ master_public_ip }}.nip.io"
+          - "   RKE2 Soket Yolu   : /run/k3s/containerd/containerd.sock (3/3 DaemonSet)"
+          - "--------------------------------------------------------------------------"
+          - "2. Grafana UI        : http://grafana.{{ master_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre : admin / AdminPassword2026!"
+          - "--------------------------------------------------------------------------"
+          - "3. RabbitMQ Mgmt UI  : http://rabbitmq.{{ app_worker_public_ip }}.nip.io"
+          - "   Kullanıcı / Şifre : resilience / AdminPassword2026!"
+          - "--------------------------------------------------------------------------"
+          - "4. Order API & Status: http://app.{{ app_worker_public_ip }}.nip.io/api/status"
+          - "   Liveness / Ready  : /healthz  |  /readyz  |  /metrics"
+          - "--------------------------------------------------------------------------"
+          - "5. Lab Kontrol Aracı : ./scripts/check-system.sh"
+          - "=========================================================================="
+
+    - name: "Faz 6 Doğrulama (Smoke Test): Chaos Mesh CRD, 3 Düğümde chaos-daemon ve RKE2 Soket Kontrolü"
+      block:
+        - name: "Chaos Mesh CRD'lerinin, 3 chaos-daemon pod'unun ve Ingress'in hazır olduğunu doğrula"
+          shell: |
+            set -e
+            {{ kubectl_cmd }} get crd podchaos.chaos-mesh.org networkchaos.chaos-mesh.org stresschaos.chaos-mesh.org iochaos.chaos-mesh.org dnschaos.chaos-mesh.org >/dev/null
+            DAEMON_READY=$({{ kubectl_cmd }} get daemonset chaos-daemon -n chaos-mesh -o jsonpath='{.status.numberReady}')
+            if [ "$DAEMON_READY" -lt 3 ]; then
+              echo "HATA: chaos-daemon 3 düğümün tamamında Ready değil ($DAEMON_READY/3)!"
+              exit 1
+            fi
+            {{ kubectl_cmd }} get daemonset chaos-daemon -n chaos-mesh -o yaml | grep -q "/run/k3s/containerd"
+            {{ kubectl_cmd }} get ingress -n chaos-mesh | grep -q "chaos.{{ master_public_ip }}.nip.io"
+          changed_when: false
+      rescue:
+        - name: "Faz 6 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 6 (CHAOS MESH PLATFORM) DOĞRULAMASI BAŞARISIZ OLDU!"
+              - "  1. Chaos Mesh Podları : kubectl get pods -n chaos-mesh -o wide"
+              - "  2. Chaos Daemon Log   : kubectl logs -n chaos-mesh -l app.kubernetes.io/component=chaos-daemon --tail=50"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 6 Chaos Mesh doğrulaması başarısız oldu."
