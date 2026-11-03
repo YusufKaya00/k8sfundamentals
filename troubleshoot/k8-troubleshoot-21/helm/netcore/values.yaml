@@ -63,7 +63,7 @@ cache:
 
 ingress:
   enabled: true
-  className: edge-nginx
+  className: nginx
   host: netcore.local
   path: /api/v1/network/status
   pathType: Prefix
