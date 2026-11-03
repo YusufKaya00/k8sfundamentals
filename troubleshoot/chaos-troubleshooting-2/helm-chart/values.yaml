@@ -1,0 +1,120 @@
+replicaCount: 2
+
+image:
+  repository: yusufk00/resiliencestream
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+apiProbes:
+  livenessProbe:
+    path: "/readyz"
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 1
+    failureThreshold: 2
+  readinessProbe:
+    path: "/readyz"
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+
+workers:
+  analyticsConsumer:
+    enabled: true
+    replicaCount: 1
+    kafkaTopic: "orders.raw"
+  paymentWorker:
+    enabled: true
+    replicaCount: 1
+
+analyticsResources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 80Mi
+
+paymentResources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 192Mi
+
+resources:
+  requests:
+    cpu: 30m
+    memory: 96Mi
+  limits:
+    cpu: 60m
+    memory: 256Mi
+
+nodeSelector:
+  tier: app
+
+tolerations: []
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: app.9.205.90.176.nip.io
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+hpa:
+  enabled: true
+  targetDeploymentName: "order-service"
+  paymentWorkerEnabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 60
+
+serviceMonitor:
+  enabled: true
+  interval: 5s
+  scrapeTimeout: 4s
+  path: /metrics
+  additionalLabels:
+    release: monitoring
+
+telemetryAgent:
+  enabled: true
+  orderIntervalSeconds: "2.5"
+
+env:
+  KAFKA_BOOTSTRAP: "kafka.data.svc.cluster.local:9092"
+  KAFKA_TOPIC: "orders.events"
+  KAFKA_GROUP: "analytics-consumer"
+  CASSANDRA_HOSTS: "cassandra.data.svc.cluster.local"
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_USER: "resilience"
+  CASSANDRA_PASSWORD: "AdminPassword2026!"
+  CASSANDRA_KEYSPACE: "resilience"
+  POSTGRES_HOST: "postgres-postgresql.data.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "resilience"
+  POSTGRES_PASSWORD: "AdminPassword2026!"
+  POSTGRES_DB: "resilience"
+  RABBITMQ_HOST: "rabbitmq.messaging.svc.cluster.local"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: "resilience"
+  RABBITMQ_PASSWORD: "AdminPassword2026!"
+  RABBITMQ_QUEUE: "payments"
+  RABBITMQ_DLQ: "payments.dlq"
+  RABBITMQ_MAX_RETRIES: "1"
+  REDIS_HOST: "redis-master.messaging.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "AdminPassword2026!"
+  DEP_TIMEOUT_SECONDS: "0.4"
+  HEALTH_PROBE_INTERVAL: "5"
+  PAYMENT_FAILURE_RATE: "0.65"
