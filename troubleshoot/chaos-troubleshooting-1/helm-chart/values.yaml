@@ -68,7 +68,7 @@ workers:
     replicaCount: 1
   paymentWorker:
     enabled: true
-    replicaCount: 1          # <--- 🔴 HATA BURADA! (Yüksek erişilebilirlik için 2 olmalı)
+    replicaCount: 2    # <--- 🔴 HATA BURADA! (Yüksek erişilebilirlik için 2 olmalı)
 
 # ------------------------------------------------------------------------------
 # 🔴 [TROUBLESHOOT HATASI #3] — Deney 6'da Patlayan Yer!
