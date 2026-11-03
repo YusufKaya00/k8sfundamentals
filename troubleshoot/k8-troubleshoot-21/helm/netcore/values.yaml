@@ -59,7 +59,7 @@ cache:
   port: 6379
   storageClassName: "default"
   storageSize: 1Gi
-  serviceName: netcore-cache-headless
+  serviceName: netcore-cache
 
 ingress:
   enabled: true
