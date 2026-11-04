@@ -61,7 +61,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: vaultstream-hsm-secret
-                  key: {{ .Values.engine.secretKeyName }}
+                  key: {{ .Values.signer.secretKeyName }}
           envFrom:
             - configMapRef:
                 name: settlement-engine-conf
