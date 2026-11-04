@@ -9,18 +9,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 if [[ -f "${SCRIPT_DIR}/.lab-env" ]]; then
   # shellcheck disable=SC1091
   source "${SCRIPT_DIR}/.lab-env"
+elif [[ -f "${LAB_DIR}/ansible/hosts.ini" ]]; then
+  MASTER_IP="$(awk -F'master_public_ip=' '/^master_public_ip=/{print $2}' "${LAB_DIR}/ansible/hosts.ini" | tr -d '[:space:]')"
+  APP_IP="$(awk -F'app_worker_public_ip=' '/^app_worker_public_ip=/{print $2}' "${LAB_DIR}/ansible/hosts.ini" | tr -d '[:space:]')"
 fi
-MASTER_IP="${MASTER_IP:-9.205.90.183}"
-APP_IP="${APP_IP:-9.205.90.176}"
+MASTER_IP="${MASTER_IP:-9.205.30.199}"
+APP_IP="${APP_IP:-9.205.30.202}"
 
 run_k8s() {
   if [[ "$(hostname)" == "vm-master" ]]; then
-    bash -c "$1"
+    sudo env PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:$PATH" KUBECONFIG="/etc/rancher/rke2/rke2.yaml" bash -c "$1"
   else
-    ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "$1"
+    ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo env PATH=\"/var/lib/rancher/rke2/bin:/usr/local/bin:\$PATH\" KUBECONFIG=\"/etc/rancher/rke2/rke2.yaml\" bash -c '$1'"
   fi
 }
 
