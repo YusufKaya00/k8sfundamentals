@@ -62,7 +62,7 @@ ingress:
   enabled: true
   className: internal-nginx
   host: vaultstream.local
-  path: /api/v2/settlement/status
+  path: settlement/status
   pathType: Prefix
 
 auditor:
