@@ -67,7 +67,7 @@ spec:
                 name: settlement-engine-conf
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /ready
               port: {{ .Values.engine.probePort }}
             initialDelaySeconds: 5
             periodSeconds: 10
