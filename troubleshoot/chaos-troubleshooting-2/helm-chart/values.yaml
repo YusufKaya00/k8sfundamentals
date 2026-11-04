@@ -10,7 +10,7 @@ apiProbes:
     path: "/healthz"
     initialDelaySeconds: 25
     periodSeconds: 5
-    timeoutSeconds: 1
+    timeoutSeconds: 3
     failureThreshold: 5
   readinessProbe:
     path: "/readyz"
