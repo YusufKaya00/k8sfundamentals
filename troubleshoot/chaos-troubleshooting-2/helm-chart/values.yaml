@@ -49,8 +49,8 @@ resources:
     cpu: 30m
     memory: 96Mi
   limits:
-    cpu: 120m
-    memory: 256Mi
+    cpu: 250m
+    memory: 512Mi
 
 nodeSelector:
   tier: app
