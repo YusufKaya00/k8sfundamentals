@@ -22,9 +22,9 @@ APP_IP="${APP_IP:-9.205.30.202}"
 
 run_k8s() {
   if [[ "$(hostname)" == "vm-master" ]]; then
-    sudo env PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:$PATH" KUBECONFIG="/etc/rancher/rke2/rke2.yaml" bash -c "$1"
+    sudo KUBECONFIG=/etc/rancher/rke2/rke2.yaml PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:$PATH" bash -c "$1"
   else
-    ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo env PATH=\"/var/lib/rancher/rke2/bin:/usr/local/bin:\$PATH\" KUBECONFIG=\"/etc/rancher/rke2/rke2.yaml\" bash -c '$1'"
+    ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo KUBECONFIG=/etc/rancher/rke2/rke2.yaml PATH=/var/lib/rancher/rke2/bin:/usr/local/bin:\$PATH $1"
   fi
 }
 
@@ -56,27 +56,18 @@ echo ""
 echo "======================================================================"
 echo " 5. RABBITMQ KUYRUK, CONSUMER & DLQ KONTROLÜ (payments & payments.dlq)"
 echo "======================================================================"
-run_k8s "kubectl exec -n messaging rabbitmq-0 -- rabbitmqctl -q list_queues name messages_ready messages_unacknowledged consumers"
+run_k8s "kubectl exec -n messaging rabbitmq-0 -c rabbitmq -- rabbitmqctl -q list_queues name messages_ready messages_unacknowledged consumers"
 
 echo ""
 echo "======================================================================"
 echo " 6. APACHE KAFKA CONSUMER GROUP & LAG KONTROLÜ (analytics-consumer)"
 echo "======================================================================"
-run_k8s "kubectl exec -n app deploy/order-api -- python3 -c '
-from kafka import KafkaAdminClient, KafkaConsumer, TopicPartition
-c = KafkaConsumer(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\")
-tp = TopicPartition(\"orders.events\", 0)
-end = c.end_offsets([tp])[tp]
-a = KafkaAdminClient(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\")
-offs = a.list_consumer_group_offsets(\"analytics-consumer\")
-cur = offs.get(tp).offset if tp in offs and offs.get(tp).offset is not None else 0
-print(f\"GROUP: analytics-consumer | TOPIC: orders.events | PARTITION: 0 | CURRENT-OFFSET: {cur} | LOG-END-OFFSET: {end} | LAG: {max(0, end - cur)}\")
-'"
+run_k8s "kubectl exec -n app deploy/order-api -- python3 -c 'from kafka import KafkaAdminClient, KafkaConsumer, TopicPartition; c = KafkaConsumer(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\"); tp = TopicPartition(\"orders.events\", 0); end = c.end_offsets([tp])[tp]; a = KafkaAdminClient(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\"); offs = a.list_consumer_group_offsets(\"analytics-consumer\"); cur = offs.get(tp).offset if tp in offs and offs.get(tp).offset is not None else 0; print(f\"GROUP: analytics-consumer | TOPIC: orders.events | PARTITION: 0 | CURRENT-OFFSET: {cur} | LOG-END-OFFSET: {end} | LAG: {max(0, end - cur)}\")'"
 
 echo ""
 echo "======================================================================"
 echo " 7. POSTGRESQL, CASSANDRA VE REDIS KAYIT SAYILARI"
 echo "======================================================================"
-run_k8s "kubectl exec -n data postgres-postgresql-0 -- env PGPASSWORD='AdminPassword2026!' psql -U resilience -d resilience -t -c \"SELECT 'Postgres Siparis : ' || count(*) FROM orders UNION ALL SELECT 'Postgres Odeme   : ' || count(*) FROM payments;\""
-run_k8s "kubectl exec -n messaging redis-master-0 -- redis-cli -a 'AdminPassword2026!' --no-auth-warning DBSIZE | awk '{print \"Redis Anahtar    : \" \$1}'"
+run_k8s "kubectl exec -n data postgres-postgresql-0 -- env PGPASSWORD=AdminPassword2026! psql -U resilience -d resilience -t -c \"SELECT 'Postgres Siparis : ' || count(*) FROM orders UNION ALL SELECT 'Postgres Odeme   : ' || count(*) FROM payments;\""
+run_k8s "kubectl exec -n messaging redis-master-0 -- redis-cli -a AdminPassword2026! --no-auth-warning DBSIZE"
 echo "======================================================================"
