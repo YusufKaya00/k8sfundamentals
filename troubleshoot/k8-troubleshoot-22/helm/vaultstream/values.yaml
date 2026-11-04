@@ -67,5 +67,5 @@ ingress:
 
 auditor:
   memoryLimit: 32Mi
-  nodeSelectorLabel: "security.azure.com/fips-node"
+  nodeSelectorLabel: "agentpool=systempool
   nodeSelectorValue: "true"
