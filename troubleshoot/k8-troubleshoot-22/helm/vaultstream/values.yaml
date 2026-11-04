@@ -24,7 +24,7 @@ engine:
   image:
     repository: python
     tag: "3.12-alpine"
-  port: 8080
+  port: 8081
   probePort: 8080
   secretKeyName: signing_key
   resources:
