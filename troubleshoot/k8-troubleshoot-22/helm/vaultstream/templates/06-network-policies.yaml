@@ -58,6 +58,11 @@ spec:
         - protocol: TCP
           port: 8080
   egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53 
     - to:
         - podSelector:
             matchLabels:
