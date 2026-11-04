@@ -62,7 +62,14 @@ echo ""
 echo "======================================================================"
 echo " 6. APACHE KAFKA CONSUMER GROUP & LAG KONTROLÜ (analytics-consumer)"
 echo "======================================================================"
-run_k8s "kubectl exec -n app deploy/order-api -- python3 -c 'from kafka import KafkaAdminClient, KafkaConsumer, TopicPartition; c = KafkaConsumer(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\"); tp = TopicPartition(\"orders.events\", 0); end = c.end_offsets([tp])[tp]; a = KafkaAdminClient(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\"); offs = a.list_consumer_group_offsets(\"analytics-consumer\"); cur = offs.get(tp).offset if tp in offs and offs.get(tp).offset is not None else 0; print(f\"GROUP: analytics-consumer | TOPIC: orders.events | PARTITION: 0 | CURRENT-OFFSET: {cur} | LOG-END-OFFSET: {end} | LAG: {max(0, end - cur)}\")'"
+run_k8s "kubectl exec -n app deploy/order-api -- python3 -c 'from kafka import KafkaAdminClient, KafkaConsumer, TopicPartition; c = KafkaConsumer(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\"); tp = TopicPartition(\"orders.events\", 0); end = c.end_offsets([tp])[tp]; cur = 0
+try:
+    a = KafkaAdminClient(bootstrap_servers=\"kafka.data.svc.cluster.local:9092\")
+    offs = a.list_consumer_group_offsets(\"analytics-consumer\")
+    cur = offs.get(tp).offset if tp in offs and offs.get(tp).offset is not None and offs.get(tp).offset >= 0 else 0
+except Exception:
+    cur = 0
+print(f\"GROUP: analytics-consumer | TOPIC: orders.events | PARTITION: 0 | CURRENT-OFFSET: {cur} | LOG-END-OFFSET: {end} | LAG: {max(0, end - cur)}\")'"
 
 echo ""
 echo "======================================================================"

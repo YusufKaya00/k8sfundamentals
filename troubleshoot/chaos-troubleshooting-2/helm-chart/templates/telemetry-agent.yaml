@@ -81,13 +81,17 @@ spec:
                               tps = [TopicPartition(TOPIC, p) for p in parts]
                               end_offsets = consumer.end_offsets(tps)
                               total_end = sum(end_offsets.values())
-                              admin = KafkaAdminClient(bootstrap_servers=BOOTSTRAP, request_timeout_ms=3000)
-                              group_offsets = admin.list_consumer_group_offsets(GROUP)
-                              total_committed = sum(
-                                  om.offset for tp, om in group_offsets.items()
-                                  if tp.topic == TOPIC and om.offset is not None and om.offset >= 0
-                              )
-                              admin.close()
+                              total_committed = 0
+                              try:
+                                  admin = KafkaAdminClient(bootstrap_servers=BOOTSTRAP, request_timeout_ms=3000)
+                                  group_offsets = admin.list_consumer_group_offsets(GROUP)
+                                  total_committed = sum(
+                                      om.offset for tp, om in group_offsets.items()
+                                      if tp.topic == TOPIC and om.offset is not None and om.offset >= 0
+                                  )
+                                  admin.close()
+                              except Exception:
+                                  total_committed = 0
                               lag = max(0, total_end - total_committed)
                               KAFKA_END.labels(topic=TOPIC).set(total_end)
                               KAFKA_COMMITTED.labels(group=GROUP, topic=TOPIC).set(total_committed)
