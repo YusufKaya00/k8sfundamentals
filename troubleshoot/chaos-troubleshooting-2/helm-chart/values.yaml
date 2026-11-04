@@ -34,7 +34,7 @@ analyticsResources:
     memory: 64Mi
   limits:
     cpu: 200m
-    memory: 80Mi
+    memory: 256Mi
 
 paymentResources:
   requests:
