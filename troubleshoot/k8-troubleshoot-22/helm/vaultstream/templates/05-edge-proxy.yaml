@@ -43,8 +43,8 @@ spec:
             httpGet:
               path: /healthz
               port: proxy-http
-            initialDelaySeconds: 2
-            periodSeconds: 5
+            initialDelaySeconds: 5
+            periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /healthz
