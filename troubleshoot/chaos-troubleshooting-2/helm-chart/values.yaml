@@ -7,17 +7,17 @@ image:
 
 apiProbes:
   livenessProbe:
-    path: "/readyz"
+    path: "/healthz"
     initialDelaySeconds: 25
     periodSeconds: 5
     timeoutSeconds: 1
-    failureThreshold: 2
+    failureThreshold: 5
   readinessProbe:
     path: "/readyz"
     initialDelaySeconds: 10
     periodSeconds: 5
     timeoutSeconds: 3
-    failureThreshold: 2
+    failureThreshold: 5
 
 workers:
   analyticsConsumer:
