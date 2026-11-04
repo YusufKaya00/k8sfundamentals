@@ -30,8 +30,6 @@ spec:
         app: pci-node-auditor
         tier: auditor
     spec:
-      nodeSelector:
-        {{ .Values.auditor.nodeSelectorLabel }}: {{ .Values.auditor.nodeSelectorValue | quote }}
       tolerations:
         - operator: Exists
       containers:
