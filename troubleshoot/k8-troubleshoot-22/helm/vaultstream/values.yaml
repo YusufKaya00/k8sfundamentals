@@ -8,7 +8,7 @@ proxy:
     repository: nginxinc/nginx-unprivileged
     tag: "1.27-alpine"
   containerPort: 8080
-  servicePort: 80
+  servicePort: 8080
   targetPortName: proxy-http-port
   selectorTier: edge-gateway
   resources:
