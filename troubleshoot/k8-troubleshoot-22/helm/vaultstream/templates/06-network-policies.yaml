@@ -14,7 +14,7 @@ spec:
         - podSelector:
             matchLabels:
               app: settlement-engine
-
+    - from:
         - podSelector:
             matchLabels:
               app: audit-job
