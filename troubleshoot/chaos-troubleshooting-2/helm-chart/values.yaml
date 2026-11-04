@@ -8,13 +8,13 @@ image:
 apiProbes:
   livenessProbe:
     path: "/readyz"
-    initialDelaySeconds: 10
+    initialDelaySeconds: 25
     periodSeconds: 5
     timeoutSeconds: 1
     failureThreshold: 2
   readinessProbe:
     path: "/readyz"
-    initialDelaySeconds: 5
+    initialDelaySeconds: 10
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 2
@@ -49,7 +49,7 @@ resources:
     cpu: 30m
     memory: 96Mi
   limits:
-    cpu: 60m
+    cpu: 120m
     memory: 256Mi
 
 nodeSelector:
