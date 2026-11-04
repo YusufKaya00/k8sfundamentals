@@ -13,7 +13,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              tier: settlement-engine
+              app: settlement-engine
       ports:
         - protocol: TCP
           port: 6379
