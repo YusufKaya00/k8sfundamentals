@@ -1,0 +1,31 @@
+# ==============================================================================
+# CHAOS & TROUBLESHOOTING LAB 1 - AUTO-GENERATED ANSIBLE INVENTORY
+# ==============================================================================
+# Bu dosya Terraform `local_file.ansible_inventory` kaynağı ve `templatefile()`
+# fonksiyonu tarafından otomatik olarak üretilmiştir.
+# ==============================================================================
+
+[master]
+vm-master ansible_host=${master_public_ip} private_ip=10.30.1.4 node_role=control-plane
+
+[workers]
+%{ for name, worker in workers ~}
+${name} ansible_host=${worker.private_ip} private_ip=${worker.private_ip} worker_tier=${worker.role}
+%{ endfor ~}
+
+[k8s_cluster:children]
+master
+workers
+
+[all:vars]
+ansible_user=${admin_username}
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+master_private_ip=10.30.1.4
+master_public_ip=${master_public_ip}
+app_public_ip=${app_public_ip}
+app_worker_public_ip=${app_worker_public_ip}
+
+# Özel Alt Ağdaki Worker Düğümleri İçin SSH Bastion / Jump Host Tünel Ayarı
+[workers:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -W %h:%p ${admin_username}@${master_public_ip}"'
