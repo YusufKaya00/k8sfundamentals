@@ -56,7 +56,7 @@ ledger:
     repository: redis
     tag: "7.2-alpine"
   port: 6379
-  serviceName: ledger-db-internal
+  serviceName: ledger-db
 
 ingress:
   enabled: true
