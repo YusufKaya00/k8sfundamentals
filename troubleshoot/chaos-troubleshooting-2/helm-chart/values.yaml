@@ -23,7 +23,7 @@ workers:
   analyticsConsumer:
     enabled: true
     replicaCount: 1
-    kafkaTopic: "orders.raw"
+    kafkaTopic: "orders.events"
   paymentWorker:
     enabled: true
     replicaCount: 2
