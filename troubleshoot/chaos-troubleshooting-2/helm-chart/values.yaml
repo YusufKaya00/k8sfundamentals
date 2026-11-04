@@ -15,8 +15,8 @@ apiProbes:
   readinessProbe:
     path: "/readyz"
     initialDelaySeconds: 25
-    periodSeconds: 5
-    timeoutSeconds: 3
+    periodSeconds: 10
+    timeoutSeconds: 5
     failureThreshold: 5
 
 workers:
@@ -115,6 +115,6 @@ env:
   REDIS_HOST: "redis-master.messaging.svc.cluster.local"
   REDIS_PORT: "6379"
   REDIS_PASSWORD: "AdminPassword2026!"
-  DEP_TIMEOUT_SECONDS: "2.5"
+  DEP_TIMEOUT_SECONDS: "5"
   HEALTH_PROBE_INTERVAL: "5"
   PAYMENT_FAILURE_RATE: "0.65"
