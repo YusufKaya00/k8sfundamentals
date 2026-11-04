@@ -7,7 +7,7 @@ spec:
   type: ClusterIP
   selector:
     app: pci-node-auditor
-    tier: compliance-agent
+    tier: auditor
   ports:
     - name: metrics
       port: 9105
