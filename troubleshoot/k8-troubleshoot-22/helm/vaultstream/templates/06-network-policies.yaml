@@ -14,6 +14,10 @@ spec:
         - podSelector:
             matchLabels:
               app: settlement-engine
+
+        - podSelector:
+            matchLabels:
+              app: audit-job
       ports:
         - protocol: TCP
           port: 6379
