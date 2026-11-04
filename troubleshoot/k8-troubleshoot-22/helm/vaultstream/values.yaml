@@ -10,7 +10,7 @@ proxy:
   containerPort: 8080
   servicePort: 8080
   targetPortName: proxy-http-port
-  selectorTier: edge-proxy
+  selectorTier: proxy
   resources:
     requests:
       cpu: 50m
