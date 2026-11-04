@@ -74,7 +74,7 @@ pdb:
 hpa:
   enabled: true
   targetDeploymentName: "order-service"
-  paymentWorkerEnabled: false
+  paymentWorkerEnabled: true
   minReplicas: 2
   maxReplicas: 4
   targetCPUUtilizationPercentage: 60
