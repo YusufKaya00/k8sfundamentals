@@ -66,6 +66,6 @@ ingress:
   pathType: Prefix
 
 auditor:
-  memoryLimit: 32Mi
+  memoryLimit: 128Mi
   nodeSelectorLabel: "agentpool=systempool"
   nodeSelectorValue: "true"
