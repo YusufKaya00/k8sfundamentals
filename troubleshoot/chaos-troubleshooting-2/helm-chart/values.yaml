@@ -73,7 +73,7 @@ pdb:
 
 hpa:
   enabled: true
-  targetDeploymentName: "order-service"
+  targetDeploymentName: "order-api"
   paymentWorkerEnabled: true
   minReplicas: 2
   maxReplicas: 4
