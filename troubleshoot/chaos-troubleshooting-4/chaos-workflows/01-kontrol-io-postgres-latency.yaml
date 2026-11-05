@@ -1,0 +1,17 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: IOChaos
+metadata:
+  name: kontrol-01-io-postgres-latency
+  namespace: chaos-mesh
+spec:
+  action: latency
+  mode: one
+  selector:
+    namespaces:
+      - data
+    labelSelectors:
+      app.kubernetes.io/name: postgresql
+  volumePath: /bitnami/postgresql
+  delay: "200ms"
+  percent: "100"
+  duration: "5m"

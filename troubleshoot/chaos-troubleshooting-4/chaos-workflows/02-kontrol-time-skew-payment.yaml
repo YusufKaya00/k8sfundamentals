@@ -1,0 +1,14 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: TimeChaos
+metadata:
+  name: kontrol-02-time-skew-payment
+  namespace: chaos-mesh
+spec:
+  mode: one
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: payment-worker
+  timeOffset: "10m"
+  duration: "5m"

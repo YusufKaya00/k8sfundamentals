@@ -1,0 +1,19 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: HTTPChaos
+metadata:
+  name: kontrol-04-http-abort-status
+  namespace: chaos-mesh
+spec:
+  mode: all
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  target: Request
+  port: 8000
+  path: "/api/status"
+  method: GET
+  abort: true
+  code: 500
+  duration: "5m"
