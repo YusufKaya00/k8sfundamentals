@@ -33,6 +33,11 @@ spec:
   policyTypes:
     - Egress
   egress:
+    - ports: 
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
     # 1. Egress to Redis session cache
     - to:
         - podSelector:
