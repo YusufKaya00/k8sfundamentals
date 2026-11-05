@@ -28,6 +28,7 @@ k8sfundamentals/
 └── troubleshoot/
     ├── chaos-troubleshooting-1/     # SRE Incident & Chaos Engineering Lab 1 (Web UI, 3 Resilient Checks, 3 Break-and-Fix Labs & Workflow)
     ├── chaos-troubleshooting-2/     # SRE Incident & Chaos Engineering Lab 2 (Zero-Spoiler YAML, Live Telemetry Agent, 3 Controls + 4 Multi-Layered Labs)
+    ├── chaos-troubleshooting-3/     # SRE Incident & Chaos Engineering Lab 3 (Production-Grade & Zero-Flapping: Pristine Baseline, 3 Controls, 4 Deep SRE Scenarios & Workflow)
     ├── k8-troubleshoot-1/           # ShopSphere E-Commerce (11 Cascading Multi-Object Failures)
     ├── k8-troubleshoot-2/           # NovaMarket Platform (7 Deep Topology & Stateful Failures)
     ├── k8-troubleshoot-3/           # ApexPay Gateway (7 Linux Security, VFS & Socket Failures)
