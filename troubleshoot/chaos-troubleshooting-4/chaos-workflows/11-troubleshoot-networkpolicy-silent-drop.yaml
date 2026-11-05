@@ -1,0 +1,53 @@
+# ==============================================================================
+# SENARYO T7: GÜVENLİK "HARDENING" NETWORKPOLICY SESSİZ DÜŞÜŞ (SILENT DROP)
+# ==============================================================================
+# GÜVENLİK EKİBİNİN NİYETİ:
+# Sıfır Güven (Zero Trust) politikası gereği `app` isim alanındaki podların
+# yalnızca gerekli veritabanı portlarına erişebilmesini sağlamak.
+#
+# GİZLİ KÖK NEDEN (ZAFİYET):
+# 1. Cassandra CQL portu (9042/TCP) egress kuralında unutulmuştur.
+# 2. Küme içi CoreDNS portu (53/UDP ve 53/TCP) egress kuralında unutulmuştur.
+#
+# BELİRTİ:
+# `order-api` siparişleri kabul eder ve HTTP 201 döner (yeşil görünür).
+# Ancak `analytics-consumer` Cassandra'ya yazamaz ve Kafka consumer lag
+# sürekli olarak birikir (Sessiz Veri Kaybı / Darboğaz!).
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: security-team-hardening-flawed
+  namespace: app
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data
+      ports:
+        - protocol: TCP
+          port: 5432 # PostgreSQL açık
+        - protocol: TCP
+          port: 9092 # Kafka açık
+          # DİKKAT: 9042 (Cassandra) EKSİK!
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: messaging
+      ports:
+        - protocol: TCP
+          port: 5672 # RabbitMQ açık
+        - protocol: TCP
+          port: 6379 # Redis açık
+    # DİKKAT: kube-system 53 (DNS) EKSİK!
