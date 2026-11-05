@@ -131,9 +131,10 @@ Bu bölümde, sistem kaos stresine maruz kaldığında ortaya çıkan gizli mima
 *(CLI alternatifi: `kubectl apply -f chaos-workflows/04-troubleshoot-postgres-delay-pool.yaml`)*
 
 #### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`SLO Overview`):**
-  - `Dependency Health Status` panelinde postgres `DOWN` oluyor mu?
-  - `HTTP Request Rate by Status` panelinde kırmızı `500/503` hataları patlıyor mu?
+- **Grafana (`01. SLO Overview & Golden Signals`):**
+  - `Dependency Health Status (1=UP, 0=DOWN)` panelinde postgres `0 (DOWN)` oluyor mu?
+  - `HTTP Request Rate by Status (RPS)` panelinde kırmızı `500/503` hataları patlıyor mu?
+  - `HTTP Error Ratio (%)` panelinde hata oranı yükseliyor mu?
 - **Terminal:**
   ```bash
   ./scripts/check-system.sh
@@ -158,9 +159,9 @@ Dış ödeme ağ geçitleri (Stripe, Iyzico vb.) çöktüğünde worker'ların n
    ```
 
 #### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`Messaging & Queues`):**
-  - Pod öldüğünde aktif consumer sayısı 0'a mı düşüyor yoksa 1 pod tüketmeye devam ediyor mu?
-  - Gateway hataları geldiğinde mesajlar kaç denemeden sonra `payments.dlq` kuyruğuna düşüyor?
+- **Grafana (`02. Messaging, Kafka Lag & RabbitMQ DLQ`):**
+  - Pod öldüğünde `RabbitMQ Active Consumers & Queue Status` panelinde aktif consumer sayısı 0'a mı düşüyor yoksa 1 pod tüketmeye devam ediyor mu?
+  - Gateway hataları geldiğinde `RabbitMQ Queue Depth (payments vs payments.dlq) & Active Consumers` panelinde mesajlar kaç denemeden sonra `payments.dlq` kuyruğuna düşüyor?
 - **Terminal:**
   ```bash
   rabbitmqctl -q list_queues name messages_ready consumers
@@ -185,8 +186,8 @@ kubectl rollout restart deployment order-api -n app
 ```
 
 #### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`SLO Overview`):**
-  - Podlar yeniden başlarken `HTTP Request Rate by Status` panelinde anlık kırmızı `502 / 503` pikleri görüyor musunuz?
+- **Grafana (`01. SLO Overview & Golden Signals`):**
+  - Podlar yeniden başlarken `HTTP Request Rate by Status (RPS)` ve `HTTP Error Ratio (%)` panellerinde anlık kırmızı `502 / 503` pikleri görüyor musunuz?
 - **Kök Neden:**
   Linux çekirdeği pod konteynerine `SIGTERM` gönderdiğinde, FastAPI süreci hemen sonlanır. Fakat NGINX Ingress Controller'ın etcd'den endpoint silme bildirimini alması 2 ila 4 saniye sürer! Bu aralıkta NGINX ölü podun IP'sine trafik göndermeye devam eder!
 - **Düzeltme Yolu:**
@@ -217,10 +218,10 @@ Streaming worker podları ani mesaj patlamalarında bellek limitlerine çarparsa
    ```
 
 #### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`Chaos Game Day`):**
-  - `Application Pod Restarts` grafiğinde `analytics-consumer` podunun restart sayısı artıyor mu?
+- **Grafana (`03. Chaos Game Day & Self-Healing`):**
+  - `Application Pod Restarts (Liveness Probe & OOMKilled)` grafiğinde `analytics-consumer` podunun restart sayısı artıyor mu?
   - `kubectl describe pod -n app -l app.kubernetes.io/component=analytics-consumer` çıktısında `Last State: Terminated (Reason: OOMKilled, Exit Code: 137)` görüyor musunuz?
-- **Grafana (`Messaging & Queues`):**
+- **Grafana (`02. Messaging, Kafka Lag & RabbitMQ DLQ`):**
   - Pod sürekli çöktüğü için `Kafka Consumer Lag (orders.events)` çizgisi nasıl tırmanıyor?
 
 ---
