@@ -59,10 +59,10 @@ Kurulum bittiğinde sistemin ilk sağlık taramasını yapın:
 
 ## 📊 3. Grafana Canlı İzleme Panelleri
 
-Tarayıcınızdan **`http://grafana.<MASTER_IP>.nip.io`** (`admin` / `AdminPassword2026!`) adresine gidin ve şu 3 paneli yan yana açın:
-1. **`ResilienceStream - SLO & Golden Signals Overview`:** HTTP RPS, p50/p95/p99 gecikmeleri, bağımlılık durumları.
-2. **`ResilienceStream - Messaging, Kafka Lag & RabbitMQ DLQ`:** Kafka Consumer Lag (`orders.events`), RabbitMQ kuyruk derinlikleri, aktif consumer sayıları ve DLQ mesajları.
-3. **`ResilienceStream - Chaos Game Day & Self-Healing`:** Pod restart sayıları, CPU throttling ve Memory kullanım grafikleri.
+Tarayıcınızdan **`http://grafana.<MASTER_IP>.nip.io`** (`admin` / `AdminPassword2026!`) adresine gidin ve sol menüden **Dashboards -> ResilienceStream** altındaki 3 paneli yan yana açın:
+1. **`ResilienceStream - 01. SLO Overview & Golden Signals`:** `Overall API Availability (SLO >= 99%)`, `HTTP Error Ratio (%)`, `HTTP Latency Quantiles (p50 / p95 / p99)`, `HTTP Request Rate by Status (RPS)`, `Dependency Health Status (1=UP, 0=DOWN)`.
+2. **`ResilienceStream - 02. Messaging, Kafka Lag & RabbitMQ DLQ`:** `Kafka Consumer Lag (orders.events)`, `Kafka Offsets (Produced vs Consumed)`, `RabbitMQ Queue Depth (payments vs payments.dlq) & Active Consumers`, `Payment Worker Processed Totals`.
+3. **`ResilienceStream - 03. Chaos Game Day & Self-Healing`:** `Circuit Breaker State`, `Application Pod Restarts`, `Memory Working Set (App Pods)`, `CPU Usage & Throttling Ratio (%)`.
 
 ---
 
@@ -81,7 +81,7 @@ Bu 3 deneyde sistemin barış zamanındaki sağlam mimarisini test edeceğiz. Hi
   4. **Name:** `kontrol-01-api-packet-loss`, **Duration:** `2m` girip **Submit** edin.  
   *(CLI alternatifi: `kubectl apply -f chaos-workflows/01-kontrol-api-packet-loss.yaml`)*
 - **Nasıl Kontrol Edilir?**
-  - **Grafana (`SLO Overview`):** `p99` gecikmesinin hafif yükseldiğini, ancak `HTTP Error Ratio` panelinin **`%0`** kaldığını doğrulayın. Deneyi **Archive** edin.
+  - **Grafana (`01. SLO Overview & Golden Signals`):** `HTTP Latency Quantiles (p50 / p95 / p99)` grafiğinde `p99` gecikmesinin hafif yükseldiğini, ancak `HTTP Error Ratio (%)` panelinin **`%0`** ve `Overall API Availability (SLO >= 99%)` panelinin **`%100`** kaldığını doğrulayın. Deneyi **Archive** edin.
 
 ---
 
@@ -95,7 +95,7 @@ Bu 3 deneyde sistemin barış zamanındaki sağlam mimarisini test edeceğiz. Hi
   5. **Name:** `kontrol-02-redis-partition`, **Duration:** `2m` girip **Submit** edin.  
   *(CLI alternatifi: `kubectl apply -f chaos-workflows/02-kontrol-redis-partition.yaml`)*
 - **Nasıl Kontrol Edilir?**
-  - **Grafana (`SLO Overview`):** `Dependency Health Status` panelinde `redis` kutusunun kırmızı (`DOWN`) olduğunu, ancak `HTTP 200 Rate` panelinin **%100** kaldığını görün. Deneyi **Archive** edin.
+  - **Grafana (`01. SLO Overview & Golden Signals`):** `Dependency Health Status (1=UP, 0=DOWN)` panelinde `redis` kutusunun kırmızı (`0 / DOWN`) olduğunu, ancak `Overall API Availability` panelinin **%100** ve `HTTP Error Ratio (%)` panelinin **%0** kaldığını görün. Deneyi **Archive** edin.
 
 ---
 
@@ -108,7 +108,7 @@ Bu 3 deneyde sistemin barış zamanındaki sağlam mimarisini test edeceğiz. Hi
   4. **Name:** `kontrol-03-cassandra-backpressure`, **Duration:** `2m` girip **Submit** edin.  
   *(CLI alternatifi: `kubectl apply -f chaos-workflows/03-kontrol-cassandra-backpressure.yaml`)*
 - **Nasıl Kontrol Edilir?**
-  - **Grafana:** `SLO Overview` HTTP p99 yanıt süresi sabit kalırken, `Messaging & Queues` panelinde `Kafka Consumer Lag` hafifçe yükselir ve deney sonlandırıldığında 0'a iner. Deneyi **Archive** edin.
+  - **Grafana:** `01. SLO Overview & Golden Signals` panelinde HTTP Latency Quantiles sabit kalırken, `02. Messaging, Kafka Lag & RabbitMQ DLQ` panelinde `Kafka Consumer Lag (orders.events)` grafiğinin hafifçe yükseldiğini ve deney sonlandırıldığında 0'a indiğini doğrulayın. Deneyi **Archive** edin.
 
 ---
 
