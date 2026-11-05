@@ -13,7 +13,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              role: router
+              role: stream-router
         - podSelector:
             matchLabels:
               tier: audit-job
