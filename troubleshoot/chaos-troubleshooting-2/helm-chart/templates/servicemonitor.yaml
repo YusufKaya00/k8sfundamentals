@@ -18,4 +18,5 @@ spec:
       path: {{ .Values.serviceMonitor.path | default "/metrics" }}
       interval: {{ .Values.serviceMonitor.interval | default "5s" }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout | default "4s" }}
+      honorLabels: true
 {{- end }}
