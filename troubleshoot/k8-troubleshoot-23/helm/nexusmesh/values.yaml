@@ -12,7 +12,7 @@ sessionCache:
 streamRouter:
   replicas: 2
   port: 8080
-  serviceTargetPort: stream-port
+  serviceTargetPort: 8080
   livenessPort: 8081
   livenessPath: /status
   readinessPath: /ready
