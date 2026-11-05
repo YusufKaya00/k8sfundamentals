@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stream-router
+  namespace: {{ .Values.global.meshNamespace }}
+  labels:
+    app: stream-router
+    tier: mesh-api
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-stream
+      port: {{ .Values.streamRouter.port | default 8080 }}
+      targetPort: {{ .Values.streamRouter.serviceTargetPort | default "stream-port" }}
+      protocol: TCP
+  selector:
+    app: stream-router
+    tier: mesh-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-router
+  namespace: {{ .Values.global.meshNamespace }}
+  labels:
+    app: stream-router
+    tier: mesh-api
+spec:
+  replicas: {{ .Values.streamRouter.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app: stream-router
+      tier: mesh-api
+  template:
+    metadata:
+      labels:
+        app: stream-router
+        tier: mesh-api
+        role: stream-engine
+    spec:
+      initContainers:
+        - name: wait-for-cache
+          image: busybox:1.36
+          command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              echo "Waiting for session cache headless DNS to become resolvable..."
+              target="session-cache-0.session-cache-db.{{ .Values.global.meshNamespace }}.svc.cluster.local"
+              attempts=0
+              until nc -z -w 2 "$target" 6379; do
+                attempts=$((attempts + 1))
+                echo "Attempt $attempts: Cannot reach $target on 6379..."
+                if [ $attempts -ge 8 ]; then
+                  echo "CRITICAL: DNS resolution or TCP connection to $target failed!"
+                  exit 1
+                fi
+                sleep 2
+              done
+              echo "Session cache successfully verified!"
+      containers:
+        - name: router
+          image: python:3.11-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/app/server.py"]
+          ports:
+            - name: http-stream
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.streamRouter.livenessPath | default "/status" }}
+              port: {{ .Values.streamRouter.livenessPort | default 8081 }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http-stream
+            initialDelaySeconds: 3
+            periodSeconds: 4
+            timeoutSeconds: 2
+          volumeMounts:
+            - name: server-code
+              mountPath: /app
+          resources:
+            requests:
+              cpu: {{ .Values.streamRouter.cpuRequest | default "50m" }}
+              memory: {{ .Values.streamRouter.memoryRequest | default "64Mi" }}
+            limits:
+              cpu: 250m
+              memory: {{ .Values.streamRouter.memoryLimit | default "192Mi" }}
+      volumes:
+        - name: server-code
+          configMap:
+            name: stream-router-code
