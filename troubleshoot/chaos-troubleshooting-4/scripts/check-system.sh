@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# K8S CHAOS & TROUBLESHOOTING LAB 3 — TEK KOMUTLA SİSTEM TEŞHİS ARACI (check-system.sh)
+# K8S CHAOS & TROUBLESHOOTING LAB 4 — TEK KOMUTLA SİSTEM TEŞHİS ARACI (check-system.sh)
 # ==============================================================================
 # Bu betik, Kaos Mühendisliği deneyleri sırasında sistemin 7 kritik katmanını
 # (Podlar, HPA & CPU Throttling, Aktif Kaos Deneyleri, API Durumu, RabbitMQ/DLQ,

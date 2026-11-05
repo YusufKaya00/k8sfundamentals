@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# K8S CHAOS & TROUBLESHOOTING LAB 3 — ORTAM HAZIRLAMA BETİĞİ (setup-lab.sh)
+# K8S CHAOS & TROUBLESHOOTING LAB 4 — ORTAM HAZIRLAMA BETİĞİ (setup-lab.sh)
 # ==============================================================================
 # Kullanım:
 #   ./scripts/setup-lab.sh              -> Lab'ı kararlı baseline modda başlatır/sıfırlar
@@ -35,8 +35,8 @@ fi
 
 if [[ "$(hostname)" != "vm-master" ]]; then
   echo "-> [1/4] Lab dosyaları vm-master (${MASTER_IP}) sunucusuna aktarılıyor..."
-  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "mkdir -p ~/chaos-troubleshooting-3"
-  scp -o StrictHostKeyChecking=no -r "${LAB_DIR}/helm-chart" "${LAB_DIR}/chaos-workflows" "${LAB_DIR}/scripts" ysf@"${MASTER_IP}":~/chaos-troubleshooting-3/ >/dev/null
+  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "mkdir -p ~/chaos-troubleshooting-4"
+  scp -o StrictHostKeyChecking=no -r "${LAB_DIR}/helm-chart" "${LAB_DIR}/chaos-workflows" "${LAB_DIR}/scripts" ysf@"${MASTER_IP}":~/chaos-troubleshooting-4/ >/dev/null
 
   echo "-> [2/4] ArgoCD otomatik senkronizasyonu devre dışı bırakılıyor (varsa)..."
   ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml patch application resiliencestream -n argocd --type merge -p '{\"spec\":{\"syncPolicy\":null}}' 2>/dev/null || true"
@@ -45,7 +45,7 @@ if [[ "$(hostname)" != "vm-master" ]]; then
   ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml delete podchaos,networkchaos,dnschaos,stresschaos,iochaos,workflow --all -n chaos-mesh --ignore-not-found=true >/dev/null 2>&1 || true"
 
   echo "-> [4/4] Helm Chart (${VALUES_FILE}) 'app' namespace'ine uygulanıyor..."
-  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm upgrade --install resiliencestream /home/ysf/chaos-troubleshooting-3/helm-chart -n app --create-namespace -f /home/ysf/chaos-troubleshooting-3/helm-chart/${VALUES_FILE} --set ingress.host=app.${APP_IP}.nip.io --wait --timeout 180s"
+  ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm upgrade --install resiliencestream /home/ysf/chaos-troubleshooting-4/helm-chart -n app --create-namespace -f /home/ysf/chaos-troubleshooting-4/helm-chart/${VALUES_FILE} --set ingress.host=app.${APP_IP}.nip.io --wait --timeout 180s"
   ssh -o StrictHostKeyChecking=no ysf@"${MASTER_IP}" "sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get pods,hpa -n app -o wide"
 else
   echo "-> [1/3] ArgoCD otomatik senkronizasyonu devre dışı bırakılıyor (varsa)..."
@@ -61,6 +61,6 @@ fi
 
 echo ""
 echo "======================================================================"
-echo " ✅ Lab 3 Başarıyla Hazırlandı! Tüm podlar 1/1 Running ve Yeşil."
+echo " ✅ Lab 4 Başarıyla Hazırlandı! Tüm podlar 1/1 Running ve Yeşil."
 echo " Sistem durumunu kontrol etmek için: ./scripts/check-system.sh"
 echo "======================================================================"

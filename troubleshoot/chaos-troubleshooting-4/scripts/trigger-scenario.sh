@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# K8S CHAOS & TROUBLESHOOTING LAB 3 — SENARYO TETİKLEYİCİ BETİK (trigger-scenario.sh)
+# K8S CHAOS & TROUBLESHOOTING LAB 4 — SENARYO TETİKLEYİCİ BETİK (trigger-scenario.sh)
 # ==============================================================================
 # Bu betik, kullanıcının belirli kaos/arıza senaryolarını canlı kümede
 # kontrollü bir şekilde tetiklemesini veya sistemi iyileştirmesini sağlar.
