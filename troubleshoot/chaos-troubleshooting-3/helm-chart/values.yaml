@@ -115,6 +115,6 @@ env:
   REDIS_HOST: "redis-master.messaging.svc.cluster.local"
   REDIS_PORT: "6379"
   REDIS_PASSWORD: "AdminPassword2026!"
-  DEP_TIMEOUT_SECONDS: "3.0"
+  DEP_TIMEOUT_SECONDS: "5.0"
   HEALTH_PROBE_INTERVAL: "5"
   PAYMENT_FAILURE_RATE: "0.0"
