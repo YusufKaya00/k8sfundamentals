@@ -1,0 +1,31 @@
+# ==============================================================================
+# SENARYO T3: POD DISRUPTION BUDGET (PDB) DRAIN KİLİTLENMESİ (DEADLOCK)
+# ==============================================================================
+# MİMARİ AÇIKLAMA:
+# `values.yaml` içinde `replicaCount: 2` iken `pdb.minAvailable: 2` tanımlıdır.
+# Bu durum Kubernetes Eviction API üzerinde `allowedDisruptions: 0` üretir.
+#
+# TETİKLEME (DÜĞÜM BOŞALTMA DENEMESİ):
+#   kubectl get pdb -n app
+#   # allowedDisruptions = 0 olduğunu görün.
+#
+#   # Simülasyon: Düğümü tahliye etmeyi deneyin:
+#   kubectl drain vm-worker-app --ignore-daemonsets --delete-emptydir-data --dry-run=client
+#   # veya evict API çağrısı:
+#   kubectl get pods -n app -l app.kubernetes.io/component=order-api
+#
+# ÇÖZÜM:
+# `values.yaml` içinde ya `pdb.minAvailable: 1` ya da `pdb.maxUnavailable: 1`
+# olarak güncellenmelidir.
+# ==============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-api-pdb-inspect
+  namespace: app
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: resiliencestream
+      app.kubernetes.io/component: order-api
