@@ -22,7 +22,7 @@ apiProbes:
 workers:
   analyticsConsumer:
     enabled: true
-    replicaCount: 1
+    replicaCount: 2
     kafkaTopic: "orders.events"
   paymentWorker:
     enabled: true
@@ -30,7 +30,7 @@ workers:
 
 analyticsResources:
   requests:
-    cpu: 25m
+    cpu: 50m
     memory: 96Mi
   limits:
     cpu: 250m
