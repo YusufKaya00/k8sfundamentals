@@ -1,0 +1,46 @@
+global:
+  gatewayNamespace: nexus-gateway
+  meshNamespace: nexus-mesh
+  secureNamespace: nexus-secure
+
+sessionCache:
+  replicas: 1
+  serviceName: session-cache-headless
+  port: 6379
+  memoryLimit: 128Mi
+
+streamRouter:
+  replicas: 2
+  port: 8080
+  serviceTargetPort: stream-port
+  livenessPort: 8081
+  livenessPath: /status
+  readinessPath: /ready
+  cpuRequest: 50m
+  memoryRequest: 64Mi
+  memoryLimit: 192Mi
+
+tokenVault:
+  replicas: 1
+  port: 8443
+  networkPolicyPort: 9443
+  memoryLimit: 128Mi
+
+edgeGateway:
+  replicas: 1
+  port: 80
+  targetPort: 8080
+  selectorTier: edge-proxy
+  targetPortName: proxy-http
+
+ingress:
+  enabled: true
+  className: custom-traefik
+  host: nexusmesh.local
+  path: /api/v1/stream
+  pathType: Prefix
+
+trafficGuard:
+  enabled: true
+  nodeSelectorZone: denmarkeast-1a
+  memoryLimit: 64Mi
