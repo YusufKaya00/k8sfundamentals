@@ -37,7 +37,7 @@ ingress:
   enabled: true
   className: custom-traefik
   host: nexusmesh.local
-  path: /api/v1/stream
+  path: /stream
   pathType: Prefix
 
 trafficGuard:
