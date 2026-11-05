@@ -13,7 +13,7 @@
     helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
     target_user: "{{ ansible_user | default('ysf') }}"
     target_home: "/home/{{ ansible_user | default('ysf') }}"
-    lab_remote_dir: "/home/{{ ansible_user | default('ysf') }}/chaos-troubleshooting-2"
+    lab_remote_dir: "/home/{{ ansible_user | default('ysf') }}/chaos-troubleshooting-3"
 
   tasks:
     - name: "Resmi Helm Chart depolarını (prometheus-community, bitnami, chaos-mesh) ekle ve güncelle"
