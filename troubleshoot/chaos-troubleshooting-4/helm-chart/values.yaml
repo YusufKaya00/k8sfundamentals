@@ -102,6 +102,8 @@ credentials:
 
 networkPolicy:
   enabled: false
+  allowCassandra: false
+  allowDNS: false
 
 loadTest:
   enabled: false
