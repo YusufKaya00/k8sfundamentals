@@ -1,0 +1,18 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: DNSChaos
+metadata:
+  name: troubleshoot-13-dns-ndots-exhaustion
+  namespace: chaos-mesh
+spec:
+  action: error
+  mode: all
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  patterns:
+    - "*.app.svc.cluster.local"
+    - "kafka"
+    - "postgres-postgresql"
+  duration: "5m"
