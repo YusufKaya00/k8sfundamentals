@@ -1,0 +1,22 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexus-ingress
+  namespace: {{ .Values.global.gatewayNamespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: {{ .Values.ingress.className | default "custom-traefik" }}
+  rules:
+    - host: {{ .Values.ingress.host | default "nexusmesh.local" }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path | default "/api/v1/stream" }}
+            pathType: {{ .Values.ingress.pathType | default "Prefix" }}
+            backend:
+              service:
+                name: edge-gateway
+                port:
+                  number: {{ .Values.edgeGateway.port | default 80 }}
+{{- end }}
