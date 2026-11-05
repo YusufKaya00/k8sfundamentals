@@ -1,0 +1,75 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: session-cache-isolation
+  namespace: {{ .Values.global.meshNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: cache
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: router
+        - podSelector:
+            matchLabels:
+              tier: audit-job
+      ports:
+        - protocol: TCP
+          port: {{ .Values.sessionCache.port | default 6379 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: stream-router-egress
+  namespace: {{ .Values.global.meshNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: mesh-api
+  policyTypes:
+    - Egress
+  egress:
+    # 1. Egress to Redis session cache
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    # 2. Egress to token-vault in nexus-secure
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.secureNamespace }}
+      ports:
+        - protocol: TCP
+          port: 8443
+    # [NOTE]: CoreDNS (port 53 UDP/TCP) egress is omitted here (Fault 2)!
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: token-vault-isolation
+  namespace: {{ .Values.global.secureNamespace }}
+spec:
+  podSelector:
+    matchLabels:
+      tier: secure-vault
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.meshNamespace }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.gatewayNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.tokenVault.networkPolicyPort | default 9443 }}
