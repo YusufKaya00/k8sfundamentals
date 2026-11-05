@@ -24,6 +24,13 @@ spec:
         app.kubernetes.io/name: {{ .Chart.Name }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: order-api
+      annotations:
+        {{- if .Values.credentials.rolloutOnChange }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       containers:
         - name: order-api
@@ -33,6 +40,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort | default 8000 }}
               protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-credentials
           env:
             - name: APP_ROLE
               value: "api"
@@ -67,6 +77,14 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
@@ -94,6 +112,10 @@ spec:
         app.kubernetes.io/name: {{ .Chart.Name }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: analytics-consumer
+      annotations:
+        {{- if .Values.credentials.rolloutOnChange }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       containers:
         - name: analytics-consumer
@@ -103,6 +125,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort | default 8000 }}
               protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-credentials
           env:
             - name: APP_ROLE
               value: "analytics"
@@ -134,6 +159,14 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
@@ -162,6 +195,10 @@ spec:
         app.kubernetes.io/name: {{ .Chart.Name }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: payment-worker
+      annotations:
+        {{- if .Values.credentials.rolloutOnChange }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       containers:
         - name: payment-worker
@@ -171,6 +208,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort | default 8000 }}
               protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-credentials
           env:
             - name: APP_ROLE
               value: "payment"
@@ -196,6 +236,14 @@ spec:
             {{- toYaml .Values.paymentResources | nindent 12 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.tolerations }}
