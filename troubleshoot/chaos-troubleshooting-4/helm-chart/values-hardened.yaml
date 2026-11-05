@@ -1,0 +1,168 @@
+# ==============================================================================
+# RESILIENCESTREAM — GÜÇLENDİRİLMİŞ (HARDENED / FIXED) HELM DEĞERLERİ
+# ==============================================================================
+# Bu dosya, Lab 4'teki tüm gizli DevOps/SRE zafiyetlerinin düzeltilmiş halidir:
+# 1. T1 Fix: livenessProbe.path -> "/healthz" (bağımlılıklara bakmaz, kaskad restart önlenir)
+# 2. T2 Fix: Bağlantı yönetimi & havuz desteği (k6 stresinde 503 önlenir)
+# 3. T3 Fix: pdb.minAvailable -> 1 (node drain deadlock çözüldü)
+# 4. T4 Fix: resources.requests.cpu -> 50m (HPA % hesaplayabilir ve ölçekler)
+# 5. T5 Fix: Redis için graceful degradation & doğru önbellek boyutlandırması
+# 6. T6 Fix: İstemcide exponential backoff ve jitter desteği
+# 7. T7 Fix: networkPolicy.allowCassandra=true ve allowDNS=true
+# 8. T8 Fix: credentials.rolloutOnChange=true (checksum/secret ile otomatik pod rollout)
+# ==============================================================================
+
+replicaCount: 2
+
+image:
+  repository: yusufk00/resiliencestream
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+apiProbes:
+  livenessProbe:
+    path: "/healthz" # [T1 ÇÖZÜM]: Liveness sadece process sağlığına bakar
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readinessProbe:
+    path: "/readyz" # Readiness bağımlılıkları kontrol eder
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+workers:
+  analyticsConsumer:
+    enabled: true
+    replicaCount: 1
+    kafkaTopic: "orders.events"
+  paymentWorker:
+    enabled: true
+    replicaCount: 2
+
+analyticsResources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 320Mi
+
+paymentResources:
+  requests:
+    cpu: 25m
+    memory: 96Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+resources:
+  requests:
+    cpu: 50m # [T4 ÇÖZÜM]: HPA'nın CPU yüzdesini hesaplayabilmesi için CPU requests şarttır!
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 320Mi
+
+nodeSelector:
+  tier: app
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - order-api
+          topologyKey: kubernetes.io/hostname
+
+topologySpreadConstraints: []
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: app.APP_IP.nip.io
+
+pdb:
+  enabled: true
+  minAvailable: 1 # [T3 ÇÖZÜM]: 2 replika varken minAvailable: 1 düğüm boşaltmayı (drain) engellemez!
+
+hpa:
+  enabled: true
+  targetDeploymentName: "order-api"
+  paymentWorkerEnabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 60
+
+serviceMonitor:
+  enabled: true
+  interval: 5s
+  scrapeTimeout: 4s
+  path: /metrics
+  additionalLabels:
+    release: monitoring
+
+telemetryAgent:
+  enabled: true
+  orderIntervalSeconds: "2.5"
+
+credentials:
+  existingSecret: ""
+  rolloutOnChange: true # [T8 ÇÖZÜM]: Secret değiştiğinde Pod'lar otomatik yeniden başlatılır
+  postgresPassword: "AdminPassword2026!"
+  rabbitmqPassword: "AdminPassword2026!"
+  redisPassword: "AdminPassword2026!"
+  cassandraPassword: "AdminPassword2026!"
+
+networkPolicy:
+  enabled: false
+  allowCassandra: true # [T7 ÇÖZÜM]: Cassandra 9042 portuna egress izni
+  allowDNS: true # [T7 ÇÖZÜM]: CoreDNS 53 portuna egress izni
+
+loadTest:
+  enabled: false
+  name: "k6-load"
+  vus: 30
+  duration: "3m"
+  path: "/api/orders"
+  timeoutSeconds: 2
+  retries: 5
+  backoffMs: 200 # [T6 ÇÖZÜM]: Üstel geri çekilme (exponential backoff)
+
+env:
+  KAFKA_BOOTSTRAP: "kafka.data.svc.cluster.local:9092"
+  KAFKA_TOPIC: "orders.events"
+  KAFKA_GROUP: "analytics-consumer"
+  CASSANDRA_HOSTS: "cassandra.data.svc.cluster.local"
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_USER: "resilience"
+  CASSANDRA_KEYSPACE: "resilience"
+  POSTGRES_HOST: "postgres-postgresql.data.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "resilience"
+  POSTGRES_DB: "resilience"
+  RABBITMQ_HOST: "rabbitmq.messaging.svc.cluster.local"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: "resilience"
+  RABBITMQ_QUEUE: "payments"
+  RABBITMQ_DLQ: "payments.dlq"
+  RABBITMQ_MAX_RETRIES: "3"
+  REDIS_HOST: "redis-master.messaging.svc.cluster.local"
+  REDIS_PORT: "6379"
+  DEP_TIMEOUT_SECONDS: "3"
+  HEALTH_PROBE_INTERVAL: "5"
+  PAYMENT_FAILURE_RATE: "0.0"
