@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-cache-db
+  namespace: {{ .Values.global.meshNamespace }}
+  labels:
+    app: session-cache
+    tier: cache
+spec:
+  clusterIP: None
+  ports:
+    - name: redis
+      port: {{ .Values.sessionCache.port | default 6379 }}
+      targetPort: 6379
+  selector:
+    app: session-cache
+    tier: cache
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: session-cache
+  namespace: {{ .Values.global.meshNamespace }}
+  labels:
+    app: session-cache
+    tier: cache
+spec:
+  serviceName: {{ .Values.sessionCache.serviceName }}
+  replicas: {{ .Values.sessionCache.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: session-cache
+      tier: cache
+  template:
+    metadata:
+      labels:
+        app: session-cache
+        tier: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.0-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: redis
+              containerPort: 6379
+          command:
+            - "redis-server"
+            - "--protected-mode"
+            - "no"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: {{ .Values.sessionCache.memoryLimit | default "128Mi" }}

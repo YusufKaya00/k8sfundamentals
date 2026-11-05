@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-vault
+  namespace: {{ .Values.global.secureNamespace }}
+  labels:
+    app: token-vault
+    tier: secure-vault
+spec:
+  type: ClusterIP
+  ports:
+    - name: https-token
+      port: {{ .Values.tokenVault.port | default 8443 }}
+      targetPort: 8443
+      protocol: TCP
+  selector:
+    app: token-vault
+    tier: secure-vault
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: token-vault
+  namespace: {{ .Values.global.secureNamespace }}
+  labels:
+    app: token-vault
+    tier: secure-vault
+spec:
+  replicas: {{ .Values.tokenVault.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: token-vault
+      tier: secure-vault
+  template:
+    metadata:
+      labels:
+        app: token-vault
+        tier: secure-vault
+    spec:
+      containers:
+        - name: vault
+          image: python:3.11-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/app/server.py"]
+          ports:
+            - name: https-token
+              containerPort: 8443
+              protocol: TCP
+          volumeMounts:
+            - name: server-code
+              mountPath: /app
+          resources:
+            requests:
+              cpu: 25m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: {{ .Values.tokenVault.memoryLimit | default "128Mi" }}
+      volumes:
+        - name: server-code
+          configMap:
+            name: token-vault-code
