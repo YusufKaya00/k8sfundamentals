@@ -1,0 +1,109 @@
+{{- if .Values.loadTest.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-{{ .Values.loadTest.name | default "k6-load" }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: load-tester
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: load-tester
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.50.0
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "-"]
+          stdin: true
+          stdinOnce: true
+          env:
+            - name: TARGET_URL
+              value: "http://order-api.default.svc.cluster.local:80{{ .Values.loadTest.path | default \"/api/orders\" }}"
+            - name: VUS
+              value: {{ .Values.loadTest.vus | default 30 | quote }}
+            - name: DURATION
+              value: {{ .Values.loadTest.duration | default "3m" | quote }}
+            - name: RETRIES
+              value: {{ .Values.loadTest.retries | default 0 | quote }}
+            - name: TIMEOUT_MS
+              value: "{{ mul (.Values.loadTest.timeoutSeconds | default 2) 1000 }}"
+          args:
+            - |
+              import http from 'k6/http';
+              import { check, sleep } from 'k6';
+
+              export const options = {
+                vus: parseInt(__ENV.VUS) || 30,
+                duration: __ENV.DURATION || '3m',
+                thresholds: {
+                  http_req_failed: ['rate<0.05'], // SLO: 95%+ success
+                  http_req_duration: ['p(95)<1000'], // 95% under 1s
+                },
+              };
+
+              const url = __ENV.TARGET_URL || 'http://order-api.default.svc.cluster.local:80/api/orders';
+              const maxRetries = parseInt(__ENV.RETRIES) || 0;
+              const timeoutMs = parseInt(__ENV.TIMEOUT_MS) || 2000;
+
+              export default function () {
+                const payload = JSON.stringify({
+                  customer_id: `cust_${Math.floor(Math.random() * 10000)}`,
+                  items: [
+                    { item_id: 'item_A', quantity: 2, price: 29.99 },
+                    { item_id: 'item_B', quantity: 1, price: 49.50 }
+                  ],
+                  total_amount: 109.48,
+                  metadata: { client: 'k6-load-tester', timestamp: Date.now() }
+                });
+
+                const params = {
+                  headers: { 'Content-Type': 'application/json' },
+                  timeout: `${timeoutMs}ms`,
+                };
+
+                let res = null;
+                let attempts = 0;
+                let success = false;
+
+                while (attempts <= maxRetries && !success) {
+                  attempts++;
+                  try {
+                    res = http.post(url, payload, params);
+                    if (res && (res.status === 200 || res.status === 201)) {
+                      success = true;
+                    }
+                  } catch (e) {
+                    // Retry on network timeout/error
+                  }
+                  if (!success && attempts <= maxRetries) {
+                    // Flawed client retry (T6): immediate retry without exponential backoff
+                    sleep(0.05);
+                  }
+                }
+
+                check(res, {
+                  'status is 200 or 201': (r) => r && (r.status === 200 || r.status === 201),
+                });
+
+                sleep(0.2);
+              }
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 192Mi
+      nodeSelector:
+        tier: app
+      tolerations: []
+{{- end }}
