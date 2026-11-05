@@ -1,0 +1,83 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: gameday-14-automated-resilience-pipeline
+  namespace: chaos-mesh
+spec:
+  entry: automated-gameday-sequence
+  templates:
+    - name: automated-gameday-sequence
+      templateType: Serial
+      children:
+        - step-1-io-latency-postgres
+        - step-2-status-check-baseline
+        - step-3-kafka-broker-kill
+        - step-4-http-abort-status
+        - step-5-final-slo-validation
+
+    - name: step-1-io-latency-postgres
+      templateType: IOChaos
+      deadline: 1m
+      ioChaos:
+        action: latency
+        mode: one
+        selector:
+          namespaces: [data]
+          labelSelectors:
+            app.kubernetes.io/name: postgresql
+        volumePath: /bitnami/postgresql
+        delay: "200ms"
+        percent: "100"
+
+    - name: step-2-status-check-baseline
+      templateType: StatusCheck
+      deadline: 30s
+      statusCheck:
+        type: HTTP
+        mode: Continuous
+        intervalSeconds: 5
+        timeoutSeconds: 3
+        httpCheck:
+          url: "http://order-api.app.svc.cluster.local:80/readyz"
+          criteria:
+            statusCode: "200"
+
+    - name: step-3-kafka-broker-kill
+      templateType: PodChaos
+      deadline: 1m
+      podChaos:
+        action: pod-kill
+        mode: one
+        selector:
+          namespaces: [data]
+          labelSelectors:
+            app.kubernetes.io/name: kafka
+
+    - name: step-4-http-abort-status
+      templateType: HTTPChaos
+      deadline: 1m
+      httpChaos:
+        mode: all
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+        target: Request
+        port: 8000
+        path: "/api/status"
+        method: GET
+        abort: true
+        code: 500
+
+    - name: step-5-final-slo-validation
+      templateType: StatusCheck
+      deadline: 30s
+      statusCheck:
+        type: HTTP
+        mode: Continuous
+        intervalSeconds: 5
+        timeoutSeconds: 3
+        httpCheck:
+          url: "http://order-api.app.svc.cluster.local:80/api/status"
+          criteria:
+            statusCode: "200"
