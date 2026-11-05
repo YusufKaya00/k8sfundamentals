@@ -1,0 +1,17 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: troubleshoot-08-hpa-cpu-requests
+  namespace: chaos-mesh
+spec:
+  mode: all
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  stressors:
+    cpu:
+      workers: 2
+      load: 100
+  duration: "5m"
