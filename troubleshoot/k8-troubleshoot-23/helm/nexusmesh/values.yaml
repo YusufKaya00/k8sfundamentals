@@ -13,7 +13,7 @@ streamRouter:
   replicas: 2
   port: 8080
   serviceTargetPort: 8080
-  livenessPort: 8081
+  livenessPort: 8080
   livenessPath: /status
   readinessPath: /ready
   cpuRequest: 50m
