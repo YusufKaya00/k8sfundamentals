@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: troubleshoot-09-redis-noeviction-oom
+  namespace: app
+  labels:
+    app.kubernetes.io/component: chaos-test
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: chaos-test
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: redis-filler
+          image: bitnamilegacy/redis:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Injecting large data keys into Redis (limit: 16mb, policy: noeviction)..."
+              REDIS_HOST="redis-master.messaging.svc.cluster.local"
+              REDIS_PASS="AdminPassword2026!"
+              
+              # Generate 1MB dummy string
+              chunk=$(head -c 1048576 /dev/urandom | base64 | head -c 1048576)
+
+              for i in $(seq 1 20); do
+                echo "Writing 1MB payload key: stress_key_$i"
+                redis-cli -h $REDIS_HOST -p 6379 -a $REDIS_PASS set "stress_key_$i" "$chunk" || true
+              done
+
+              echo "Checking Redis info memory:"
+              redis-cli -h $REDIS_HOST -p 6379 -a $REDIS_PASS info memory | grep -E "used_memory_human|maxmemory_human"
+              echo "Triggering test set to verify OOM rejection:"
+              redis-cli -h $REDIS_HOST -p 6379 -a $REDIS_PASS set test_probe "probe_value" || echo "REDIS OOM ENCOUNTERED AS EXPECTED!"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      nodeSelector:
+        tier: app
+      tolerations: []

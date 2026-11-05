@@ -1,0 +1,18 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: HTTPChaos
+metadata:
+  name: troubleshoot-10-retry-storm
+  namespace: chaos-mesh
+spec:
+  mode: all
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  target: Request
+  port: 8000
+  path: "/api/orders"
+  method: POST
+  delay: "3s"
+  duration: "5m"
