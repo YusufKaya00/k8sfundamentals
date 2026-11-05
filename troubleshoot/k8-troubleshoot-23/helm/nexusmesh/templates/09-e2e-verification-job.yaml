@@ -1,0 +1,103 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nexusmesh-e2e-audit
+  namespace: {{ .Values.global.meshNamespace }}
+  labels:
+    app: e2e-audit
+    tier: audit-job
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: e2e-audit
+        tier: audit-job
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: auditor
+          image: curlimages/curl:8.6.0
+          command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              set -e
+              GREEN='\033[0;32m'
+              RED='\033[0;31m'
+              BLUE='\033[0;34m'
+              NC='\033[0m'
+
+              echo -e "${BLUE}================================================================${NC}"
+              echo -e "${BLUE} NEXUSMESH v4.2 E2E VERIFICATION & NETWORK AUDIT SUITE           ${NC}"
+              echo -e "${BLUE}================================================================${NC}"
+
+              # [STAGE 1]: CoreDNS & Headless Cache Discovery
+              echo -n "--> [1/5] Testing CoreDNS & Headless Cache (session-cache-0.session-cache-db:6379)... "
+              CACHE_HOST="session-cache-0.session-cache-db.{{ .Values.global.meshNamespace }}.svc.cluster.local"
+              if nc -z -w 3 "$CACHE_HOST" 6379 2>/dev/null; then
+                echo -e "${GREEN}[PASS] Headless DNS & Redis port 6379 reachable!${NC}"
+              else
+                echo -e "${RED}[FAIL] Cannot connect to $CACHE_HOST:6379! Check StatefulSet serviceName & NetworkPolicy.${NC}"
+                exit 1
+              fi
+
+              # [STAGE 2]: Token Vault Cross-Namespace Security & Port 8443
+              echo -n "--> [2/5] Testing Cross-Namespace Token Vault (token-vault.{{ .Values.global.secureNamespace }}:8443)... "
+              VAULT_URL="http://token-vault.{{ .Values.global.secureNamespace }}.svc.cluster.local:8443/auth/token"
+              VAULT_RESP=$(curl -s --connect-timeout 3 --max-time 4 "$VAULT_URL" || echo "ERR")
+              if echo "$VAULT_RESP" | grep -q "nexus-jwt-valid"; then
+                echo -e "${GREEN}[PASS] Token Vault authenticated successfully!${NC}"
+              else
+                echo -e "${RED}[FAIL] Failed to authenticate with $VAULT_URL. Response: $VAULT_RESP${NC}"
+                echo "Check Token Vault bind address (0.0.0.0 vs 127.0.0.1) & NetworkPolicy port!"
+                exit 1
+              fi
+
+              # [STAGE 3]: Stream Router Service Endpoints & Health Probe
+              echo -n "--> [3/5] Testing Stream Router (stream-router.{{ .Values.global.meshNamespace }}:8080)... "
+              ROUTER_URL="http://stream-router.{{ .Values.global.meshNamespace }}.svc.cluster.local:8080/stream"
+              ROUTER_RESP=$(curl -s --connect-timeout 3 --max-time 4 "$ROUTER_URL" || echo "ERR")
+              if echo "$ROUTER_RESP" | grep -q "nexus-data-ok"; then
+                echo -e "${GREEN}[PASS] Stream Router is active and responding on 8080!${NC}"
+              else
+                echo -e "${RED}[FAIL] Stream Router unreachable or returned error. Response: $ROUTER_RESP${NC}"
+                echo "Check Service targetPort, Pod LivenessProbe, and CoreDNS egress policy!"
+                exit 1
+              fi
+
+              # [STAGE 4]: Edge Gateway Reverse Proxy End-to-End Routing
+              echo -n "--> [4/5] Testing Edge Gateway (edge-gateway.{{ .Values.global.gatewayNamespace }}:80/stream)... "
+              EDGE_URL="http://edge-gateway.{{ .Values.global.gatewayNamespace }}.svc.cluster.local:80/stream"
+              EDGE_RESP=$(curl -s --connect-timeout 4 --max-time 5 "$EDGE_URL" || echo "ERR")
+              if echo "$EDGE_RESP" | grep -q "nexus-data-ok"; then
+                echo -e "${GREEN}[PASS] Edge Gateway successfully proxied request across namespaces!${NC}"
+              else
+                echo -e "${RED}[FAIL] Edge Gateway failed to proxy to upstream. Response: $EDGE_RESP${NC}"
+                echo "Check Nginx upstream FQDN resolution in edge-gateway-conf ConfigMap!"
+                exit 1
+              fi
+
+              # [STAGE 5]: Traffic Guard DaemonSet Mesh Telemetry
+              echo -n "--> [5/5] Testing Traffic Guard Mesh Monitor (traffic-guard-svc:9100)... "
+              GUARD_URL="http://traffic-guard-svc.{{ .Values.global.meshNamespace }}.svc.cluster.local:9100"
+              GUARD_RESP=$(curl -s --connect-timeout 3 --max-time 4 "$GUARD_URL" || echo "ERR")
+              if echo "$GUARD_RESP" | grep -q "nexus_node_healthy 1"; then
+                echo -e "${GREEN}[PASS] Traffic Guard agent telemetry online!${NC}"
+              else
+                echo -e "${RED}[FAIL] Traffic Guard service has no endpoints or agent not running.${NC}"
+                echo "Check DaemonSet nodeSelector and pod scheduling!"
+                exit 1
+              fi
+
+              echo -e "${GREEN}================================================================${NC}"
+              echo -e "${GREEN} 🎉 ALL 5 AUDIT CHECKS PASSED! NEXUSMESH v4.2 IS 100% HEALTHY!  ${NC}"
+              echo -e "${GREEN}================================================================${NC}"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 150m
+              memory: 64Mi
