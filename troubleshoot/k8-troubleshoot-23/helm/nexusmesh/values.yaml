@@ -5,7 +5,7 @@ global:
 
 sessionCache:
   replicas: 1
-  serviceName: session-cache-headless
+  serviceName: session-cache-db
   port: 6379
   memoryLimit: 128Mi
 
