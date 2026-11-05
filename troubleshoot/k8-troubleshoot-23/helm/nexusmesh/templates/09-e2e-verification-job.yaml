@@ -68,8 +68,8 @@ spec:
               fi
 
               # [STAGE 4]: Edge Gateway Reverse Proxy End-to-End Routing
-              echo -n "--> [4/5] Testing Edge Gateway (edge-gateway.{{ .Values.global.gatewayNamespace }}:80/stream)... "
-              EDGE_URL="http://edge-gateway.{{ .Values.global.gatewayNamespace }}.svc.cluster.local:80/stream"
+              echo -n "--> [4/5] Testing Edge Gateway (edge-gateway.{{ .Values.global.gatewayNamespace }}:8080/stream)... "
+              EDGE_URL="http://edge-gateway.{{ .Values.global.gatewayNamespace }}.svc.cluster.local:8080/stream"
               EDGE_RESP=$(curl -s --connect-timeout 4 --max-time 5 "$EDGE_URL" || echo "ERR")
               if echo "$EDGE_RESP" | grep -q "nexus-data-ok"; then
                 echo -e "${GREEN}[PASS] Edge Gateway successfully proxied request across namespaces!${NC}"
