@@ -1,0 +1,102 @@
+# ==============================================================================
+# ARGO CD (argo/argo-cd) — GITOPS VE SÜREKLİ DAĞITIM KATMANI HELM DEĞERLERİ
+# ==============================================================================
+# MİMARİ AMAÇ:
+# Argo CD, Kubernetes üzerinde GitOps prensipleriyle deklaratif uygulama yönetimini
+# sağlar. Git reposundaki manifestolar ve Helm chart'ları ile kümedeki canlı durum
+# arasındaki sapmaları (drift) izler ve otomatik/manuel senkronize eder.
+#
+# LAB OPTİMİZASYONU:
+# B-serisi VM'lerde (1-2 vCPU, 2-8 GB RAM) kaynak tüketimini minimumda tutmak için:
+# 1. Sunucu `--insecure` modda çalıştırılır (TLS termination NGINX Ingress tarafından yapılır).
+# 2. Dex SSO ve gereksiz bileşenler devre dışı bırakılır.
+# 3. Tüm controller ve sunucular için düşük CPU/RAM istekleri tanımlanır.
+# 4. Ingress `argocd.MASTER_IP.nip.io` üzerinde yayınlanır.
+# ==============================================================================
+
+global:
+  domain: argocd.MASTER_IP.nip.io
+
+server:
+  insecure: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 384Mi
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.MASTER_IP.nip.io
+    paths:
+      - /
+    pathType: Prefix
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      cpu: 400m
+      memory: 512Mi
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+repoServer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 30m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 384Mi
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+redis:
+  enabled: true
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  nodeSelector:
+    kubernetes.io/hostname: "vm-master"
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+dex:
+  enabled: false
+
+applicationSet:
+  enabled: false
+
+notifications:
+  enabled: false
