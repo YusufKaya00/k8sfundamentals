@@ -1,0 +1,73 @@
+{{- if .Values.trafficGuard.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: traffic-guard-svc
+  namespace: {{ .Values.global.meshNamespace }}
+  labels:
+    app: traffic-guard
+    tier: network-monitor
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: 9100
+  selector:
+    app: traffic-guard
+    tier: network-monitor
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: traffic-guard
+  namespace: {{ .Values.global.meshNamespace }}
+  labels:
+    app: traffic-guard
+    tier: network-monitor
+spec:
+  selector:
+    matchLabels:
+      app: traffic-guard
+      tier: network-monitor
+  template:
+    metadata:
+      labels:
+        app: traffic-guard
+        tier: network-monitor
+    spec:
+      {{- if .Values.trafficGuard.nodeSelectorZone }}
+      nodeSelector:
+        topology.kubernetes.io/zone: {{ .Values.trafficGuard.nodeSelectorZone | quote }}
+      {{- end }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: agent
+          image: python:3.11-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - "python3"
+            - "-c"
+            - |
+              import http.server
+              class MetricHandler(http.server.SimpleHTTPRequestHandler):
+                  def do_GET(self):
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'text/plain')
+                      self.end_headers()
+                      self.wfile.write(b'nexus_mesh_packet_drop_ratio 0.00\nnexus_node_healthy 1\n')
+              httpd = http.server.HTTPServer(('0.0.0.0', 9100), MetricHandler)
+              print("traffic-guard listening on 9100", flush=True)
+              httpd.serve_forever()
+          ports:
+            - name: metrics
+              containerPort: 9100
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: {{ .Values.trafficGuard.memoryLimit | default "64Mi" }}
+{{- end }}
