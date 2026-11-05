@@ -28,7 +28,7 @@ tokenVault:
 
 edgeGateway:
   replicas: 1
-  port: 80
+  port: 8080
   targetPort: 8080
   selectorTier: edge-proxy
   targetPortName: proxy-http
