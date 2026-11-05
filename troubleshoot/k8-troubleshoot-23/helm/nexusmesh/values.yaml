@@ -23,7 +23,7 @@ streamRouter:
 tokenVault:
   replicas: 1
   port: 8443
-  networkPolicyPort: 9443
+  networkPolicyPort: 8443
   memoryLimit: 128Mi
 
 edgeGateway:
