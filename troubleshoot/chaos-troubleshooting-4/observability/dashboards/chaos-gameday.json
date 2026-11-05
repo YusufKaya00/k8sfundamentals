@@ -1,0 +1,167 @@
+{
+  "id": null,
+  "uid": "rs-chaos-gameday",
+  "title": "ResilienceStream - 03. Chaos Game Day & Self-Healing",
+  "description": "Chaos Mesh Game Day Command Center: Circuit Breaker States, Dependency Health, Application Pod Restarts, Memory Working Set (App Pods), and CPU Usage & Throttling Ratio.",
+  "tags": [
+    "resiliencestream",
+    "chaos-mesh",
+    "gameday",
+    "chaos"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 3,
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Circuit Breaker State (0=CLOSED, 1=HALF-OPEN, 2=OPEN)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max by (dependency) (rs_circuit_breaker_state)",
+          "legendFormat": "{{ dependency }}"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "CLOSED (0)", "color": "green" },
+                "1": { "text": "HALF-OPEN (1)", "color": "yellow" },
+                "2": { "text": "OPEN (2)", "color": "red" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Dependency Health Status (rs_dependency_up)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "min by (dependency) (rs_dependency_up{job=\"order-api\"} or rs_dependency_up)",
+          "legendFormat": "{{ dependency }}"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "DOWN", "color": "red" },
+                "1": { "text": "UP", "color": "green" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Order Graceful Degradation (success / degraded / failed per sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(rs_orders_created_total[1m]))",
+          "legendFormat": "Orders {{ result }}/s"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Application Pod Restarts (Liveness Probe & OOMKilled)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (namespace, container) (kube_pod_container_status_restarts_total{namespace=~\"app|data|messaging\"})",
+          "legendFormat": "Total Restarts: {{ namespace }}/{{ container }}"
+        },
+        {
+          "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=\"app\"}[5m])) > 0",
+          "legendFormat": "Restart Spike (5m): {{ container }}"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_status_waiting_reason{namespace=\"app\", reason=~\"CrashLoopBackOff|ContainerCreating\"}) > 0",
+          "legendFormat": "Alert (Waiting): {{ pod }}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Memory Working Set (App Pods)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"app\", container!=\"\", container!=\"POD\"})",
+          "legendFormat": "{{ pod }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "CPU Usage & Throttling Ratio (%) (App Pods)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container!=\"\", container!=\"POD\"}[1m]))",
+          "legendFormat": "CPU Cores: {{ pod }}"
+        },
+        {
+          "expr": "100 * (sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container!=\"\"}[1m])) / clamp_min(sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container!=\"\"}[1m])), 0.0001))",
+          "legendFormat": "Throttled %: {{ pod }}"
+        }
+      ]
+    }
+  ]
+}

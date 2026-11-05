@@ -1,0 +1,163 @@
+{{- if or (not (hasKey .Values "telemetryAgent")) .Values.telemetryAgent.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-agent
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: telemetry-agent
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/component: telemetry-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: telemetry-agent
+    spec:
+      containers:
+        - name: telemetry-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+          command: ["python3", "-u", "-c"]
+          args:
+            - |
+              import os, time, random, threading
+              import httpx, pika
+              from kafka import KafkaConsumer, KafkaAdminClient, TopicPartition
+              from prometheus_client import Gauge, Counter, start_http_server
+
+              KAFKA_LAG = Gauge("rs_kafka_consumer_lag", "Real-time Kafka consumer lag across partitions")
+              KAFKA_END = Gauge("rs_kafka_topic_end_offset", "Kafka topic end offset", ["topic"])
+              KAFKA_COMMITTED = Gauge("rs_kafka_group_committed_offset", "Kafka consumer group committed offset", ["group", "topic"])
+              RMQ_READY = Gauge("rs_rabbitmq_queue_messages_ready", "RabbitMQ queue messages ready", ["queue"])
+              RMQ_CONSUMERS = Gauge("rs_rabbitmq_queue_consumers", "RabbitMQ active consumers", ["queue"])
+              CLIENT_HTTP_REQUESTS = Counter("rs_client_http_requests_total", "Client HTTP requests sent by telemetry-agent", ["status", "endpoint"])
+
+              BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka.data.svc.cluster.local:9092")
+              TOPIC = os.getenv("PRODUCER_KAFKA_TOPIC", "orders.events")
+              GROUP = os.getenv("KAFKA_GROUP", "analytics-consumer")
+              RMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq.messaging.svc.cluster.local")
+              RMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+              RMQ_USER = os.getenv("RABBITMQ_USER", "resilience")
+              RMQ_PASS = os.getenv("RABBITMQ_PASSWORD", "AdminPassword2026!")
+              RMQ_Q = os.getenv("RABBITMQ_QUEUE", "payments")
+              RMQ_DLQ = os.getenv("RABBITMQ_DLQ", "payments.dlq")
+              ORDER_URL = os.getenv("ORDER_API_URL", "http://order-api/api/orders")
+              ORDER_INTERVAL = float(os.getenv("ORDER_INTERVAL_SECONDS", "2.5"))
+
+              def traffic_loop():
+                  regions = ["eu-central", "us-east", "ap-south", "eu-west"]
+                  items = ["k8s-course", "chaos-mesh-pro", "sre-handbook", "ebpf-tracing"]
+                  with httpx.Client(timeout=4.0) as client:
+                      while True:
+                          try:
+                              payload = {
+                                  "customer_id": f"cust-{random.randint(100, 999)}",
+                                  "item": random.choice(items),
+                                  "amount": round(random.uniform(15.0, 240.0), 2),
+                                  "region": random.choice(regions),
+                              }
+                              resp = client.post(ORDER_URL, json=payload)
+                              CLIENT_HTTP_REQUESTS.labels(status=str(resp.status_code), endpoint="/api/orders").inc()
+                          except (httpx.ConnectError, httpx.ConnectTimeout):
+                              CLIENT_HTTP_REQUESTS.labels(status="503", endpoint="/api/orders").inc()
+                          except httpx.ReadTimeout:
+                              CLIENT_HTTP_REQUESTS.labels(status="504", endpoint="/api/orders").inc()
+                          except Exception:
+                              CLIENT_HTTP_REQUESTS.labels(status="500", endpoint="/api/orders").inc()
+                          time.sleep(ORDER_INTERVAL)
+
+              def broker_probe_loop():
+                  while True:
+                      try:
+                          consumer = KafkaConsumer(
+                              bootstrap_servers=BOOTSTRAP,
+                              request_timeout_ms=3000,
+                              api_version_auto_timeout_ms=3000,
+                          )
+                          parts = consumer.partitions_for_topic(TOPIC)
+                          if parts:
+                              tps = [TopicPartition(TOPIC, p) for p in parts]
+                              end_offsets = consumer.end_offsets(tps)
+                              total_end = sum(end_offsets.values())
+                              total_committed = 0
+                              try:
+                                  admin = KafkaAdminClient(bootstrap_servers=BOOTSTRAP, request_timeout_ms=3000)
+                                  group_offsets = admin.list_consumer_group_offsets(GROUP)
+                                  total_committed = sum(
+                                      om.offset for tp, om in group_offsets.items()
+                                      if tp.topic == TOPIC and om.offset is not None and om.offset >= 0
+                                  )
+                                  admin.close()
+                              except Exception:
+                                  total_committed = 0
+                              lag = max(0, total_end - total_committed)
+                              KAFKA_END.labels(topic=TOPIC).set(total_end)
+                              KAFKA_COMMITTED.labels(group=GROUP, topic=TOPIC).set(total_committed)
+                              KAFKA_LAG.set(lag)
+                          consumer.close()
+                      except Exception:
+                          pass
+
+                      try:
+                          creds = pika.PlainCredentials(RMQ_USER, RMQ_PASS)
+                          params = pika.ConnectionParameters(
+                              host=RMQ_HOST, port=RMQ_PORT, credentials=creds,
+                              socket_timeout=2.5, connection_attempts=1
+                          )
+                          conn = pika.BlockingConnection(params)
+                          ch = conn.channel()
+                          for qname in (RMQ_Q, RMQ_DLQ):
+                              try:
+                                  res = ch.queue_declare(queue=qname, passive=True)
+                                  RMQ_READY.labels(queue=qname).set(res.method.message_count)
+                                  RMQ_CONSUMERS.labels(queue=qname).set(res.method.consumer_count)
+                              except Exception:
+                                  pass
+                          conn.close()
+                      except Exception:
+                          pass
+
+                      time.sleep(4.0)
+
+              if __name__ == "__main__":
+                  start_http_server(8000)
+                  t1 = threading.Thread(target=traffic_loop, daemon=True)
+                  t1.start()
+                  broker_probe_loop()
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: PRODUCER_KAFKA_TOPIC
+              value: {{ .Values.env.KAFKA_TOPIC | default "orders.events" | quote }}
+            - name: ORDER_INTERVAL_SECONDS
+              value: {{ if and .Values.telemetryAgent .Values.telemetryAgent.orderIntervalSeconds }}{{ .Values.telemetryAgent.orderIntervalSeconds | quote }}{{ else }}"2.5"{{ end }}
+            {{- range $key, $val := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          resources:
+            requests:
+              cpu: 15m
+              memory: 48Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

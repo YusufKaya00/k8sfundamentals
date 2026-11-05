@@ -1,0 +1,199 @@
+{
+  "id": null,
+  "uid": "rs-slo-overview",
+  "title": "ResilienceStream - 01. SLO Overview & Golden Signals",
+  "description": "SLO & Error Budget Dashboard: Dependency Health Status, Overall API Availability, HTTP Error Ratio, HTTP Latency Quantiles (p50/p95/p99), HTTP Request Rate by Status (RPS), and Dependency Latency.",
+  "tags": [
+    "resiliencestream",
+    "slo",
+    "sre",
+    "chaos"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 3,
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Dependency Health Status (1=UP, 0=DOWN)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "min by (dependency) (rs_dependency_up{job=\"order-api\"} or rs_dependency_up)",
+          "legendFormat": "{{ dependency }}"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "DOWN", "color": "red" },
+                "1": { "text": "UP", "color": "green" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Overall API Availability (SLO >= 99%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 5, "x": 10, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "clamp_max(100 * (1 - ((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m])) or vector(0)) / clamp_min((sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total[1m]))), 0.0001))), 100)",
+          "legendFormat": "Availability %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 95 },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "HTTP Error Ratio (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 15, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "clamp_min(clamp_max(100 * ((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m])) or vector(0)) / clamp_min((sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total[1m]))), 0.0001)), 100), 0)",
+          "legendFormat": "5xx Error Ratio %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Orders Created (success / degraded / failed)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 5, "x": 19, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (result) (rs_orders_created_total)",
+          "legendFormat": "{{ result }}"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 5,
+      "title": "HTTP Latency Quantiles (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
+          "legendFormat": "p50 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
+          "legendFormat": "p95 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
+          "legendFormat": "p99 Latency (SLO < 1.0s)"
+        },
+        {
+          "expr": "(sum(rate(rs_http_request_duration_seconds_sum{endpoint=~\"/api/orders|/api/status\"}[1m])) / clamp_min(sum(rate(rs_http_request_duration_seconds_count{endpoint=~\"/api/orders|/api/status\"}[1m])), 0.0001)) or vector(0)",
+          "legendFormat": "Avg Latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "id": 6,
+      "title": "HTTP Request Rate by Status (RPS)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m]))",
+          "legendFormat": "HTTP {{ status }}"
+        },
+        {
+          "expr": "sum by (status) (rate(rs_client_http_requests_total{status=~\"5..\"}[1m]))",
+          "legendFormat": "Client Ingress HTTP {{ status }}"
+        },
+        {
+          "expr": "sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m]))",
+          "legendFormat": "Total 5xx Errors / s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Dependency Probe Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, dependency) (rate(rs_dependency_latency_seconds_bucket{job=\"order-api\"}[1m])))",
+          "legendFormat": "{{ dependency }} p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    }
+  ]
+}

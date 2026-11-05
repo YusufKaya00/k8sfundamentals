@@ -1,0 +1,195 @@
+---
+# ==============================================================================
+# FAZ 5: MONITORING, DATA (KAFKA/CASSANDRA/PG), MESSAGING (RABBITMQ/REDIS) & APP
+# Dosya: playbooks/05-platform-services.yml
+# Hedef: vm-master (Helm 3 & kubectl ile tüm lab katmanlarının kurulumu)
+# ==============================================================================
+
+- name: "Faz 5: Monitoring, Data (Kafka/Cassandra/PG), Messaging (RabbitMQ/Redis) ve Troubleshoot App Kurulumu"
+  hosts: master
+  become: true
+  vars:
+    kubectl_cmd: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+    helm_cmd: "KUBECONFIG=/etc/rancher/rke2/rke2.yaml /usr/local/bin/helm"
+    target_user: "{{ ansible_user | default('ysf') }}"
+    target_home: "/home/{{ ansible_user | default('ysf') }}"
+    lab_remote_dir: "/home/{{ ansible_user | default('ysf') }}/chaos-troubleshooting-3"
+
+  tasks:
+    - name: "Resmi Helm Chart depolarını (prometheus-community, bitnami, chaos-mesh) ekle ve güncelle"
+      shell: |
+        {{ helm_cmd }} repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+        {{ helm_cmd }} repo add bitnami https://charts.bitnami.com/bitnami --force-update
+        {{ helm_cmd }} repo add chaos-mesh https://charts.chaos-mesh.org --force-update
+        {{ helm_cmd }} repo update
+      changed_when: true
+
+    - name: "vm-master üzerinde gerekli lab dizinlerini oluştur"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0755'
+      loop:
+        - "{{ target_home }}/helm-values"
+        - "{{ target_home }}/observability"
+        - "{{ lab_remote_dir }}/helm-chart"
+        - "{{ lab_remote_dir }}/chaos-workflows"
+        - "{{ lab_remote_dir }}/scripts"
+
+    - name: "helm-values/ dosyalarını vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../helm-values/"
+        dest: "{{ target_home }}/helm-values/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+
+    - name: "observability/ dizinini (PrometheusRules & Grafana Dashboards) vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../observability/"
+        dest: "{{ target_home }}/observability/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+
+    - name: "helm-chart/ dizinini vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../helm-chart/"
+        dest: "{{ lab_remote_dir }}/helm-chart/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+
+    - name: "chaos-workflows/ dizinini vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../chaos-workflows/"
+        dest: "{{ lab_remote_dir }}/chaos-workflows/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+
+    - name: "scripts/ dizinini vm-master sunucusuna kopyala"
+      copy:
+        src: "{{ playbook_dir }}/../../scripts/"
+        dest: "{{ lab_remote_dir }}/scripts/"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0755'
+
+    - name: "Kopyalanan YAML dosyalarında MASTER_IP ve APP_IP yer tutucularını gerçek Public IP'lerle değiştir"
+      shell: |
+        find {{ target_home }}/helm-values {{ target_home }}/observability {{ lab_remote_dir }} -type f \( -name "*.yaml" -o -name "*.yml" \) -exec sed -i \
+          -e "s/<MASTER_IP>/{{ master_public_ip }}/g" \
+          -e "s/MASTER_IP/{{ master_public_ip }}/g" \
+          -e "s/<APP_IP>/{{ app_worker_public_ip }}/g" \
+          -e "s/APP_IP/{{ app_worker_public_ip }}/g" \
+          -e "s/app\.[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+\.nip\.io/app.{{ app_worker_public_ip }}.nip.io/g" {} +
+      changed_when: true
+
+    - name: "Grafana için resiliencestream-dashboards ConfigMap'ini oluştur"
+      shell: |
+        if [ -d "{{ target_home }}/observability/dashboards" ] && ls {{ target_home }}/observability/dashboards/*.json >/dev/null 2>&1; then
+          {{ kubectl_cmd }} create configmap resiliencestream-dashboards -n monitoring \
+            --from-file={{ target_home }}/observability/dashboards/ \
+            --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -
+        else
+          {{ kubectl_cmd }} create configmap resiliencestream-dashboards -n monitoring \
+            --dry-run=client -o yaml | {{ kubectl_cmd }} apply -f -
+        fi
+      changed_when: true
+
+    - name: "Prometheus, Alertmanager ve Grafana (kube-prometheus-stack) yığınını monitoring namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+          --namespace monitoring \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/monitoring-values.yaml \
+          --wait --timeout=360s
+      changed_when: true
+
+    - name: "SLO ve Kaos PrometheusRule alarm kurallarını uygula"
+      shell: |
+        if [ -f "{{ target_home }}/observability/prometheus-rules.yaml" ]; then
+          {{ kubectl_cmd }} apply -f {{ target_home }}/observability/prometheus-rules.yaml
+        fi
+      changed_when: true
+
+    - name: "PostgreSQL 16 ilişkisel veritabanını vm-worker-data (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install postgres bitnami/postgresql \
+          --namespace data \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/postgres-values.yaml \
+          --wait --timeout=240s
+      changed_when: true
+
+    - name: "Apache Kafka (KRaft - ZooKeeper'sız) olay akış motorunu vm-worker-data (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install kafka bitnami/kafka \
+          --namespace data \
+          -f {{ target_home }}/helm-values/kafka-values.yaml \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "Apache Cassandra (768M Heap) NoSQL veritabanını vm-worker-data (data namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install cassandra bitnami/cassandra \
+          --namespace data \
+          -f {{ target_home }}/helm-values/cassandra-values.yaml \
+          --wait --timeout=360s
+      changed_when: true
+
+    - name: "Redis 7 önbellek sunucusunu vm-worker-app (messaging namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install redis bitnami/redis \
+          --namespace messaging \
+          --create-namespace \
+          -f {{ target_home }}/helm-values/redis-values.yaml \
+          --wait --timeout=240s
+      changed_when: true
+
+    - name: "RabbitMQ (Management Plugin + DLQ Desteği) mesaj kuyruğunu vm-worker-app (messaging namespace) üzerine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install rabbitmq bitnami/rabbitmq \
+          --namespace messaging \
+          -f {{ target_home }}/helm-values/rabbitmq-values.yaml \
+          --set ingress.hostname=rabbitmq.{{ app_worker_public_ip }}.nip.io \
+          --wait --timeout=300s
+      changed_when: true
+
+    - name: "resiliencestream (helm-chart) uygulamasını Troubleshoot modunda app namespace'ine kur"
+      shell: |
+        {{ helm_cmd }} upgrade --install resiliencestream {{ lab_remote_dir }}/helm-chart \
+          --namespace app \
+          --create-namespace \
+          -f {{ lab_remote_dir }}/helm-chart/values.yaml \
+          --set ingress.host=app.{{ app_worker_public_ip }}.nip.io \
+          --wait --timeout=240s
+      changed_when: true
+
+    - name: "Faz 5 Doğrulama (Smoke Test): Data (Kafka/Cassandra/PG), Messaging (RabbitMQ/Redis) ve App Kontrolü"
+      block:
+        - name: "Tüm StatefulSet ve Deployment'ların Ready durumda olduğunu doğrula"
+          shell: |
+            set -e
+            {{ kubectl_cmd }} rollout status statefulset/postgres-postgresql -n data --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/kafka-controller -n data --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/cassandra -n data --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/redis-master -n messaging --timeout=60s
+            {{ kubectl_cmd }} rollout status statefulset/rabbitmq -n messaging --timeout=60s
+            {{ kubectl_cmd }} rollout status deployment/monitoring-grafana -n monitoring --timeout=60s
+            {{ kubectl_cmd }} rollout status deployment/order-api -n app --timeout=60s
+          changed_when: false
+      rescue:
+        - name: "Faz 5 Doğrulama Hatası — Teşhis Komutları"
+          debug:
+            msg:
+              - "❌ FAZ 5 (DATA, MESSAGING & APP) DOĞRULAMASI BAŞARISIZ OLDU!"
+              - "  1. Data Katmanı Pod/PVC : kubectl get pods,pvc -n data -o wide"
+              - "  2. Messaging Pod/PVC    : kubectl get pods,pvc -n messaging -o wide"
+              - "  3. App Podları          : kubectl get pods -n app -o wide"
+        - name: "Playbook yürütmesini durdur"
+          fail:
+            msg: "Faz 5 Veri/Mesajlaşma/Uygulama doğrulaması başarısız oldu."

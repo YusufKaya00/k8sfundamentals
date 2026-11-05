@@ -1,0 +1,105 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: final-08-game-day-validation
+  namespace: chaos-mesh
+spec:
+  entry: game-day-parallel-serial
+  templates:
+    - name: game-day-parallel-serial
+      templateType: Serial
+      children:
+        - step-1-api-loss
+        - step-2-redis-partition
+        - step-3-cassandra-delay
+        - step-4-postgres-delay
+        - step-5-payment-worker-failure
+        - step-6-analytics-memory-stress
+
+    - name: step-1-api-loss
+      templateType: NetworkChaos
+      deadline: 1m
+      networkChaos:
+        action: loss
+        mode: all
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+        loss:
+          loss: "15"
+          correlation: "25"
+        direction: to
+
+    - name: step-2-redis-partition
+      templateType: NetworkChaos
+      deadline: 1m
+      networkChaos:
+        action: partition
+        mode: all
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: order-api
+        target:
+          selector:
+            namespaces: [messaging]
+            labelSelectors:
+              app.kubernetes.io/name: redis
+          mode: all
+        direction: both
+
+    - name: step-3-cassandra-delay
+      templateType: NetworkChaos
+      deadline: 1m
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces: [data]
+          labelSelectors:
+            app.kubernetes.io/name: cassandra
+        delay:
+          latency: "400ms"
+          jitter: "50ms"
+        direction: to
+
+    - name: step-4-postgres-delay
+      templateType: NetworkChaos
+      deadline: 1m
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces: [data]
+          labelSelectors:
+            app.kubernetes.io/name: postgresql
+        delay:
+          latency: "1000ms"
+          jitter: "100ms"
+        direction: to
+
+    - name: step-5-payment-worker-failure
+      templateType: PodChaos
+      deadline: 1m
+      podChaos:
+        action: pod-failure
+        mode: one
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: payment-worker
+
+    - name: step-6-analytics-memory-stress
+      templateType: StressChaos
+      deadline: 1m
+      stressChaos:
+        mode: one
+        selector:
+          namespaces: [app]
+          labelSelectors:
+            app.kubernetes.io/component: analytics-consumer
+        stressors:
+          memory:
+            workers: 1
+            size: "150MB"
