@@ -1,0 +1,201 @@
+{
+  "id": null,
+  "uid": "rs-devops-gameday",
+  "title": "ResilienceStream - 04. DevOps Failure Modes & Game Day",
+  "description": "Comprehensive SRE & DevOps Game Day Dashboard: Postgres Connections, Redis Memory & Evictions, HPA Autoscaling Status, Client/Server Errors & Retries, Kafka Consumer Lag, and SLO Burn Rate.",
+  "tags": [
+    "resiliencestream",
+    "devops",
+    "gameday",
+    "sre",
+    "chaos"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "PostgreSQL Active Connections vs Limit (Max: 20)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(pg_stat_activity_count) or (sum(rs_db_connections_active) or (count(kube_pod_info{namespace=\"default\"}) * 3))",
+          "legendFormat": "Active Connections"
+        },
+        {
+          "expr": "vector(20)",
+          "legendFormat": "Hard Limit (20 max_connections)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 15 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Redis Memory Used vs Hard Maxmemory (16MB Limit)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(redis_memory_used_bytes) or (sum(container_memory_working_set_bytes{container=\"redis\"}))",
+          "legendFormat": "Used Memory"
+        },
+        {
+          "expr": "vector(16777216)",
+          "legendFormat": "Maxmemory Limit (16MB)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 12582912 },
+              { "color": "red", "value": 16777216 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "HPA Autoscaling Status (Desired vs Current Replicas)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler=\"order-api-hpa\"} or vector(2)",
+          "legendFormat": "Desired Replicas"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=\"order-api-hpa\"} or vector(2)",
+          "legendFormat": "Current Replicas"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=\"order-api-hpa\"} or vector(4)",
+          "legendFormat": "HPA Max Limit"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Client-Side vs Server-Side 5xx Error Rates (RPS)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m]))",
+          "legendFormat": "Server 5xx: {{ status }}"
+        },
+        {
+          "expr": "sum by (status) (rate(rs_client_http_requests_total{status=~\"5..\"}[1m]))",
+          "legendFormat": "Client Observed 5xx: {{ status }}"
+        },
+        {
+          "expr": "sum(rate(rs_client_http_requests_total{status=\"0\"}[1m]))",
+          "legendFormat": "Client Connection Refused / Timeout"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Client Request Rate & Retry Storm Multiplier (Req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(rs_client_http_requests_total[1m]))",
+          "legendFormat": "Total Outbound Requests/s"
+        },
+        {
+          "expr": "sum(rate(rs_http_requests_total{endpoint=~\"/api/orders\"}[1m]))",
+          "legendFormat": "Server Received Orders/s"
+        },
+        {
+          "expr": "sum(rate(rs_client_retries_total[1m])) or (sum(rate(rs_client_http_requests_total{retry=\"true\"}[1m])))",
+          "legendFormat": "Immediate Client Retries/s"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Kafka Consumer Lag & Asynchronous Pipeline Health",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (topic) (kafka_consumergroup_lag{consumergroup=\"analytics-consumer\"}) or (clamp_min(sum(rs_orders_created_total{result=\"success\"}) - sum(rs_analytics_events_processed_total), 0))",
+          "legendFormat": "Kafka Consumer Lag: {{ topic }}"
+        },
+        {
+          "expr": "sum(rate(rs_cassandra_write_errors_total[1m])) or (sum(rate(rs_orders_created_total{result=\"degraded\"}[1m])))",
+          "legendFormat": "Cassandra Write Errors/s"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Application Pod Restarts (Spike in 5m & CrashLoops)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (namespace, container) (kube_pod_container_status_restarts_total{namespace=~\"default|data|messaging\"})",
+          "legendFormat": "Total Restarts: {{ namespace }}/{{ container }}"
+        },
+        {
+          "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=~\"default|app\"}[5m])) > 0",
+          "legendFormat": "Restart Spike (5m): {{ container }}"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_status_waiting_reason{reason=\"CrashLoopBackOff\"}) > 0",
+          "legendFormat": "Active CrashLoopBackOff: {{ pod }}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Multi-Window SLO Burn Rate (1h Window vs 6h Window)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "(clamp_min(sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1h])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1h])), 0) / clamp_min(sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1h])) or sum(rate(rs_client_http_requests_total[1h])), 0.0001)) / 0.01",
+          "legendFormat": "1h Burn Rate (14.4x = Page)"
+        },
+        {
+          "expr": "(clamp_min(sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[6h])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[6h])), 0) / clamp_min(sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[6h])) or sum(rate(rs_client_http_requests_total[6h])), 0.0001)) / 0.01",
+          "legendFormat": "6h Burn Rate (6.0x = Ticket)"
+        },
+        {
+          "expr": "vector(14.4)",
+          "legendFormat": "Critical Threshold (14.4x)"
+        }
+      ]
+    }
+  ]
+}
