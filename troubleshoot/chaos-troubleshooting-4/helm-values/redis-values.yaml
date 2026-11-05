@@ -41,6 +41,10 @@ auth:
 master:
   resourcesPreset: "none"
 
+  configuration: |
+    maxmemory 16mb
+    maxmemory-policy noeviction
+
   resources:
     requests:
       cpu: 50m

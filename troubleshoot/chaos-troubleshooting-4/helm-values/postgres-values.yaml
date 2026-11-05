@@ -44,6 +44,9 @@ auth:
 primary:
   resourcesPreset: "none"
 
+  extendedConfiguration: |
+    max_connections = 20
+
   resources:
     requests:
       cpu: 100m
