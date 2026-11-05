@@ -42,5 +42,5 @@ ingress:
 
 trafficGuard:
   enabled: true
-  nodeSelectorZone: denmarkeast-1a
-  memoryLimit: 64Mi
+  nodeSelectorZone: denmarkeast
+  memoryLimit: 256Mi
