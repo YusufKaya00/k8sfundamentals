@@ -1,22 +1,18 @@
 # ==============================================================================
 # RESILIENCESTREAM SRE & KAOS MÜHENDİSLİĞİ ALARM KURALLARI (PrometheusRule CRD)
 # ==============================================================================
-# Neden prod'da böyle tasarlanır?
+# MİMARİ STANDARTLAR:
 # 1. `metadata.labels.release: monitoring`: `kube-prometheus-stack` (Prometheus
 #    Operator) yalnızca kendi release etiketiyle eşleşen `PrometheusRule`
-#    objelerini otomatik olarak yükler.
-# 2. `interval: 5s` ve `for: 0s`: Kaos deneylerinde (Game Day) bir arıza enjekte
-#    edildiğinde alarmın dakikalar sonra değil, <15 saniye içinde `Firing`
-#    durumuna geçmesini sağlar.
-# 3. Semptom Odaklı (SLO) + Neden Odaklı (Bağımlılık/Altyapı) Alarmlar:
-#    - SLO Error Budget Burn Rate (5xx hata oranı > %1)
-#    - HTTP p99 Gecikme SLO ihlali (> 1.0 sn)
-#    - Bağımlılık Çökmesi (`rs_dependency_up == 0`, `for: 0s`)
-#    - Circuit Breaker Açılması (`rs_circuit_breaker_state == 2`)
-#    - Kafka Consumer Lag birikmesi (`rs_kafka_consumer_lag > 50`)
-#    - RabbitMQ Dead-Letter Queue (DLQ) büyümesi (`result="dlq"`)
-#    - Kubernetes Pod Restart fırtınası
-#    - RKE2 Düğüm (Node) Bellek Kullanımı > %85 (OOMKilled erken uyarısı)
+#    objelerini otomatik olarak tarar ve yükler.
+# 2. Multi-Window Multi-Burn-Rate (Google SRE Standardı):
+#    - 1 Saatlik Pencere (14.4x Burn Rate): 1 saatte bütçenin %2'sini yakar -> Pager/Critical.
+#    - 6 Saatlik Pencere (6.0x Burn Rate): 6 saatte bütçenin %5'ini yakar -> Ticket/Warning.
+# 3. DevOps Game Day Altyapı Hata Modları:
+#    - Postgres bağlantı tükenmesi (max_connections: 20 sınırı)
+#    - Redis bellek taşması (maxmemory: 16MB ve noeviction)
+#    - HPA CPU metrik eksikliği (requests eksikliği)
+#    - İstemci yeniden deneme fırtınası (Retry Storm)
 # ==============================================================================
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -28,32 +24,69 @@ metadata:
     app.kubernetes.io/name: resiliencestream
 spec:
   groups:
-    - name: resiliencestream.slo.rules
+    - name: resiliencestream.slo.burnrate
       interval: 5s
       rules:
-        # 1. SLO ERROR BUDGET BURN RATE ALARMI (5xx > %1)
-        - alert: ResilienceStreamHighErrorRateSLO
+        # 1. GOOGLE SRE MULTI-WINDOW BURN RATE (1h / 5m Window -> 14.4x Burn Rate)
+        - alert: ErrorBudgetBurnRateCritical
           expr: |
             (
-              sum(rate(rs_http_requests_total{status=~"5.."}[1m]))
-              /
-              clamp_min(sum(rate(rs_http_requests_total[1m])), 0.001)
-            ) > 0.01
-          for: 15s
+              (
+                (sum(rate(rs_http_requests_total{status=~"5..", endpoint!~"/metrics"}[1h])) or sum(rate(rs_client_http_requests_total{status=~"5.."}[1h])) or vector(0))
+                /
+                clamp_min(sum(rate(rs_http_requests_total{endpoint!~"/metrics"}[1h])) or sum(rate(rs_client_http_requests_total[1h])), 0.0001)
+              ) / 0.01 > 14.4
+            )
+            and
+            (
+              (
+                (sum(rate(rs_http_requests_total{status=~"5..", endpoint!~"/metrics"}[5m])) or sum(rate(rs_client_http_requests_total{status=~"5.."}[5m])) or vector(0))
+                /
+                clamp_min(sum(rate(rs_http_requests_total{endpoint!~"/metrics"}[5m])) or sum(rate(rs_client_http_requests_total[5m])), 0.0001)
+              ) / 0.01 > 14.4
+            )
+          for: 1m
           labels:
             severity: critical
             team: sre
-            category: slo
+            category: slo-burn-rate
           annotations:
-            summary: "KRİTİK SLO İHLALİ: HTTP 5xx hata oranı %1 bütçesini aştı!"
-            description: "Son 1 dakikada 5xx hata oranı {{ $value | humanizePercentage }} seviyesine çıktı (SLO hedefi < %1). Hata bütçesi (Error Budget) hızla tükeniyor."
+            summary: "KRİTİK SLO YANMA HIZI: 1 saatte hata bütçesinin %2'si tükeniyor (14.4x burn rate)!"
+            description: "Hem 1 saatlik hem 5 dakikalık pencerelerde HTTP 5xx hata oranı SLO hata bütçesini kritik hızla tüketiyor. Acil müdahale gereklidir."
 
-        # 2. HTTP P99 GECİKME (LATENCY) SLO ALARMI (> 1.0s)
+        # 2. GOOGLE SRE MULTI-WINDOW BURN RATE (6h / 30m Window -> 6.0x Burn Rate)
+        - alert: ErrorBudgetBurnRateWarning
+          expr: |
+            (
+              (
+                (sum(rate(rs_http_requests_total{status=~"5..", endpoint!~"/metrics"}[6h])) or sum(rate(rs_client_http_requests_total{status=~"5.."}[6h])) or vector(0))
+                /
+                clamp_min(sum(rate(rs_http_requests_total{endpoint!~"/metrics"}[6h])) or sum(rate(rs_client_http_requests_total[6h])), 0.0001)
+              ) / 0.01 > 6.0
+            )
+            and
+            (
+              (
+                (sum(rate(rs_http_requests_total{status=~"5..", endpoint!~"/metrics"}[30m])) or sum(rate(rs_client_http_requests_total{status=~"5.."}[30m])) or vector(0))
+                /
+                clamp_min(sum(rate(rs_http_requests_total{endpoint!~"/metrics"}[30m])) or sum(rate(rs_client_http_requests_total[30m])), 0.0001)
+              ) / 0.01 > 6.0
+            )
+          for: 2m
+          labels:
+            severity: warning
+            team: sre
+            category: slo-burn-rate
+          annotations:
+            summary: "UYARI: 6 saatlik pencerede hata bütçesi tüketimi yüksek (6.0x burn rate)!"
+            description: "Sistem 6 saatlik pencerede hata bütçesinin %5'ini tüketecek hızda hata üretiyor."
+
+        # 3. HTTP P99 GECİKME SLO ALARMI (> 1.0s)
         - alert: ResilienceStreamHighLatencyP99
           expr: |
             histogram_quantile(
               0.99,
-              sum by (le, endpoint) (rate(rs_http_request_duration_seconds_bucket{endpoint="/api/orders"}[1m]))
+              sum by (le, endpoint) (rate(rs_http_request_duration_seconds_bucket{endpoint=~"/api/orders|/api/status"}[1m]))
             ) > 1.0
           for: 15s
           labels:
@@ -61,77 +94,71 @@ spec:
             team: sre
             category: slo
           annotations:
-            summary: "UYARI: /api/orders p99 gecikmesi 1 saniye SLO sınırını aştı!"
-            description: "Endpoint {{ $labels.endpoint }} için p99 yanıt süresi {{ $value | printf \"%.2f\" }} sn (Deney 02/06 ağ veya disk gecikmesi olabilir)."
+            summary: "UYARI: HTTP p99 yanıt gecikmesi 1.0 saniye SLO sınırını aştı!"
+            description: "Endpoint {{ $labels.endpoint }} için p99 gecikmesi {{ $value | printf \"%.2f\" }} saniyeye yükseldi."
 
-        # 3. BAĞIMLILIK ÇÖKME ALARMI (for: 0s -> Kaos deneyinde anında Firing!)
-        - alert: ResilienceStreamDependencyDown
-          expr: min by (dependency) (rs_dependency_up) == 0
-          for: 0s
+    - name: resiliencestream.devops.failures
+      interval: 5s
+      rules:
+        # 4. POSTGRES BAĞLANTI TÜKENMESİ (T2 Kök Neden)
+        - alert: PostgresConnectionsNearLimit
+          expr: (sum(pg_stat_activity_count) or (sum(rs_db_connections_active))) >= 18
+          for: 10s
           labels:
             severity: critical
-            team: platform-sre
-            category: dependency
+            team: dba-sre
+            category: database
           annotations:
-            summary: "KRİTİK: {{ $labels.dependency }} bağımlılığına ulaşılamıyor (DOWN)!"
-            description: "Arka plan health probe thread'i {{ $labels.dependency }} servisini erişilemez (rs_dependency_up == 0) olarak raporladı."
+            summary: "KRİTİK: PostgreSQL bağlantı sayısı sınırına (max_connections: 20) yaklaştı!"
+            description: "Aktif veritabanı bağlantı sayısı {{ $value }} / 20. Yeni siparişler 'sorry, too many clients already' ile reddedilebilir."
 
-        # 4. DEVRE KESİCİ (CIRCUIT BREAKER) AÇIK ALARMI (state == 2)
-        - alert: ResilienceStreamCircuitBreakerOpen
-          expr: max by (dependency) (rs_circuit_breaker_state) == 2
-          for: 0s
+        # 5. REDIS BELLEK DOLULUĞU VE NOEVICTION HATASI (T5 Kök Neden)
+        - alert: RedisMemoryNearLimit
+          expr: (sum(redis_memory_used_bytes) or sum(container_memory_working_set_bytes{container="redis"})) > 14000000
+          for: 10s
           labels:
             severity: warning
+            team: infra-sre
+            category: cache
+          annotations:
+            summary: "UYARI: Redis bellek kullanımı 14MB üzerine çıktı (Sınır: 16MB)!"
+            description: "Redis noeviction modunda çalıştığı için 16MB aşıldığında tüm yazma işlemleri OOM hatasıyla reddedilecektir."
+
+        # 6. RETRY STORM (YENİDEN DENEME FIRTINASI) ALGILANDI (T6 Kök Neden)
+        - alert: ClientRetryStormDetected
+          expr: |
+            (sum(rate(rs_client_http_requests_total[1m])) > (sum(rate(rs_http_requests_total{endpoint=~"/api/orders"}[1m])) * 2.5))
+            and
+            (sum(rate(rs_client_http_requests_total[1m])) > 10)
+          for: 10s
+          labels:
+            severity: critical
             team: app-sre
-            category: resilience
+            category: traffic
           annotations:
-            summary: "DEVRE KESİCİ AÇILDI: {{ $labels.dependency }} için Circuit Breaker OPEN (2) modunda!"
-            description: "{{ $labels.dependency }} ardışık hatalar nedeniyle fail-fast moduna geçti. Çağrılar beklemeden reddediliyor veya degraded çalışıyor."
+            summary: "KRİTİK: İstemcide Retry Storm (Yeniden Deneme Fırtınası) algılandı!"
+            description: "İstemci giden istek hızı ({{ $value }} req/s) sunucu sipariş işleme hızının 2.5 katından fazla. Üstel geri çekilme (exponential backoff) uygulanmıyor."
 
-        # 5. KAFKA CONSUMER LAG ALARMI
-        - alert: ResilienceStreamKafkaConsumerLagHigh
-          expr: max(rs_kafka_consumer_lag) > 50
-          for: 15s
-          labels:
-            severity: warning
-            team: streaming-sre
-            category: messaging
-          annotations:
-            summary: "UYARI: Kafka analytics-consumer kuyruk geriliği (lag) büyüyor!"
-            description: "orders.events topic'inde işlenmemiş mesaj sayısı (lag) {{ $value }} oldu. Cassandra yazma gecikmesi veya consumer darboğazı kontrol edilmeli."
-
-        # 6. RABBITMQ DEAD-LETTER QUEUE (DLQ) ARTIŞ ALARMI
-        - alert: ResilienceStreamRabbitMQDLQGrowth
-          expr: increase(rs_rabbitmq_messages_processed_total{result="dlq"}[2m]) > 0
-          for: 0s
-          labels:
-            severity: critical
-            team: messaging-sre
-            category: messaging
-          annotations:
-            summary: "KRİTİK: RabbitMQ payments.dlq (Dead-Letter Queue) içine mesaj düştü!"
-            description: "Son 2 dakikada 3 kez yeniden denenen ödeme mesajları başarısız olarak payments.dlq kuyruğuna taşındı."
-
-        # 7. POD YENİDEN BAŞLATMA (RESTART / CRASHLOOP) ALARMI
-        - alert: ResilienceStreamPodRestarting
-          expr: increase(kube_pod_container_status_restarts_total{namespace=~"app|data|messaging"}[5m]) > 0
+        # 7. POD YENİDEN BAŞLATMA (Liveness Probe & OOMKilled Cascading) (T1 Kök Neden)
+        - alert: ResilienceStreamPodRestartSpike
+          expr: sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=~"default|app"}[5m])) > 0
           for: 0s
           labels:
             severity: warning
             team: infra-sre
             category: kubernetes
           annotations:
-            summary: "UYARI: {{ $labels.namespace }}/{{ $labels.pod }} konteyneri yeniden başladı!"
-            description: "Son 5 dakikada pod restart algılandı (PodChaos deneyi, OOMKilled veya liveness probe hatası olabilir)."
+            summary: "UYARI: {{ $labels.container }} konteynerinde yeniden başlatma (restart) saptandı!"
+            description: "Liveness probe başarısızlığı veya CrashLoopBackOff. Liveness probe'un bağımlılıklara bakıp bakmadığını kontrol edin."
 
-        # 8. RKE2 DÜĞÜM (NODE) YÜKSEK BELLEK KULLANIMI ALARMI (> %85)
-        - alert: ResilienceStreamNodeHighMemory
-          expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
-          for: 30s
+        # 8. KAFKA ASENKRON TÜKETİCİ GERİLİĞİ (T7 NetworkPolicy Sessiz Düşüş)
+        - alert: KafkaConsumerLagHigh
+          expr: (sum by (topic) (kafka_consumergroup_lag{consumergroup="analytics-consumer"}) or (clamp_min(sum(rs_orders_created_total{result="success"}) - sum(rs_analytics_events_processed_total), 0))) > 40
+          for: 15s
           labels:
             severity: warning
-            team: infra-sre
-            category: infrastructure
+            team: streaming-sre
+            category: messaging
           annotations:
-            summary: "UYARI: RKE2 düğümü ({{ $labels.instance }}) RAM kullanımı %85 üzerinde!"
-            description: "Anlık bellek kullanımı %{{ $value | printf \"%.1f\" }}. Cassandra/Kafka veya StressChaos kaynaklı OOMKilled riski!"
+            summary: "UYARI: analytics-consumer Kafka kuyruk geriliği artıyor (Lag: {{ $value }})!"
+            description: "Cassandra yazma hatası veya NetworkPolicy engellemesi nedeniyle asenkron veri tüketimi durmuş olabilir."
