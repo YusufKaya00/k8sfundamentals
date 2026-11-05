@@ -115,8 +115,16 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (namespace, pod) (kube_pod_container_status_restarts_total{namespace=~\"app|data|messaging\"})",
-          "legendFormat": "{{ namespace }}/{{ pod }}"
+          "expr": "sum by (namespace, container) (kube_pod_container_status_restarts_total{namespace=~\"app|data|messaging\"})",
+          "legendFormat": "Total Restarts: {{ namespace }}/{{ container }}"
+        },
+        {
+          "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=\"app\"}[5m])) > 0",
+          "legendFormat": "Restart Spike (5m): {{ container }}"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_status_waiting_reason{namespace=\"app\", reason=~\"CrashLoopBackOff|ContainerCreating\"}) > 0",
+          "legendFormat": "Alert (Waiting): {{ pod }}"
         }
       ]
     },

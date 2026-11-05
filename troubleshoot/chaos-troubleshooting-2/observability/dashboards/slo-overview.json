@@ -61,7 +61,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "clamp_max(100 * (1 - ((sum(rate(rs_http_requests_total{status=~\"5..\", exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])) or vector(0)) / clamp_min(sum(rate(rs_http_requests_total{exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])), 0.0001))), 100)",
+          "expr": "clamp_max(100 * (1 - ((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m])) or vector(0)) / clamp_min((sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total[1m]))), 0.0001))), 100)",
           "legendFormat": "Availability %"
         }
       ],
@@ -89,7 +89,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "clamp_min(clamp_max(100 * ((sum(rate(rs_http_requests_total{status=~\"5..\", exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])) or vector(0)) / clamp_min(sum(rate(rs_http_requests_total{exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])), 0.0001)), 100), 0)",
+          "expr": "clamp_min(clamp_max(100 * ((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m])) or vector(0)) / clamp_min((sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total[1m]))), 0.0001)), 100), 0)",
           "legendFormat": "5xx Error Ratio %"
         }
       ],
@@ -135,19 +135,19 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(rs_http_request_duration_seconds_bucket{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
           "legendFormat": "p50 Latency"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(rs_http_request_duration_seconds_bucket{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
           "legendFormat": "p95 Latency"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(rs_http_request_duration_seconds_bucket{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
           "legendFormat": "p99 Latency (SLO < 1.0s)"
         },
         {
-          "expr": "((sum(rate(rs_http_request_duration_seconds_sum{exported_endpoint=~\"/api/orders|/api/status\"}[1m])) or sum(rate(rs_http_request_duration_seconds_sum{endpoint=~\"/api/orders|/api/status\"}[1m]))) / clamp_min((sum(rate(rs_http_request_duration_seconds_count{exported_endpoint=~\"/api/orders|/api/status\"}[1m])) or sum(rate(rs_http_request_duration_seconds_count{endpoint=~\"/api/orders|/api/status\"}[1m]))), 0.0001)) or vector(0)",
+          "expr": "(sum(rate(rs_http_request_duration_seconds_sum{endpoint=~\"/api/orders|/api/status\"}[1m])) / clamp_min(sum(rate(rs_http_request_duration_seconds_count{endpoint=~\"/api/orders|/api/status\"}[1m])), 0.0001)) or vector(0)",
           "legendFormat": "Avg Latency"
         }
       ],
@@ -163,12 +163,16 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (status) (rate(rs_http_requests_total{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_requests_total{endpoint=~\"/api/orders|/api/status\"}[1m]))",
+          "expr": "sum by (status) (rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m]))",
           "legendFormat": "HTTP {{ status }}"
         },
         {
-          "expr": "sum(rate(rs_http_requests_total{status=~\"5..\", exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])) or vector(0)",
-          "legendFormat": "HTTP 5xx Errors"
+          "expr": "sum by (status) (rate(rs_client_http_requests_total{status=~\"5..\"}[1m]))",
+          "legendFormat": "Client Ingress HTTP {{ status }}"
+        },
+        {
+          "expr": "sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m]))",
+          "legendFormat": "Total 5xx Errors / s"
         }
       ],
       "fieldConfig": {
