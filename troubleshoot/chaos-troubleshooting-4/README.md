@@ -42,7 +42,7 @@ Ortamınızı sıfırdan **%100 kararlı ve hatasız başlangıç durumunda** ay
 
 ```bash
 # Lab 3 dizinine geçin:
-cd /home/ysf/k8sfundamentals/troubleshoot/chaos-troubleshooting-3
+cd /home/ysf/k8sfundamentals/troubleshoot/chaos-troubleshooting-4
 
 # Ortamı başlatın / sıfırlayın:
 ./scripts/setup-lab.sh
