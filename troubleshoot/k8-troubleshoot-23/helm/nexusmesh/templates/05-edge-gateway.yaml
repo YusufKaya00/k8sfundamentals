@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-gateway
+  namespace: {{ .Values.global.gatewayNamespace }}
+  labels:
+    app: edge-gateway
+    tier: edge-proxy
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.edgeGateway.port | default 80 }}
+      targetPort: {{ .Values.edgeGateway.targetPort | default 8080 }}
+      protocol: TCP
+  selector:
+    app: edge-gateway
+    tier: edge-proxy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-gateway
+  namespace: {{ .Values.global.gatewayNamespace }}
+  labels:
+    app: edge-gateway
+    tier: edge-proxy
+spec:
+  replicas: {{ .Values.edgeGateway.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: edge-gateway
+      tier: edge-proxy
+  template:
+    metadata:
+      labels:
+        app: edge-gateway
+        tier: edge-proxy
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: proxy-http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: edge-gateway-conf
