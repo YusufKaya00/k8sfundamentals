@@ -1,294 +1,447 @@
-# 🔥 Kubernetes Chaos Engineering & Distributed Systems Troubleshooting Lab 3 (Production-Grade & Zero-Flapping)
+# 🔥 Kubernetes Chaos Engineering & DevOps Game Day Lab 4 (Advanced Failure Modes & 14 Scenarios)
 
-Bu laboratuvar, **ResilienceStream** çok katmanlı dağıtık sipariş ve ödeme mimarisi üzerinde **Chaos Mesh**, **Prometheus** ve **Grafana** kullanarak gerçek dünya üretim (Production) arızalarını simüle etmek, gözlemlemek ve kök neden analizi (Root Cause Analysis - RCA) yaparak sistemi dayanıklı hale getirmek için tasarlanmıştır.
+Bu laboratuvar, **ResilienceStream** kurumsal dağıtık mikroservis mimarisi üzerinde **Chaos Mesh**, **Prometheus**, **Grafana** ve **Argo CD** kullanarak modern DevOps ve SRE ekiplerinin üretimde (Production) karşılaştığı en sinsi, zincirleme ve gizli arıza modlarını simüle etmek, teşhis etmek ve kalıcı olarak iyileştirmek için tasarlanmıştır.
 
 > [!IMPORTANT]
-> **Lab 3'ün Temel Felsefesi: "Barış Zamanında Kusursuz & Kararlı, Kaos Anında Eğitici & Sarsıcı"**
-> 1. **%100 Kararlı Başlangıç (Pristine Baseline):** Önceki lablardaki dar CPU/RAM sınırları, başlangıçta açık gelen yapay hatalar veya hatalı topic tanımları tamamen temizlenmiştir. Lab ilk kurulduğunda tüm podlar (`order-api`, `analytics-consumer`, `payment-worker`, `telemetry-agent`) **1/1 Running, 0 Restarts, yeşil probelar**, 0 Kafka Lag ve 0 DLQ ile başlar. Helm kurulumu hiçbir zaman `context deadline exceeded` hatasına düşmez!
-> 2. **Sıfır Kopya & Gerçek SRE Deneyimi:** `values.yaml` içinde hiçbir `# HATA` veya çözüm ipucu bulunmaz. Tıpkı gerçek bir şirket altyapısında olduğu gibi semptomları Grafana panellerinden ve `kubectl` çıktılarından yakalayacaksınız.
-> 3. **Kesintisiz Canlı Telemetri (`telemetry-agent`):** Yerleşik telemetri ajanı her 2.5 saniyede bir sipariş (`POST /api/orders`) üretir; doğrudan Kafka broker'ı (`end_offsets` vs `committed_offsets`) ve RabbitMQ kuyruklarını sorgular. Grafikler asla `NaN` veya `No Data` göstermez.
+> **Lab 4'ün Temel Felsefesi: "Pristine Baseline, Gerçekçi DevOps Hata Modları ve Sıfır Yanıltıcı Çöküş"**
+> 1. **%100 Kararlı Başlangıç (Pristine Baseline):** Sistem ayağa kalktığında gizli hatalar asla kendiliğinden patlamaz. Kurulumda tüm podlar `1/1 Running`, `0 restart`, Kafka lag `0`, RabbitMQ DLQ `0` ve API `%100 Availability` ile başlar. Hatalar **yalnızca kaos veya yük testi enjekte edildiğinde** açığa çıkar!
+> 2. **Lab 3'ten Farklı 14 Yeni Senaryo:** Lab 3'te test edilen standart ağ kopmaları yerine; disk I/O gecikmesi, NTP saat kayması (clock skew), L7 HTTP abort, Liveness kaskad çöküşü, PostgreSQL bağlantı havuzu tükenmesi, PDB tahliye kilitlenmesi (drain deadlock), HPA CPU requests eksikliği, Redis noeviction bellek taşması, Retry Storm (yeniden deneme fırtınası), NetworkPolicy sessiz düşüşü ve Secret rotasyon desenkronizasyonu test edilir.
+> 3. **Google SRE Standartları:** Multi-Window Multi-Burn-Rate (1h/5m ve 6h/30m) alarm kuralları, Chaos Mesh `StatusCheck` ile otomatik blast-radius kontrolü ve `docs/postmortem-template.md` ile blameless postmortem kültürü içerir.
 
 ---
 
-## 🧭 1. Mimaride Neyi, Neden Kullanıyoruz? (SRE Karar Matrisi)
+## 🧭 1. Mimari ve SRE Karar Matrisi
 
 ```mermaid
-flowchart LR
-  U["Kullanıcı & Telemetry Agent\nHTTP POST /api/orders"] --> ING[Ingress NGINX]
-  ING --> API["order-api (x2 Pods)\nNamespace: app"]
-  API -->|"1. ACID Sipariş Kaydı (Hard Dep)"| PG[("PostgreSQL\nNamespace: data")]
-  API -->|"2. Domain Event Akışı (Shock Absorber)"| K[("Apache Kafka KRaft\norders.events\nNamespace: data")]
-  API -->|"3. Asenkron Ödeme Görevi (Task Queue)"| RMQ[("RabbitMQ\npayments & dlq\nNamespace: messaging")]
-  API -->|"4. Önbellek (Soft Dep / Cache-Aside)"| RD[("Redis Cache\nNamespace: messaging")]
-  K -->|"Tüketim (Lag izleme)"| AC["analytics-consumer\nNamespace: app"]
-  AC -->|"Analitik Yazma"| CASS[("Cassandra\nNamespace: data")]
-  RMQ -->|"Ödeme İşleme"| PW["payment-worker (x2 Pods)\nNamespace: app"]
-  PW -->|"Idempotent Ödeme Kaydı"| PG
+flowchart TD
+  subgraph Client ["İstemci & Telemetri Katmanı"]
+    U["Kullanıcı & k6 Load Tester"]
+    TA["telemetry-agent\n(Client-side Metrics & Retries)"]
+  end
+
+  subgraph IngressLayer ["Giriş Katmanı"]
+    ING["NGINX Ingress Controller\napp.APP_IP.nip.io"]
+  end
+
+  subgraph AppTier ["Uygulama Katmanı (Namespace: app)"]
+    API["order-api (x2 Pods)\nLiveness /readyz vs /healthz\nPDB minAvailable: 2\nHPA targetCPU: 60%"]
+    PW["payment-worker (x2 Pods)\nClock Skew & Idempotency"]
+    AC["analytics-consumer (x1 Pod)\nKafka Event Streamer"]
+  end
+
+  subgraph MessagingTier ["Mesajlaşma & Önbellek (Namespace: messaging)"]
+    RMQ[("RabbitMQ\npayments & payments.dlq")]
+    RD[("Redis 7 (Standalone)\nmaxmemory: 16mb\npolicy: noeviction")]
+  end
+
+  subgraph DataTier ["Kalıcı Veri Katmanı (Namespace: data)"]
+    PG[("PostgreSQL 16\nmax_connections: 20\nIOChaos toda FUSE")]
+    K[("Apache Kafka KRaft\norders.events\nBroker Kill")]
+    CASS[("Apache Cassandra\nNetPol 9042 Egress")]
+  end
+
+  Client --> ING
+  ING --> API
+  API -->|"ACID Kayıt"| PG
+  API -->|"Event Stream"| K
+  API -->|"Ödeme Görevi"| RMQ
+  API -->|"Önbellek (Cache)"| RD
+  K --> AC
+  AC -->|"Analitik Yazma"| CASS
+  RMQ --> PW
+  PW -->|"Idempotent Ödeme"| PG
 ```
 
-| Katman / Teknoloji | Sistemdeki Görevi & Nasıl Çalışmalı? | Hangi Durumda Hangi Kaos Testini Yaparız? | Grafana ve CLI'da Neyi İzleriz? |
-| :--- | :--- | :--- | :--- |
-| **`order-api`** *(FastAPI, 2+ Pod)* | Gelen sipariş isteklerini karşılar, veritabanına ve kuyruklara dağıtır. **Stateless** olmalı, `PodDisruptionBudget` (`minAvailable: 1`) ile korunmalı ve **Sıfır Kesinti (Zero-Downtime)** ile güncellenebilmelidir. | **1. Ağ Paket Kaybı (`NetworkChaos -> loss`):** Bozuk switch/NIC altında TCP retransmission davranışını test etmek için.<br>**2. Rolling Update Kesintisi (`PodChaos -> pod-kill`):** Pod kapanırken in-flight isteklerin düşüp düşmediğini test etmek için. | **Grafana (`01. SLO Overview & Golden Signals`):** `HTTP Latency Quantiles (p50 / p95 / p99)`, `HTTP Error Ratio (%)`, `HTTP Request Rate by Status (RPS)`.<br>**CLI:** `kubectl get pods -n app` |
-| **PostgreSQL** *(StatefulSet, `data` ns)* | Sipariş ve ödemelerin tutulduğu birincil **ACID (Hard Dependency)** veritabanı. Ağ gecikmesi yaşandığında API hemen 500 vermemeli; bağlantı zaman aşımı (`DEP_TIMEOUT_SECONDS`) toleranslı olmalıdır. | **Ağ Gecikmesi (`NetworkChaos -> delay`):** 1000ms gecikme altında 4 TCP/Auth round-trip'inin API'yi kilitleyip kilitlemediğini görmek için. | **Grafana (`01. SLO Overview & Golden Signals`):** `Dependency Health Status (1=UP, 0=DOWN)` (postgres), `HTTP Request Rate by Status (RPS)`.<br>**CLI:** `./scripts/check-system.sh` |
-| **Redis** *(StatefulSet, `messaging` ns)* | Son sipariş özetlerini tutan **In-Memory Cache (Soft Dependency)** katmanı. Tamamen koptuğunda sistem **Circuit Breaker / Graceful Degradation** ile sipariş almaya (`HTTP 200`) devam etmelidir. | **Ağ Bölünmesi (`NetworkChaos -> partition`):** Redis koptuğunda API'nin 500 hatası vermeden önbelleği pas geçip geçemediğini doğrulamak için. | **Grafana (`01. SLO Overview & Golden Signals`):** `Dependency Health Status` (redis -> 0/DOWN) iken `Overall API Availability (%100)` ve `HTTP Error Ratio (%0)` kalması.<br>**CLI:** `curl -s http://app.<APP_IP>.nip.io/api/status \| jq` |
-| **RabbitMQ & `payment-worker`** *(AMQP, `messaging` & `app` ns)* | Ödeme görevlerini asenkron yürüten **Task Queue** katmanı. Tek pod ölürse kuyruk durmamalı (`replicaCount: 2`); kalıcı gateway hatalarında zehirli mesajlar kontrollü retry sonrası **`payments.dlq`**'ya ayrılmalıdır. | **1. Pod Arızası (`PodChaos -> pod-failure`):** Bir worker çöktüğünde diğer worker'ın kuyruğu kesintisiz tüketmeye devam ettiğini doğrulamak için.<br>**2. Gateway Kesintisi:** Hatalı ödemelerin DLQ'ya kontrollü yönlendirilmesini izlemek için. | **Grafana (`02. Messaging, Kafka Lag & RabbitMQ DLQ`):** `RabbitMQ Active Consumers & Queue Status`, `RabbitMQ Queue Depth (payments vs payments.dlq) & Active Consumers`.<br>**CLI:** `rabbitmqctl list_queues` |
-| **Apache Kafka & `analytics-consumer` & Cassandra** *(Event Streaming)* | Olayları (`orders.events`) diskte saklar ve Cassandra'ya yazar. Kafka, Cassandra yavaşladığında API'yi koruyan bir **şok emici tampon** görevi görür. Tüketici pod bellek baskısında `OOMKilled` olmamalıdır. | **1. Cassandra Gecikmesi (`NetworkChaos -> delay`):** Veritabanı yavaşladığında API'nin etkilenmediğini ve Kafka lag'in geçici tamponlandığını görmek için.<br>**2. Bellek Stresi (`StressChaos -> memory`):** Ani veri yığınlarında podun `OOMKilled (Exit Code 137)` olup olmadığını test etmek için. | **Grafana (`02. Messaging, Kafka Lag & RabbitMQ DLQ`):** `Kafka Consumer Lag (orders.events)`, `Kafka Offsets (Produced vs Consumed)`.<br>**CLI:** `./scripts/check-system.sh` |
+### SRE Teknoloji ve Arıza Matrisi
+
+| Bileşen | Sistemdeki Rolü | Lab 4'e Özgü Kaos & Arıza Tipi | İzlenecek Grafana Paneli & Metrik |
+|:---|:---|:---|:---|
+| **PostgreSQL** | Sipariş ve ödemelerin ACID birincil veritabanı. | **A1:** `IOChaos` 200ms disk gecikmesi<br>**T2:** Concurrency ile `max_connections: 20` aşımı | `PostgreSQL Active Connections vs Limit (Max: 20)`<br>`HTTP Latency Quantiles (p50 / p95 / p99)` |
+| **`payment-worker`** | Asenkron ödemeleri işleyen worker. | **A2:** `TimeChaos` +10m NTP saat kayması (clock skew) | `RabbitMQ Active Consumers & Queue Status`<br>`Dependency Health Status` |
+| **Kafka (KRaft)** | ZooKeeper'sız olay akış motoru. | **A3:** `PodChaos` `pod-kill` broker restart | `Kafka Consumer Lag & Asynchronous Pipeline Health`<br>`Order Graceful Degradation` |
+| **`order-api`** | Müşteri siparişlerini karşılayan FastAPI servisi. | **A4:** `HTTPChaos` /api/status abort %30<br>**T1:** Liveness Probe kaskad çöküşü<br>**T4:** HPA CPU requests eksikliği | `04. DevOps Failure Modes & Game Day` -> `HPA Autoscaling Status`<br>`Client-Side vs Server-Side 5xx Error Rates` |
+| **Redis** | Sipariş önbelleği ve durum katmanı. | **T5:** 16MB dolumu ve `noeviction` OOM hatası | `Redis Memory Used vs Hard Maxmemory (16MB Limit)` |
+| **İstemci / k6** | Sentetik trafik ve yük test motoru. | **T6:** 3s gecikme altında 5 kez retry fırtınası | `Client Request Rate & Retry Storm Multiplier (Req/s)` |
+| **NetworkPolicy** | Zero-Trust küme içi ağ güvenlik kuralı. | **T7:** Cassandra (9042) ve CoreDNS (53) sessiz düşüşü | `Kafka Consumer Lag & Asynchronous Pipeline Health` |
+| **K8s Secret** | Veritabanı ve broker şifreleri. | **T8:** Secret güncellemesi sonrası pod rollout olmaması | `Application Pod Restarts (Spike in 5m & CrashLoops)` |
+| **CoreDNS** | Küme içi DNS çözümleme motoru. | **T9:** `ndots: 5` kaynaklı DNS sorgu patlaması | `Client Observed 5xx / Connection Timeout` |
 
 ---
 
-## 🛠️ 2. Hızlı Başlangıç & Lab Ortamını Başlatma
+## 🛠️ 2. Hızlı Başlangıç
 
-Ortamınızı sıfırdan **%100 kararlı ve hatasız başlangıç durumunda** ayağa kaldırmak için:
-
+### Ortamı Başlatma ve Sıfırlama
 ```bash
-# Lab 3 dizinine geçin:
 cd /home/ysf/k8sfundamentals/troubleshoot/chaos-troubleshooting-4
 
-# Ortamı başlatın / sıfırlayın:
+# Lab ortamını başlatın:
 ./scripts/setup-lab.sh
+
+# Pristine Baseline doğrulamasını çalıştırın (Tüm podlar 1/1 Running, 0 restart olmalıdır):
+./scripts/check-system.sh --strict
 ```
 
-Kurulum bittiğinde sistemin ilk sağlık taramasını yapın:
+### Dashboard ve PromQL Doğrulaması
+Tüm Grafana panellerinin ve PromQL sorgularının hatasız olduğunu doğrulamak için:
 ```bash
-./scripts/check-system.sh
-```
-> [!NOTE]
-> Çıktıda tüm podların `1/1 Running`, `Restarts: 0`, RabbitMQ `payments.dlq: 0`, Kafka `LAG: 0` ve API durumunun `overall_health: healthy` olduğunu teyit edin. Artık güvenle kaos testlerine başlayabilirsiniz!
-
----
-
-## 📊 3. Grafana Canlı İzleme Panelleri
-
-Tarayıcınızdan **`http://grafana.<MASTER_IP>.nip.io`** (`admin` / `AdminPassword2026!`) adresine gidin ve sol menüden **Dashboards -> ResilienceStream** altındaki 3 paneli yan yana açın:
-1. **`ResilienceStream - 01. SLO Overview & Golden Signals`:** `Overall API Availability (SLO >= 99%)`, `HTTP Error Ratio (%)`, `HTTP Latency Quantiles (p50 / p95 / p99)`, `HTTP Request Rate by Status (RPS)`, `Dependency Health Status (1=UP, 0=DOWN)`.
-2. **`ResilienceStream - 02. Messaging, Kafka Lag & RabbitMQ DLQ`:** `Kafka Consumer Lag (orders.events)`, `Kafka Offsets (Produced vs Consumed)`, `RabbitMQ Queue Depth (payments vs payments.dlq) & Active Consumers`, `Payment Worker Processed Totals`.
-3. **`ResilienceStream - 03. Chaos Game Day & Self-Healing`:** `Circuit Breaker State`, `Application Pod Restarts`, `Memory Working Set (App Pods)`, `CPU Usage & Throttling Ratio (%)`.
-
----
-
-## 🟢 BÖLÜM A: KONTROL DENEYLERİ (Sistem Dayanıklı Kalmalı)
-
-Bu 3 deneyde sistemin barış zamanındaki sağlam mimarisini test edeceğiz. Hiçbir pod çökmemeli ve HTTP 500 üretilmemelidir.
-
----
-
-### 🧪 Deney 1: `order-api` Ağ Paket Kaybı (%15 Loss — TCP Dayanıklılığı)
-- **Neden Yapılır?** Bulut ortamlarında NIC veya sanal switch paket kayıpları yaşadığında mikroservisimizin HTTP 500 vermeden, sadece TCP yeniden iletim (retransmit) gecikmesiyle (`p95/p99`) çalıştığını doğrulamak için.
-- **Chaos Mesh UI Adımları:**
-  1. **Experiments** -> **+ New Experiment** -> `Network Attack` -> **`Loss`**.
-  2. **Loss:** `15`, **Correlation:** `25`, **Direction:** `to`.
-  3. **Scope:** Namespace `app`, Label Selectors `app.kubernetes.io/component: order-api`, Mode `All`.
-  4. **Name:** `kontrol-01-api-packet-loss`, **Duration:** `2m` girip **Submit** edin.  
-  *(CLI alternatifi: `kubectl apply -f chaos-workflows/01-kontrol-api-packet-loss.yaml`)*
-- **Nasıl Kontrol Edilir?**
-  - **Grafana (`01. SLO Overview & Golden Signals`):** `HTTP Latency Quantiles (p50 / p95 / p99)` grafiğinde `p99` gecikmesinin hafif yükseldiğini, ancak `HTTP Error Ratio (%)` panelinin **`%0`** ve `Overall API Availability (SLO >= 99%)` panelinin **`%100`** kaldığını doğrulayın. Deneyi **Archive** edin.
-
----
-
-### 🧪 Deney 2: Redis Tam Ağ Bölünmesi (Network Partition — Circuit Breaker)
-- **Neden Yapılır?** Önbellek (Cache) katmanı hız içindir; Redis tamamen koptuğunda ana sipariş akışı durmamalı, sistem **Graceful Degradation** moduna geçip sipariş almaya devam etmelidir.
-- **Chaos Mesh UI Adımları:**
-  1. **Experiments** -> **+ New Experiment** -> `Network Attack` -> **`Partition`**.
-  2. **Direction:** `both`.
-  3. **Target:** Namespace `messaging`, Label Selectors `app.kubernetes.io/name: redis`, Mode `All`.
-  4. **Scope:** Namespace `app`, Label Selectors `app.kubernetes.io/component: order-api`, Mode `All`.
-  5. **Name:** `kontrol-02-redis-partition`, **Duration:** `2m` girip **Submit** edin.  
-  *(CLI alternatifi: `kubectl apply -f chaos-workflows/02-kontrol-redis-partition.yaml`)*
-- **Nasıl Kontrol Edilir?**
-  - **Grafana (`01. SLO Overview & Golden Signals`):** `Dependency Health Status (1=UP, 0=DOWN)` panelinde `redis` kutusunun kırmızı (`0 / DOWN`) olduğunu, ancak `Overall API Availability` panelinin **%100** ve `HTTP Error Ratio (%)` panelinin **%0** kaldığını görün. Deneyi **Archive** edin.
-
----
-
-### 🧪 Deney 3: Cassandra 400ms Gecikmesi & Kafka Şok Emici Tamponlama
-- **Neden Yapılır?** Analitik veritabanı yavaşladığında, Event-Driven mimaride `order-api` olayı Kafka'ya bırakıp hemen döndüğü için API yanıt süresi hiç etkilenmez. Yavaşlama sadece Kafka consumer lag olarak birikir ve deney bittiğinde erir.
-- **Chaos Mesh UI Adımları:**
-  1. **Experiments** -> **+ New Experiment** -> `Network Attack` -> **`Delay`**.
-  2. **Latency:** `400ms`, **Jitter:** `50ms`, **Direction:** `to`.
-  3. **Scope:** Namespace `data`, Label Selectors `app.kubernetes.io/name: cassandra`, Mode `All`.
-  4. **Name:** `kontrol-03-cassandra-backpressure`, **Duration:** `2m` girip **Submit** edin.  
-  *(CLI alternatifi: `kubectl apply -f chaos-workflows/03-kontrol-cassandra-backpressure.yaml`)*
-- **Nasıl Kontrol Edilir?**
-  - **Grafana:** `01. SLO Overview & Golden Signals` panelinde HTTP Latency Quantiles sabit kalırken, `02. Messaging, Kafka Lag & RabbitMQ DLQ` panelinde `Kafka Consumer Lag (orders.events)` grafiğinin hafifçe yükseldiğini ve deney sonlandırıldığında 0'a indiğini doğrulayın. Deneyi **Archive** edin.
-
----
-
-## 🔴 BÖLÜM B: TROUBLESHOOTING DENEYLERİ (Gerçek Arızalar & Kök Neden Analizi)
-
-Bu bölümde, sistem kaos stresine maruz kaldığında ortaya çıkan gizli mimari zafiyetleri teşhis edecek ve Helm ile kalıcı olarak onaracaksınız.
-
----
-
-### 🚨 Deney 4 (Troubleshoot #1): PostgreSQL 1000ms Gecikmesi Altında Çöken API & Zaman Aşımı Kırılganlığı
-
-#### 1. Ne Zaman / Neden Bu Testi Yaparız?
-İlişkisel veritabanlarında yoğun disk I/O veya ağ gecikmesi yaşandığında, uygulama katmanındaki `DEP_TIMEOUT_SECONDS` ve Kubernetes probe ayarları yeterli toleransa sahip değilse API podları `500 Internal Server Error` üretmeye başlar veya Kubernetes podları `Unready` yaparak trafik dışı bırakır.
-
-#### 2. Deneyi Başlatma
-1. **Experiments** -> **+ New Experiment** -> `Network Attack` -> **`Delay`**.
-2. **Latency:** `1000ms`, **Jitter:** `100ms`, **Direction:** `to`.
-3. **Scope:** Namespace `data`, Label Selectors `app.kubernetes.io/name: postgresql`, Mode `All`.
-4. **Name:** `troubleshoot-04-postgres-delay-pool`, **Duration:** `3m` girip **Submit** edin.  
-*(CLI alternatifi: `kubectl apply -f chaos-workflows/04-troubleshoot-postgres-delay-pool.yaml`)*
-
-#### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`01. SLO Overview & Golden Signals`):**
-  - `Dependency Health Status (1=UP, 0=DOWN)` panelinde postgres `0 (DOWN)` oluyor mu?
-  - `HTTP Request Rate by Status (RPS)` panelinde kırmızı `500/503` hataları patlıyor mu?
-  - `HTTP Error Ratio (%)` panelinde hata oranı yükseliyor mu?
-- **Terminal:**
-  ```bash
-  ./scripts/check-system.sh
-  kubectl logs -n app -l app.kubernetes.io/component=order-api --tail=30
-  ```
-- **Araştırma Sorusu:**
-  PostgreSQL'e her yeni bağlantı açılırken 4 round-trip (TCP + Auth + SCRAM + Sorgu) gittiğini hatırlayın. 1000ms ağ gecikmesinde toplam sorgu süresi en az 4 saniyeye çıkar! `values.yaml` içindeki `DEP_TIMEOUT_SECONDS` ve `apiProbes.readinessProbe.timeoutSeconds` değerleri bu süreye dayanabilecek seviyede midir?
-
----
-
-### 🚨 Deney 5 (Troubleshoot #2): Payment Gateway Arızası & DLQ İzolasyonu & Pod Failover
-
-#### 1. Ne Zaman / Neden Bu Testi Yaparız?
-Dış ödeme ağ geçitleri (Stripe, Iyzico vb.) çöktüğünde worker'ların nasıl davrandığını doğrulamak için yapılır. Yanlış yapılandırılmış retry kuralları mesajların hemen DLQ kuyruğuna düşmesine veya tek bir worker podu öldüğünde tüm ödeme akışının durmasına sebep olur.
-
-#### 2. Deneyi Başlatma
-1. `payment-worker` podlarından birini öldürmek için PodChaos uygulayın:
-   `kubectl apply -f chaos-workflows/05-troubleshoot-payment-gateway-dlq.yaml`
-2. Ödeme gateway'inde yapay %85 hata simülasyonu başlatın:
-   ```bash
-   ./scripts/trigger-scenario.sh --gateway-decline 0.85
-   ```
-
-#### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`02. Messaging, Kafka Lag & RabbitMQ DLQ`):**
-  - Pod öldüğünde `RabbitMQ Active Consumers & Queue Status` panelinde aktif consumer sayısı 0'a mı düşüyor yoksa 1 pod tüketmeye devam ediyor mu?
-  - Gateway hataları geldiğinde `RabbitMQ Queue Depth (payments vs payments.dlq) & Active Consumers` panelinde mesajlar kaç denemeden sonra `payments.dlq` kuyruğuna düşüyor?
-- **Terminal:**
-  ```bash
-  rabbitmqctl -q list_queues name messages_ready consumers
-  kubectl logs -n app -l app.kubernetes.io/component=payment-worker --tail=20
-  ```
-- İşiniz bittiğinde gateway'i normale döndürün:
-  ```bash
-  ./scripts/trigger-scenario.sh --gateway-heal
-  ```
-
----
-
-### 🚨 Deney 6 (Troubleshoot #3): Sıfır Kesinti (Zero-Downtime) Dağıtım Kusuru — Rolling Update Sırasında Paket Kaybı!
-
-#### 1. Ne Zaman / Neden Bu Testi Yaparız?
-Kubernetes'te yeni bir versiyon dağıtırken (`RollingUpdate`) kullanıcıların hiçbir istekte `502 Bad Gateway` veya `Connection Refused` almaması gerekir. Ancak podlar hemen öldüğünde NGINX Ingress endpoint'i listeden silene kadar geçen 2-3 saniyede paketler düşer!
-
-#### 2. Deneyi Başlatma
-Canlı sipariş trafiği kesintisiz akarken (`telemetry-agent` devredeyken), `order-api` için bir rolling update tetikleyin:
-```bash
-kubectl rollout restart deployment order-api -n app
+./scripts/verify-dashboards.sh
 ```
 
-#### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`01. SLO Overview & Golden Signals`):**
-  - Podlar yeniden başlarken `HTTP Request Rate by Status (RPS)` ve `HTTP Error Ratio (%)` panellerinde anlık kırmızı `502 / 503` pikleri görüyor musunuz?
-- **Kök Neden:**
-  Linux çekirdeği pod konteynerine `SIGTERM` gönderdiğinde, FastAPI süreci hemen sonlanır. Fakat NGINX Ingress Controller'ın etcd'den endpoint silme bildirimini alması 2 ila 4 saniye sürer! Bu aralıkta NGINX ölü podun IP'sine trafik göndermeye devam eder!
-- **Düzeltme Yolu:**
-  Konteynere `preStop` hook ekleyerek podun ölmeden önce 5 saniye beklemesini sağlamak:
-  ```yaml
-  lifecycle:
-    preStop:
-      exec:
-        command: ["/bin/sleep", "5"]
-  terminationGracePeriodSeconds: 30
+---
+
+## 📊 3. Grafana Dashboard Haritası
+
+Grafana arayüzüne `http://grafana.<MASTER_IP>.nip.io` adresinden erişebilirsiniz (Kullanıcı: `admin`, Şifre: `AdminPassword2026!`).
+
+1. **`04. DevOps Failure Modes & Game Day` (`observability/dashboards/04-devops-gameday.json`):**
+   - *PostgreSQL Active Connections vs Limit (Max: 20)*
+   - *Redis Memory Used vs Hard Maxmemory (16MB Limit)*
+   - *HPA Autoscaling Status (Desired vs Current Replicas)*
+   - *Client-Side vs Server-Side 5xx Error Rates (RPS)*
+   - *Client Request Rate & Retry Storm Multiplier (Req/s)*
+   - *Kafka Consumer Lag & Asynchronous Pipeline Health*
+   - *Application Pod Restarts (Spike in 5m & CrashLoops)*
+   - *Multi-Window SLO Burn Rate (1h Window vs 6h Window)*
+2. **`01. SLO Overview & Golden Signals`:**
+   - *HTTP Error Ratio (%)*
+   - *Overall API Availability (SLO >= 99%)*
+   - *HTTP Latency Quantiles (p50 / p95 / p99)*
+3. **`02. Messaging, Kafka Lag & RabbitMQ DLQ`:**
+   - *Kafka Consumer Lag (orders.events)*
+   - *RabbitMQ Queue Depth (payments vs payments.dlq)*
+4. **`03. Chaos Game Day & Self-Healing`:**
+   - *Circuit Breaker State (0=CLOSED, 1=HALF-OPEN, 2=OPEN)*
+   - *Order Graceful Degradation (success / degraded / failed)*
+
+---
+
+## 🔬 4. Deneyler ve Çözüm Rehberi
+
+---
+
+### 🟢 BÖLÜM A: KONTROL DENEYLERİ (Sistem Dayanmalı)
+
+#### Deney A1 — PostgreSQL Data Volume Disk Gecikmesi (`IOChaos`)
+- **Hipotez:** Veritabanı diski 200ms gecikse bile `order-api` siparişleri kabul etmeye devam eder; HTTP p99 gecikmesi yükselir ancak 5xx hata üretilmez ve readiness düşmez.
+- **Gerçek Dünya:** Bulut sağlayıcısında (AWS EBS, Azure Managed Disk) IOPS kotasının dolması veya noisy-neighbor disk çekişmesi.
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 1 apply
+  ```
+- **Gözlem:**
+  - Grafana Panel: `HTTP Latency Quantiles (p50 / p95 / p99)` -> p99 süresi 50ms'den ~250ms'ye çıkar.
+  - Grafana Panel: `HTTP Error Ratio (%)` -> %0 kalır.
+- **Temizleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 1 delete
   ```
 
 ---
 
-### 🚨 Deney 7 (Troubleshoot #4): Analitik Worker Bellek Yığılması (`StressChaos` & `OOMKilled`)
-
-#### 1. Ne Zaman / Neden Bu Testi Yaparız?
-Streaming worker podları ani mesaj patlamalarında bellek limitlerine çarparsa Linux OOM-Killer tarafından `Exit Code 137` ile öldürülür. Pod döngüsel çöküşe girdikçe Kafka lag patlar!
-
-#### 2. Deneyi Başlatma
-1. `analytics-consumer` üzerine 200MB bellek stresi uygulayın:
-   ```bash
-   kubectl apply -f chaos-workflows/07-troubleshoot-consumer-memory-oom.yaml
-   ```
-2. Durumu gözlemleyin:
-   ```bash
-   kubectl get pods -n app -w
-   ```
-
-#### 3. Gözlem ve Teşhis Rehberi
-- **Grafana (`03. Chaos Game Day & Self-Healing`):**
-  - `Application Pod Restarts (Liveness Probe & OOMKilled)` grafiğinde `analytics-consumer` podunun restart sayısı artıyor mu?
-  - `kubectl describe pod -n app -l app.kubernetes.io/component=analytics-consumer` çıktısında `Last State: Terminated (Reason: OOMKilled, Exit Code: 137)` görüyor musunuz?
-- **Grafana (`02. Messaging, Kafka Lag & RabbitMQ DLQ`):**
-  - Pod sürekli çöktüğü için `Kafka Consumer Lag (orders.events)` çizgisi nasıl tırmanıyor?
+#### Deney A2 — Ödeme İşleyicide Saat Kayması (`TimeChaos`)
+- **Hipotez:** `payment-worker` podunun saati 10 dakika ileri kaysa bile PostgreSQL'deki `ON CONFLICT (order_id)` idempotency koruması sayesinde mükerrer çekim yapılmaz.
+- **Gerçek Dünya:** Sunucu BIOS/NTP daemon desync arızası veya VM hypervisor canlı geçişi (live migration) sonrası saat atlaması.
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 2 apply
+  ```
+- **Gözlem:**
+  - Grafana Panel: `RabbitMQ Queue Depth` -> payments kuyruğu düzenli işlenmeye devam eder.
+  - Veritabanı: `SELECT count(*), count(DISTINCT order_id) FROM payments;` sayıları birebir eşittir.
+- **Temizleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 2 delete
+  ```
 
 ---
 
+#### Deney A3 — Kafka KRaft Broker Restartı (`PodChaos`)
+- **Hipotez:** Tek broker/controller olan `kafka-controller-0` podu aniden öldürüldüğünde, `order-api` çökmez; siparişleri veritabanına yazar ve Kafka yeniden başlayana kadar `degraded` modda 201 Created döner. Broker açıldığında lag hızla erir.
+- **Gerçek Dünya:** Spot VM geri alımı veya donanım arızası.
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 3 apply
+  ```
+- **Gözlem:**
+  - Grafana Panel: `Order Graceful Degradation` -> `degraded` siparişler geçici olarak görünür, 5xx hatası oluşmaz.
+  - Kubelet: `kubectl get pods -n data -l app.kubernetes.io/name=kafka` podun ayağa kalktığını doğrular.
+- **Temizleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 3 delete
+  ```
+
+---
+
+#### Deney A4 — L7 HTTP Abort `/api/status` Endpointinde (`HTTPChaos`)
+- **Hipotez:** `/api/status` endpointine gelen isteklerin %30'u yapay 500 hatası alsa bile ana sipariş akışı (`POST /api/orders`) ve checkout işlemleri etkilenmez.
+- **Gerçek Dünya:** Metrik/sağlık sorgulama katmanında reverse proxy veya sidecar gateway arızası.
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 4 apply
+  ```
+- **Gözlem:**
+  - `curl -s http://app.<APP_IP>.nip.io/api/status` -> Rastgele 500 döner.
+  - `curl -s -X POST http://app.<APP_IP>.nip.io/api/orders -H "Content-Type: application/json" -d '{"customer_id":"c1","items":[{"item_id":"i1","quantity":1,"price":10}],"total_amount":10}'` -> 201 Created döner!
+- **Temizleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 4 delete
+  ```
+
+---
+
+### 🔴 BÖLÜM B: TROUBLESHOOT DENEYLERİ (Gizli DevOps Zafiyetleri)
+
+---
+
+#### Deney T1 — Liveness Probe Kaskad Çöküşü (Cascading Failure)
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 5 apply
+  ```
+- **Belirti:** PostgreSQL'e uygulanan 1500ms gecikme sonrası tüm `order-api` podları ardışık olarak yeniden başlar (`Restarts` artar) ve `CrashLoopBackOff` durumuna düşer. NGINX Ingress `502 Bad Gateway` üretmeye başlar!
+- **Araştırma Sorusu:** Basit bir veritabanı yavaşlığı neden tüm uygulama konteynerlerinin Kubelet tarafından öldürülmesine yol açtı?
 <details>
-<summary><b>🛠️ TÜM TROUBLESHOOTING SENARYOLARININ KÖK NEDEN ANALİZİ & ÇÖZÜMLERİ (Tıklayın)</b></summary>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
 
-### 🛠️ Deney 4 Çözümü (Postgres Gecikmesi & Zaman Aşımı)
-- **Kök Neden:** `DEP_TIMEOUT_SECONDS` 3.0s olarak ayarlandığında, 1000ms gecikme yaşayan Postgres'in 4 TCP/Auth turu 4.0s sürdüğü için API timeout'a düşer.
-- **Düzeltme (`values.yaml`):**
-  ```yaml
-  apiProbes:
-    readinessProbe:
-      timeoutSeconds: 5
-  env:
-    DEP_TIMEOUT_SECONDS: "5.0"
-  ```
+**Kök Neden:**
+`helm-chart/values.yaml` içinde `apiProbes.livenessProbe.path` sehven `"/readyz"` olarak yapılandırılmıştır. `/readyz` uç noktası PostgreSQL bağlantısını doğrulamaktadır. Ağ gecikmesi probe zaman aşımını (timeout: 3s) aştığında Kubelet podun kilitlendiğini düşünerek SIGKILL gönderir. Bu klasik bir **Liveness ≠ Readiness** kaskad çöküşüdür!
 
-### 🛠️ Deney 5 Çözümü (Payment Worker HA & DLQ)
-- **Kök Neden:** Worker podlarından biri çöktüğünde diğerinin tüketimi devralabilmesi için `replicaCount: 2` olmalıdır. DLQ patlamasını önlemek için `RABBITMQ_MAX_RETRIES: "3"` olmalıdır.
-- **Düzeltme (`values.yaml`):**
-  ```yaml
-  workers:
-    paymentWorker:
-      replicaCount: 2
-  env:
-    RABBITMQ_MAX_RETRIES: "3"
-    PAYMENT_FAILURE_RATE: "0.0"
-  ```
-
-### 🛠️ Deney 6 Çözümü (Zero-Downtime Rolling Update & preStop Hook)
-- **Kök Neden:** Pod sonlanırken NGINX Ingress endpoint tablosu güncellenene kadar geçen sürede gelen isteklerin karşılanabilmesi için bir `preStop` hook gereklidir.
-- **Düzeltme (`values.yaml`):**
-  ```yaml
-  lifecycle:
-    preStop:
-      exec:
-        command: ["/bin/sleep", "5"]
-  terminationGracePeriodSeconds: 30
-  ```
-
-### 🛠️ Deney 7 Çözümü (Analitik Bellek Sınırı & OOMKilled)
-- **Kök Neden:** `analyticsResources.limits.memory` 256Mi iken 200MB ekstra stres uygulandığında konteyner sınırı aşar ve öldürülür.
-- **Düzeltme (`values.yaml`):**
-  ```yaml
-  analyticsResources:
-    limits:
-      cpu: 250m
-      memory: 384Mi
-  ```
-
-### 🎯 Tek Seferde Güçlendirilmiş (Hardened) Konfigürasyona Geçiş:
-Tüm bu düzeltmeleri tek komutla uygulamak için:
-```bash
-./scripts/setup-lab.sh --hardened
+**Çözüm:**
+Liveness probe asla harici bağımlılıklara bakmamalı, sadece process'in hayatta olup olmadığını denetlemelidir (`/healthz`).
+`helm-chart/values.yaml` dosyasında güncelleyin:
+```yaml
+apiProbes:
+  livenessProbe:
+    path: "/healthz" # /readyz yerine /healthz!
 ```
-
+Güncelleştirmeyi uygulayın:
+```bash
+helm upgrade resiliencestream ./helm-chart -n app -f ./helm-chart/values.yaml
+```
 </details>
 
 ---
 
-## 🏆 4. BÖLÜM C: FİNAL CHAOS MESH GAME DAY WORKFLOW
+#### Deney T2 — PostgreSQL Bağlantı Havuzu Tükenmesi (`max_connections`)
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 6 apply
+  # veya k6 stres testi:
+  ./scripts/load-test.sh concurrency
+  ```
+- **Belirti:** Yük altındayken siparişler `HTTP 500 / 503` ile patlar. Loglarda `FATAL: sorry, too many clients already` hatası görülür.
+- **Araştırma Sorusu:** `order-api` kaç adet veritabanı bağlantısı açıyor ve PostgreSQL'in kapasitesi buna neden yetmiyor?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
 
-Tüm düzeltmeleri yaptıktan sonra (veya `--hardened` modunda), sistemin tüm bu 6 büyük arızaya art arda otomatik olarak dayanabildiğini tek bir Chaos Mesh Workflow ile kanıtlayabilirsiniz:
+**Kök Neden:**
+PostgreSQL `max_connections: 20` sınırına sahiptir. `order-api` ise bağlantı havuzu (connection pool / PgBouncer) kullanmadan her HTTP isteğinde yeni bağlantı açmaya çalışmaktadır. 40 eşzamanlı istek veritabanı sınırını aşmaktadır (`pods × pool_size > max_connections`).
 
-```bash
-kubectl apply -f chaos-workflows/08-final-game-day-workflow.yaml
+**Çözüm:**
+1. Veritabanı sınırını ihtiyaca göre genişletin (`helm-values/postgres-values.yaml` -> `max_connections = 100`).
+2. Uygulama tarafında SQLAlchemy/asyncpg bağlantı havuzu boyutunu (`pool_size=5, max_overflow=5`) sınırlandırın.
+</details>
+
+---
+
+#### Deney T3 — PodDisruptionBudget (PDB) Düğüm Boşaltma Kilitlenmesi (Drain Deadlock)
+- **Tetikleme:**
+  ```bash
+  kubectl drain vm-worker-app --ignore-daemonsets --delete-emptydir-data --dry-run=client
+  ```
+- **Belirti:** Kubernetes tahliye komutu süresiz olarak kilitlenir: `Cannot evict pod as it would violate the pod's disruption budget`. Bakım penceresi kilitlenir.
+- **Araştırma Sorusu:** `order-api` 2 replikaya sahipken neden tek bir pod bile tahliye edilemiyor?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
+
+**Kök Neden:**
+`values.yaml` içinde `replicaCount: 2` iken `pdb.minAvailable: 2` tanımlanmıştır. Bu durumda `allowedDisruptions = 0` olur. Kubernetes hiçbir podun durdurulmasına izin vermez!
+
+**Çözüm:**
+`helm-chart/values.yaml` dosyasında PDB'yi güncelleyin:
+```yaml
+pdb:
+  enabled: true
+  minAvailable: 1 # 2 replika varken en az 1 tanesi ayakta kalsın (1 tanesi tahliye edilebilir)
 ```
+Dağıtın:
+```bash
+helm upgrade resiliencestream ./helm-chart -n app -f ./helm-chart/values.yaml
+```
+</details>
 
-Chaos Mesh Dashboard (`http://chaos-mesh.<MASTER_IP>.nip.io`) üzerinden **Workflows** menüsüne gidin ve adım adım tüm kaos testlerinin başarıyla geçtiğini, Grafana'da ise sistemin 100% SLO ile ayakta kaldığını canlı olarak izleyin!
+---
+
+#### Deney T4 — HPA CPU Requests Eksikliği Nedeniyle Ölçeklememe
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 8 apply
+  ```
+- **Belirti:** `order-api` podları %100 CPU tüketir, yanıt süreleri saniyelere fırlar. Ancak HPA asla replika sayısını artırmaz (`kubectl get hpa -n app` çıktısında `TARGETS: <unknown>/60%` görünür).
+- **Araştırma Sorusu:** Metrics-server çalışmasına rağmen HPA neden CPU yüzdesini hesaplayamıyor?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
+
+**Kök Neden:**
+HPA, CPU kullanım yüzdesini `kullanılan_cpu / istenen_cpu (request)` formülüyle hesaplar. `values.yaml` dosyasında `resources.requests` altında `cpu` tanımlanmamıştır (sadece `memory: 128Mi` vardır). İstek (request) tanımlanmadığında payda sıfır/tanımsız olur ve HPA `<unknown>` hatasına düşer!
+
+**Çözüm:**
+`helm-chart/values.yaml` içinde `resources.requests.cpu: 50m` ekleyin:
+```yaml
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+```
+Helm upgrade sonrası `kubectl get hpa -n app` çıktısının `%` değerini hesapladığını ve podların 4 replikaya ölçeklendiğini doğrulayın!
+</details>
+
+---
+
+#### Deney T5 — Redis Bellek Taşması ve `noeviction` Çöküşü
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 9 apply
+  ```
+- **Belirti:** Redis belleği 16MB sınırına ulaşır. Ardından loglarda `(error) OOM command not allowed when used memory > 'maxmemory'` patlar ve tüm siparişler `degraded` durumuna düşer.
+- **Araştırma Sorusu:** Redis bir önbellek (cache) olarak kullanılıyorsa bellek dolduğunda neden eski verileri silip yenilere yer açmıyor?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
+
+**Kök Neden:**
+Redis `maxmemory-policy: noeviction` ile başlatılmıştır. `noeviction` politikası, bellek dolduğunda yeni yazmaları reddeder (Veritabanı gibi davranır). Oysa önbellek katmanlarında `allkeys-lru` veya `volatile-lru` kullanılmalıdır!
+
+**Çözüm:**
+`helm-values/redis-values.yaml` dosyasında politikayı `allkeys-lru` yapın:
+```yaml
+master:
+  configuration: |
+    maxmemory 64mb
+    maxmemory-policy allkeys-lru
+```
+</details>
+
+---
+
+#### Deney T6 — İstemci Yeniden Deneme Fırtınası (Retry Storm)
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 10 apply
+  ./scripts/load-test.sh retry-storm
+  ```
+- **Belirti:** `/api/orders` endpointine 3s gecikme geldiğinde, gelen istek sayısı anında 4 katına katlanır (`Total Outbound Requests/s: 150+`). Kubelet ve Ingress soketleri kilitlenir.
+- **Araştırma Sorusu:** İstemci neden normal trafiğin 4 katı yük üretiyor?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
+
+**Kök Neden:**
+İstemci tarafında (k6 ve telemetri) `timeout: 2s` iken sunucu gecikmesi 3s'dir. İstemci her zaman aşımında **üstel geri çekilme (exponential backoff) ve rastgele gecikme (jitter)** olmadan anında 5 kez tekrar denemektedir. Bu durum sunucuyu tamamen boğan bir **Retry Storm** yaratır.
+
+**Çözüm:**
+İstemciye Exponential Backoff ve Circuit Breaker ekleyin. Retry bütçesini sınırlandırın (`max_retries: 2`, `backoff: 200ms * 2^attempt + jitter`).
+</details>
+
+---
+
+#### Deney T7 — NetworkPolicy ile Cassandra ve DNS Sessiz Düşüşü
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 11 apply
+  ```
+- **Belirti:** Güvenlik ekibi "Zero Trust Hardening" uyguladıktan sonra `order-api` yeşil görünür (HTTP 201), ancak Grafana'da Kafka lag (`analytics-consumer`) durmaksızın yükselir ve Cassandra yazma hataları tırmanır.
+- **Araştırma Sorusu:** API sağlıklı çalışırken asenkron pipeline neden durdu?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
+
+**Kök Neden:**
+`11-troubleshoot-networkpolicy-silent-drop.yaml` manifestosu PostgreSQL (5432), Kafka (9092) ve RabbitMQ (5672) egress portlarına izin verirken, Cassandra portunu (9042) ve CoreDNS portunu (53 UDP/TCP) engellemiştir! `analytics-consumer` Cassandra'ya bağlanamadığı için Kafka mesajlarını işleyemez (Sessiz Veri Tıkanması!).
+
+**Çözüm:**
+NetworkPolicy'ye Cassandra (9042) ve CoreDNS (53) egress kurallarını ekleyin veya `helm-chart/values-hardened.yaml` içindeki `networkPolicy.allowCassandra: true` ve `networkPolicy.allowDNS: true` ayarlarını açın.
+</details>
+
+---
+
+#### Deney T8 — Secret Rotasyon Desenkronizasyonu (Desync)
+- **Tetikleme:**
+  ```bash
+  ./scripts/rotate-secret.sh rotate
+  ```
+- **Belirti:** Secret güncellenir ancak `order-api` podlarının yaşı (AGE) değişmez. Bir pod öldürüldüğünde yeni gelen pod `ACCESS_REFUSED` alır ve kümede Split-Brain kimlik doğrulama arızası başlar.
+- **Araştırma Sorusu:** Secret güncellendiğinde Pod neden otomatik yeniden başlamadı?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
+
+**Kök Neden:**
+Kubernetes ortam değişkenleri (`envFrom: secretRef`) sadece pod ayağa kalkarken okunur. Pod template'i değişmediği sürece Deployment yeni bir ReplicaSet ve RollingUpdate tetiklemez.
+
+**Çözüm:**
+`helm-chart/values.yaml` içinde `credentials.rolloutOnChange: true` yapılmalıdır. Bu sayede `templates/deployment.yaml` içindeki şu annotation devreye girer:
+```yaml
+annotations:
+  checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+```
+Secret değiştiğinde checksum değişir ve Kubernetes otomatik RollingUpdate başlatır!
+</details>
+
+---
+
+#### Deney T9 — `ndots: 5` Kaynaklı CoreDNS Sorgu Patlaması
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 13 apply
+  ```
+- **Belirti:** Kısa servis adları (`kafka`, `postgres-postgresql`) kullanılırken DNS sorgu gecikmesi patlar ve rastgele bağlantı zaman aşımları yaşanır.
+- **Araştırma Sorusu:** Kubernetes varsayılan `ndots: 5` ayarı neden 5 kat fazla DNS sorgusu üretir?
+<details>
+<summary>🔍 Çözüm ve Kök Neden Analizi (Tıkla)</summary>
+
+**Kök Neden:**
+Linux resolver, alan adında `ndots` (varsayılan 5) değerinden az nokta varsa, önce `/etc/resolv.conf` içindeki arama yollarını (`search app.svc.cluster.local svc.cluster.local cluster.local`) tek tek dener. `kafka` sorgusu 4 başarısız NXDOMAIN sorgusundan sonra ancak çözülür.
+
+**Çözüm:**
+1. Servis bağlantılarında her zaman Tam Nitelikli Alan Adı (FQDN) kullanın (`kafka.data.svc.cluster.local`).
+2. Pod tanımına `dnsConfig: options: [{name: ndots, value: "2"}]` ekleyin.
+</details>
+
+---
+
+### 🤖 BÖLÜM C: GAMEDAY ORKESTRASYONU & SRE PRATİKLERİ
+
+#### Deney C1 — Multi-Window Multi-Burn-Rate Alarmları
+Google SRE kitabında tanımlanan çok pencereli hata bütçesi tüketim alarmları:
+- **1 Saatlik Pencere (14.4x Burn Rate):** 1 saatte bütçenin %2'sini tüketir -> Pager / Critical alarmı ateşlenir.
+- **6 Saatlik Pencere (6.0x Burn Rate):** 6 saatte bütçenin %5'ini tüketir -> Ticket / Warning alarmı ateşlenir.
+
+Kaos deneyi sırasında Alertmanager (`http://alertmanager.<MASTER_IP>.nip.io`) veya Prometheus Alerts sekmesinden alarmların `Firing` durumuna geçtiğini gözlemleyin.
+
+---
+
+#### Deney C2 — Otomatik GameDay Workflow ve Blast-Radius Kontrolü (`StatusCheck`)
+- **Tetikleme:**
+  ```bash
+  ./scripts/trigger-scenario.sh 14 apply
+  ```
+- **İşleyiş:**
+  Chaos Mesh Workflow sırasıyla A1 (Postgres IO), A3 (Kafka Kill) ve A4 (HTTP Abort) deneylerini seri olarak çalıştırır.
+  Her adım arasında yer alan `StatusCheck`, `/readyz` ve `/api/status` uç noktalarını denetler. Eğer hata oranı veya sağlık kriteri bozulursa workflow **kendi kendini derhal durdurur ve geri alır (Self-Abort / Blast-Radius Protection)!**
+
+---
+
+## 📝 5. Blameless Postmortem (Olay Raporu)
+
+Bir arıza başarıyla çözüldüğünde `docs/postmortem-template.md` şablonunu kullanarak kendi olay inceleme raporunuzu hazırlayın:
+- Olay özeti ve TTR (Time to Recovery)
+- Zaman çizelgesi (Timeline)
+- 5 Whys Kök Neden Analizi
+- Önleyici aksiyon maddeleri (Action Items)
+
+---
+
+## 🧹 6. Temizlik ve Ortamı Sıfırlama
+
+Tüm aktif kaos deneylerini ve test podlarını temizlemek için:
+```bash
+./scripts/trigger-scenario.sh --clean-chaos
+./scripts/check-system.sh --strict
+```
