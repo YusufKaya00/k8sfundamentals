@@ -27,7 +27,7 @@ spec:
           stdinOnce: true
           env:
             - name: TARGET_URL
-              value: "http://order-api.default.svc.cluster.local:80{{ .Values.loadTest.path | default \"/api/orders\" }}"
+              value: {{ printf "http://order-api.default.svc.cluster.local:80%s" (.Values.loadTest.path | default "/api/orders") | quote }}
             - name: VUS
               value: {{ .Values.loadTest.vus | default 30 | quote }}
             - name: DURATION
