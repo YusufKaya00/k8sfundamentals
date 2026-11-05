@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: troubleshoot-06-postgres-connections
+  namespace: app
+  labels:
+    app.kubernetes.io/component: chaos-test
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: chaos-test
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load-tester
+          image: curlimages/curl:8.6.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Starting 40 concurrent connections against order-api (Postgres limit: 20)..."
+              pids=""
+              for i in $(seq 1 40); do
+                (
+                  for r in $(seq 1 20); do
+                    curl -s -X POST http://order-api.app.svc.cluster.local:80/api/orders \
+                      -H "Content-Type: application/json" \
+                      -d '{"customer_id":"stress_user","items":[{"item_id":"stress","quantity":1,"price":10.0}],"total_amount":10.0}' \
+                      -o /dev/null -w "%{http_code}\n"
+                    sleep 0.1
+                  done
+                ) &
+                pids="$pids $!"
+              done
+              for p in $pids; do
+                wait $p || true
+              done
+              echo "Load generation completed. Check Grafana PostgreSQL Active Connections & HTTP 500 errors."
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 128Mi
+      nodeSelector:
+        tier: app
+      tolerations: []

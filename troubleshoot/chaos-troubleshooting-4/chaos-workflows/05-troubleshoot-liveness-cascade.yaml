@@ -1,0 +1,25 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: troubleshoot-05-liveness-cascade
+  namespace: chaos-mesh
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - app
+    labelSelectors:
+      app.kubernetes.io/component: order-api
+  target:
+    selector:
+      namespaces:
+        - data
+      labelSelectors:
+        app.kubernetes.io/name: postgresql
+    mode: all
+  delay:
+    latency: "1500ms"
+    jitter: "100ms"
+  direction: to
+  duration: "5m"
