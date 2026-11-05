@@ -1,8 +1,8 @@
 {
   "id": null,
   "uid": "rs-slo-overview",
-  "title": "🎯 ResilienceStream — 01. SLO Overview & Golden Signals",
-  "description": "SLO ve Hata Bütçesi (Error Budget) Panosu: HTTP başarı oranı, p50/p95/p99 gecikme, sipariş sonuçları ve 5 bağımlılığın canlı durumu.",
+  "title": "ResilienceStream - 01. SLO Overview & Golden Signals",
+  "description": "SLO & Error Budget Dashboard: Dependency Health Status, Overall API Availability, HTTP Error Ratio, HTTP Latency Quantiles (p50/p95/p99), HTTP Request Rate by Status (RPS), and Dependency Latency.",
   "tags": [
     "resiliencestream",
     "slo",
@@ -11,18 +11,18 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "5s",
   "panels": [
     {
       "id": 1,
-      "title": "🟢 5 Bağımlılık Canlı Sağlık Durumu (rs_dependency_up: 1=UP, 0=DOWN)",
+      "title": "Dependency Health Status (1=UP, 0=DOWN)",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 6, "w": 10, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "min by (dependency) (rs_dependency_up{component=\"order-api\"} or rs_dependency_up)",
+          "expr": "min by (dependency) (rs_dependency_up{job=\"order-api\"} or rs_dependency_up)",
           "legendFormat": "{{ dependency }}"
         }
       ],
@@ -38,8 +38,8 @@
             {
               "type": "value",
               "options": {
-                "0": { "text": "DOWN ❌", "color": "red" },
-                "1": { "text": "UP ✅", "color": "green" }
+                "0": { "text": "DOWN", "color": "red" },
+                "1": { "text": "UP", "color": "green" }
               }
             }
           ],
@@ -55,13 +55,13 @@
     },
     {
       "id": 2,
-      "title": "🛡️ HTTP Başarı Oranı SLO (Hedef >= %99)",
+      "title": "Overall API Availability (SLO >= 99%)",
       "type": "gauge",
-      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "gridPos": { "h": 6, "w": 5, "x": 10, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "clamp_max(100 * (1 - ((sum(rate(rs_http_requests_total{status=~\"5..\"}[2m])) or vector(0)) / clamp_min(sum(rate(rs_http_requests_total[2m])), 0.0001))), 100)",
+          "expr": "clamp_max(100 * (1 - ((sum(rate(rs_http_requests_total{status=~\"5..\", exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])) or vector(0)) / clamp_min(sum(rate(rs_http_requests_total{exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])), 0.0001))), 100)",
           "legendFormat": "Availability %"
         }
       ],
@@ -83,9 +83,37 @@
     },
     {
       "id": 3,
-      "title": "🛒 Oluşturulan Siparişler (success / degraded / failed)",
+      "title": "HTTP Error Ratio (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 15, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "clamp_min(clamp_max(100 * ((sum(rate(rs_http_requests_total{status=~\"5..\", exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])) or vector(0)) / clamp_min(sum(rate(rs_http_requests_total{exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])), 0.0001)), 100), 0)",
+          "legendFormat": "5xx Error Ratio %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Orders Created (success / degraded / failed)",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "gridPos": { "h": 6, "w": 5, "x": 19, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -100,23 +128,27 @@
       }
     },
     {
-      "id": 4,
-      "title": "⏱️ HTTP İstek Gecikmesi (Latency p50 / p95 / p99 — /api/orders & Genel)",
+      "id": 5,
+      "title": "HTTP Latency Quantiles (p50 / p95 / p99)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[2m]))) or vector(0)",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(rs_http_request_duration_seconds_bucket{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
           "legendFormat": "p50 Latency"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[2m]))) or vector(0)",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(rs_http_request_duration_seconds_bucket{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
           "legendFormat": "p95 Latency"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[2m]))) or vector(0)",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(rs_http_request_duration_seconds_bucket{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_request_duration_seconds_bucket{endpoint=~\"/api/orders|/api/status\"}[1m]))) or vector(0)",
           "legendFormat": "p99 Latency (SLO < 1.0s)"
+        },
+        {
+          "expr": "((sum(rate(rs_http_request_duration_seconds_sum{exported_endpoint=~\"/api/orders|/api/status\"}[1m])) or sum(rate(rs_http_request_duration_seconds_sum{endpoint=~\"/api/orders|/api/status\"}[1m]))) / clamp_min((sum(rate(rs_http_request_duration_seconds_count{exported_endpoint=~\"/api/orders|/api/status\"}[1m])) or sum(rate(rs_http_request_duration_seconds_count{endpoint=~\"/api/orders|/api/status\"}[1m]))), 0.0001)) or vector(0)",
+          "legendFormat": "Avg Latency"
         }
       ],
       "fieldConfig": {
@@ -124,15 +156,19 @@
       }
     },
     {
-      "id": 5,
-      "title": "📈 Saniyedeki HTTP İstek Hızı (RPS — Endpoint & Status Bazlı)",
+      "id": 6,
+      "title": "HTTP Request Rate by Status (RPS)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (endpoint, status) (rate(rs_http_requests_total{endpoint!~\"/metrics\"}[2m]))",
-          "legendFormat": "{{ endpoint }} [HTTP {{ status }}]"
+          "expr": "sum by (status) (rate(rs_http_requests_total{exported_endpoint=~\"/api/orders|/api/status\"}[1m]) or rate(rs_http_requests_total{endpoint=~\"/api/orders|/api/status\"}[1m]))",
+          "legendFormat": "HTTP {{ status }}"
+        },
+        {
+          "expr": "sum(rate(rs_http_requests_total{status=~\"5..\", exported_endpoint!~\"/readyz|/healthz|/metrics\", endpoint!~\"/readyz|/healthz|/metrics\"}[1m])) or vector(0)",
+          "legendFormat": "HTTP 5xx Errors"
         }
       ],
       "fieldConfig": {
@@ -140,14 +176,14 @@
       }
     },
     {
-      "id": 6,
-      "title": "🔌 5 Bağımlılık Probe Gecikmesi (rs_dependency_latency_seconds p95)",
+      "id": 7,
+      "title": "Dependency Probe Latency (p95)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, dependency) (rate(rs_dependency_latency_seconds_bucket[2m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, dependency) (rate(rs_dependency_latency_seconds_bucket{job=\"order-api\"}[1m])))",
           "legendFormat": "{{ dependency }} p95"
         }
       ],

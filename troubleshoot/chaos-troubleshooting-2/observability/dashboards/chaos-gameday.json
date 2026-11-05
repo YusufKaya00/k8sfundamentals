@@ -1,8 +1,8 @@
 {
   "id": null,
   "uid": "rs-chaos-gameday",
-  "title": "🔥 ResilienceStream — 03. Chaos Engineering & Game Day Command Center",
-  "description": "Chaos Mesh deneyleri sırasında Circuit Breaker durumları (0=CLOSED, 1=HALF_OPEN, 2=OPEN), bağımlılık kesintileri, pod restartları, kuyruk yığılmaları ve düğüm bellek/CPU baskısını canlı izleme ekranı.",
+  "title": "ResilienceStream - 03. Chaos Game Day & Self-Healing",
+  "description": "Chaos Mesh Game Day Command Center: Circuit Breaker States, Dependency Health, Application Pod Restarts, Memory Working Set (App Pods), and CPU Usage & Throttling Ratio.",
   "tags": [
     "resiliencestream",
     "chaos-mesh",
@@ -11,12 +11,12 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "5s",
   "panels": [
     {
       "id": 1,
-      "title": "⚡ Circuit Breaker Durumu (0=CLOSED 🟢, 1=HALF-OPEN 🟡, 2=OPEN 🔴)",
+      "title": "Circuit Breaker State (0=CLOSED, 1=HALF-OPEN, 2=OPEN)",
       "type": "stat",
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -57,13 +57,13 @@
     },
     {
       "id": 2,
-      "title": "💥 Bağımlılık Erişilebilirliği (rs_dependency_up)",
+      "title": "Dependency Health Status (rs_dependency_up)",
       "type": "stat",
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "min by (dependency) (rs_dependency_up)",
+          "expr": "min by (dependency) (rs_dependency_up{job=\"order-api\"} or rs_dependency_up)",
           "legendFormat": "{{ dependency }}"
         }
       ],
@@ -79,8 +79,8 @@
             {
               "type": "value",
               "options": {
-                "0": { "text": "DOWN ❌", "color": "red" },
-                "1": { "text": "UP ✅", "color": "green" }
+                "0": { "text": "DOWN", "color": "red" },
+                "1": { "text": "UP", "color": "green" }
               }
             }
           ],
@@ -96,20 +96,20 @@
     },
     {
       "id": 3,
-      "title": "🔄 Sipariş Graceful Degradation (success vs degraded vs failed / sn)",
+      "title": "Order Graceful Degradation (success / degraded / failed per sec)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (result) (rate(rs_orders_created_total[2m]))",
+          "expr": "sum by (result) (rate(rs_orders_created_total[1m]))",
           "legendFormat": "Orders {{ result }}/s"
         }
       ]
     },
     {
       "id": 4,
-      "title": "♻️ Kubernetes Pod Restart Sayısı (Liveness Probe & OOMKilled Gözlemi)",
+      "title": "Application Pod Restarts (Liveness Probe & OOMKilled)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -122,42 +122,36 @@
     },
     {
       "id": 5,
-      "title": "🖥️ 3-Node RKE2 Sunucu Bellek Kullanımı (%) — StressChaos Gözlemi",
-      "type": "gauge",
+      "title": "Memory Working Set (App Pods)",
+      "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
-          "legendFormat": "Node {{ instance }}"
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"app\", container!=\"\", container!=\"POD\"})",
+          "legendFormat": "{{ pod }}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 85 }
-            ]
-          }
+          "unit": "bytes"
         }
       }
     },
     {
       "id": 6,
-      "title": "🔥 Uygulama & Veri Podları CPU Kullanımı (Cores — CPU Throttling & HPA Gözlemi)",
+      "title": "CPU Usage & Throttling Ratio (%) (App Pods)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"app|data|messaging\", container!=\"\"}[2m]))",
-          "legendFormat": "{{ namespace }}/{{ pod }}"
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container!=\"\", container!=\"POD\"}[1m]))",
+          "legendFormat": "CPU Cores: {{ pod }}"
+        },
+        {
+          "expr": "100 * (sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container!=\"\"}[1m])) / clamp_min(sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container!=\"\"}[1m])), 0.0001))",
+          "legendFormat": "Throttled %: {{ pod }}"
         }
       ]
     }
