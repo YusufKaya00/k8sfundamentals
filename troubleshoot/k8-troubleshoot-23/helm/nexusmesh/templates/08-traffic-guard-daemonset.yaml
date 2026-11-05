@@ -37,8 +37,7 @@ spec:
         tier: network-monitor
     spec:
       {{- if .Values.trafficGuard.nodeSelectorZone }}
-      nodeSelector:
-        topology.kubernetes.io/zone: {{ .Values.trafficGuard.nodeSelectorZone | quote }}
+      
       {{- end }}
       tolerations:
         - operator: Exists
