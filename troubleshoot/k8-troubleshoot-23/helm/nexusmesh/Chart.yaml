@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nexusmesh
+description: "NexusMesh v4.2 Zero-Trust Edge Gateway & Distributed Service Mesh"
+type: application
+version: 1.0.0
+appVersion: "4.2.0"
