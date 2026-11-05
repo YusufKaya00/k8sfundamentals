@@ -14,7 +14,7 @@ streamRouter:
   port: 8080
   serviceTargetPort: 8080
   livenessPort: 8080
-  livenessPath: /status
+  livenessPath: /healthz
   readinessPath: /ready
   cpuRequest: 50m
   memoryRequest: 64Mi
