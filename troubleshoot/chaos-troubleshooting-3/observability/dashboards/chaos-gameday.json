@@ -119,12 +119,16 @@
           "legendFormat": "Total Restarts: {{ namespace }}/{{ container }}"
         },
         {
-          "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=\"app\"}[5m])) > 0",
-          "legendFormat": "Restart Spike (5m): {{ container }}"
+          "expr": "sum by (namespace, container) (increase(kube_pod_container_status_restarts_total{namespace=~\"app|data|messaging\"}[5m]))",
+          "legendFormat": "Restart Spike (5m): {{ namespace }}/{{ container }}"
         },
         {
-          "expr": "sum by (pod) (kube_pod_container_status_waiting_reason{namespace=\"app\", reason=~\"CrashLoopBackOff|ContainerCreating\"}) > 0",
-          "legendFormat": "Alert (Waiting): {{ pod }}"
+          "expr": "sum by (namespace, pod) (changes(kube_pod_status_phase{phase=\"Running\", namespace=~\"app|data|messaging\"}[5m]))",
+          "legendFormat": "Pod Recreation / State Change (5m): {{ pod }}"
+        },
+        {
+          "expr": "sum by (namespace, pod) (kube_pod_container_status_waiting_reason{namespace=~\"app|data|messaging\", reason=~\"CrashLoopBackOff|ContainerCreating|Error\"})",
+          "legendFormat": "Waiting / CrashLoop: {{ pod }}"
         }
       ]
     },
