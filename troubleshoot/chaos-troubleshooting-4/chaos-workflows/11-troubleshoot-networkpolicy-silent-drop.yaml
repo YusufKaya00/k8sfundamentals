@@ -46,6 +46,8 @@ spec:
         - protocol: TCP
           port: 9092 # Kafka açık
           # DİKKAT: 9042 (Cassandra) EKSİK!
+        - protocol: TCP
+          port: 9042 # Cassandra açık
     - to:
         - namespaceSelector:
             matchLabels:
