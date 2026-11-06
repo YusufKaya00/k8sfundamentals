@@ -135,6 +135,6 @@ env:
   RABBITMQ_MAX_RETRIES: "3"
   REDIS_HOST: "redis-master.messaging.svc.cluster.local"
   REDIS_PORT: "6379"
-  DEP_TIMEOUT_SECONDS: "3"
+  DEP_TIMEOUT_SECONDS: "15"
   HEALTH_PROBE_INTERVAL: "5"
   PAYMENT_FAILURE_RATE: "0.0"
