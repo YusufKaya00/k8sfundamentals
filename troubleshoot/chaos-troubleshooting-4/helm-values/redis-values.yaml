@@ -42,8 +42,8 @@ master:
   resourcesPreset: "none"
 
   configuration: |
-    maxmemory 16mb
-    maxmemory-policy noeviction
+    maxmemory 64mb
+    maxmemory-policy allkeys-lru
 
   resources:
     requests:
