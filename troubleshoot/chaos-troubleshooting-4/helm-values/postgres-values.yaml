@@ -45,7 +45,7 @@ primary:
   resourcesPreset: "none"
 
   extendedConfiguration: |
-    max_connections = 20
+    max_connections = 100
 
   resources:
     requests:
