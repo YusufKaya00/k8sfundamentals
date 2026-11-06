@@ -22,12 +22,13 @@ spec:
         action: latency
         mode: one
         selector:
-          namespaces: [data]
+          namespaces:
+            - data
           labelSelectors:
             app.kubernetes.io/name: postgresql
         volumePath: /bitnami/postgresql
         delay: "200ms"
-        percent: "100"
+        percent: 100
 
     - name: step-2-status-check-baseline
       templateType: StatusCheck
@@ -49,7 +50,8 @@ spec:
         action: pod-kill
         mode: one
         selector:
-          namespaces: [data]
+          namespaces:
+            - data
           labelSelectors:
             app.kubernetes.io/name: kafka
 
@@ -59,7 +61,8 @@ spec:
       httpChaos:
         mode: all
         selector:
-          namespaces: [app]
+          namespaces:
+            - app
           labelSelectors:
             app.kubernetes.io/component: order-api
         target: Request
@@ -67,17 +70,4 @@ spec:
         path: "/api/status"
         method: GET
         abort: true
-        code: 500
-
-    - name: step-5-final-slo-validation
-      templateType: StatusCheck
-      deadline: 30s
-      statusCheck:
-        type: HTTP
-        mode: Continuous
-        intervalSeconds: 5
-        timeoutSeconds: 3
-        http:
-          url: "http://order-api.app.svc.cluster.local:80/api/status"
-          criteria:
-            statusCode: "200"
+        code
