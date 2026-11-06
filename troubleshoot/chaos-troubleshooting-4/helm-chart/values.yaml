@@ -103,9 +103,9 @@ credentials:
   cassandraPassword: "AdminPassword2026!"
 
 networkPolicy:
-  enabled: false
-  allowCassandra: false
-  allowDNS: false
+  enabled: true
+  allowCassandra: true
+  allowDNS: true
 
 loadTest:
   enabled: false
