@@ -61,7 +61,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "clamp_max(100 * (1 - ((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m])) or vector(0)) / clamp_min((sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total[1m]))), 0.0001))), 100)",
+          "expr": "clamp_max(100 * (1 - (((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint=~\"/api/.*\"}[2m])) or vector(0)) + (sum(rate(rs_client_http_requests_total{status=~\"5..\"}[2m])) or vector(0))) / clamp_min(((sum(rate(rs_http_requests_total{endpoint=~\"/api/.*\"}[2m])) or vector(0)) + (sum(rate(rs_client_http_requests_total[2m])) or vector(0))), 0.0001))), 100)",
           "legendFormat": "Availability %"
         }
       ],
@@ -89,7 +89,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "clamp_min(clamp_max(100 * ((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m])) or vector(0)) / clamp_min((sum(rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total[1m]))), 0.0001)), 100), 0)",
+          "expr": "clamp_min(clamp_max(100 * (((sum(rate(rs_http_requests_total{status=~\"5..\", endpoint=~\"/api/.*\"}[2m])) or vector(0)) + (sum(rate(rs_client_http_requests_total{status=~\"5..\"}[2m])) or vector(0))) / clamp_min(((sum(rate(rs_http_requests_total{endpoint=~\"/api/.*\"}[2m])) or vector(0)) + (sum(rate(rs_client_http_requests_total[2m])) or vector(0))), 0.0001)), 100), 0)",
           "legendFormat": "5xx Error Ratio %"
         }
       ],
@@ -163,16 +163,20 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (status) (rate(rs_http_requests_total{endpoint!~\"/metrics\"}[1m]))",
-          "legendFormat": "HTTP {{ status }}"
+          "expr": "sum by (status) (rate(rs_http_requests_total{endpoint=~\"/api/.*\"}[2m])) or vector(0)",
+          "legendFormat": "API Server HTTP {{ status }}"
         },
         {
-          "expr": "sum by (status) (rate(rs_client_http_requests_total{status=~\"5..\"}[1m]))",
+          "expr": "sum by (status) (rate(rs_client_http_requests_total[2m])) or vector(0)",
           "legendFormat": "Client Ingress HTTP {{ status }}"
         },
         {
-          "expr": "sum(rate(rs_http_requests_total{status=~\"5..\", endpoint!~\"/metrics\"}[1m])) or sum(rate(rs_client_http_requests_total{status=~\"5..\"}[1m]))",
+          "expr": "(sum(rate(rs_http_requests_total{status=~\"5..\", endpoint=~\"/api/.*\"}[2m])) or vector(0)) + (sum(rate(rs_client_http_requests_total{status=~\"5..\"}[2m])) or vector(0))",
           "legendFormat": "Total 5xx Errors / s"
+        },
+        {
+          "expr": "sum(rate(rs_http_requests_total{endpoint=~\"/healthz|/readyz\"}[2m])) or vector(0)",
+          "legendFormat": "Internal Health Probes (200)"
         }
       ],
       "fieldConfig": {
