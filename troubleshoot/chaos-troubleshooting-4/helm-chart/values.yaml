@@ -96,7 +96,7 @@ telemetryAgent:
 
 credentials:
   existingSecret: ""
-  rolloutOnChange: false
+  rolloutOnChange: true
   postgresPassword: "AdminPassword2026!"
   rabbitmqPassword: "AdminPassword2026!"
   redisPassword: "AdminPassword2026!"
