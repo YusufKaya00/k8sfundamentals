@@ -7,7 +7,7 @@ image:
 
 apiProbes:
   livenessProbe:
-    path: "/readyz"
+    path: "/healthz"
     initialDelaySeconds: 20
     periodSeconds: 10
     timeoutSeconds: 3
