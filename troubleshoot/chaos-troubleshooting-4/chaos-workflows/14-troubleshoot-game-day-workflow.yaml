@@ -33,15 +33,18 @@ spec:
     - name: step-2-status-check-baseline
       templateType: StatusCheck
       deadline: 30s
+      abortWithStatusCheck: true
       statusCheck:
         type: HTTP
-        mode: Continuous
-        intervalSeconds: 5
+        mode: Synchronous
+        intervalSeconds: 2
         timeoutSeconds: 3
+        successThreshold: 1
+        failureThreshold: 3
         http:
           url: "http://order-api.app.svc.cluster.local:80/readyz"
           criteria:
-            statusCode: "200"
+            statusCode: '200'
 
     - name: step-3-kafka-broker-kill
       templateType: PodChaos
@@ -70,4 +73,20 @@ spec:
         path: "/api/status"
         method: GET
         abort: true
-        code
+        code: 500
+
+    - name: step-5-final-slo-validation
+      templateType: StatusCheck
+      deadline: 30s
+      abortWithStatusCheck: true
+      statusCheck:
+        type: HTTP
+        mode: Synchronous
+        intervalSeconds: 2
+        timeoutSeconds: 3
+        successThreshold: 1
+        failureThreshold: 3
+        http:
+          url: "http://order-api.app.svc.cluster.local:80/readyz"
+          criteria:
+            statusCode: '200'
