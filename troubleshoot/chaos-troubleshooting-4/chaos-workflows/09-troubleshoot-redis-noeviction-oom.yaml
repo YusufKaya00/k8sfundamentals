@@ -19,22 +19,26 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              set -e
               echo "Injecting large data keys into Redis (limit: 16mb, policy: noeviction)..."
               REDIS_HOST="redis-master.messaging.svc.cluster.local"
-              REDIS_PASS="AdminPassword2026!"
+              export REDISCLI_AUTH="AdminPassword2026!"
               
-              # Generate 1MB dummy string
-              chunk=$(head -c 1048576 /dev/urandom | base64 | head -c 1048576)
+              # 1MB veriyi arguman olarak gecmek ARG_MAX hatasi verdigi icin dosyaya yaziyoruz
+              head -c 1048576 /dev/urandom | base64 | head -c 1048576 > /tmp/chunk.dat
 
               for i in $(seq 1 20); do
                 echo "Writing 1MB payload key: stress_key_$i"
-                redis-cli -h $REDIS_HOST -p 6379 -a $REDIS_PASS set "stress_key_$i" "$chunk" || true
+                redis-cli -h "$REDIS_HOST" -p 6379 -x set "stress_key_$i" < /tmp/chunk.dat || true
               done
 
+              rm -f /tmp/chunk.dat
+
               echo "Checking Redis info memory:"
-              redis-cli -h $REDIS_HOST -p 6379 -a $REDIS_PASS info memory | grep -E "used_memory_human|maxmemory_human"
+              redis-cli -h "$REDIS_HOST" -p 6379 info memory | grep -E "used_memory_human|maxmemory_human"
+              
               echo "Triggering test set to verify OOM rejection:"
-              redis-cli -h $REDIS_HOST -p 6379 -a $REDIS_PASS set test_probe "probe_value" || echo "REDIS OOM ENCOUNTERED AS EXPECTED!"
+              redis-cli -h "$REDIS_HOST" -p 6379 set test_probe "probe_value" || echo "REDIS OOM ENCOUNTERED AS EXPECTED!"
           resources:
             requests:
               cpu: 50m
