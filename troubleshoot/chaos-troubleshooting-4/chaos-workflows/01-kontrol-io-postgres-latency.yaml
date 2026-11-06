@@ -13,5 +13,5 @@ spec:
       app.kubernetes.io/name: postgresql
   volumePath: /bitnami/postgresql
   delay: "200ms"
-  percent: "100"
+  percent: 100
   duration: "5m"
